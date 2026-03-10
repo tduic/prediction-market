@@ -1,0 +1,120 @@
+{
+  "violations": [
+    {
+      "violation_id": "v_001_subset_superset",
+      "pair_id": "pair_001",
+      "market_a": {
+        "id": "pm_001_fomc",
+        "platform": "polymarket",
+        "title": "Will the Fed cut rates in December?",
+        "type": "superset"
+      },
+      "market_b": {
+        "id": "ks_001_fomc",
+        "platform": "kalshi",
+        "title": "FOMC Rate Cut in December",
+        "type": "subset"
+      },
+      "violation_type": "subset_superset",
+      "price_a": 0.72,
+      "price_b": 0.78,
+      "raw_spread": 0.08,
+      "net_spread": 0.055,
+      "fees_total": 0.025,
+      "arbitrage_available": true,
+      "expected_result": "violation_detected",
+      "description": "Subset price (0.78) exceeds superset price (0.72) by 6bp after fees"
+    },
+    {
+      "violation_id": "v_002_mutual_exclusivity",
+      "pair_id": "pair_002",
+      "market_a": {
+        "id": "pm_trump",
+        "platform": "polymarket",
+        "title": "Trump wins 2024",
+        "type": "mutually_exclusive"
+      },
+      "market_b": {
+        "id": "pm_harris",
+        "platform": "polymarket",
+        "title": "Harris wins 2024",
+        "type": "mutually_exclusive"
+      },
+      "violation_type": "mutual_exclusivity",
+      "price_a": 0.54,
+      "price_b": 0.53,
+      "sum_yes_prices": 1.07,
+      "threshold": 1.0,
+      "arbitrage_available": true,
+      "expected_result": "violation_detected",
+      "description": "Sum of mutually exclusive YES prices (1.07) exceeds 1.0 by 7%"
+    },
+    {
+      "violation_id": "v_003_complementarity",
+      "pair_id": "pair_003",
+      "market_a": {
+        "id": "ks_btc_50k",
+        "platform": "kalshi",
+        "title": "Bitcoin exceeds $50k",
+        "yes_price": 0.84,
+        "no_price": 0.15
+      },
+      "violation_type": "complementarity",
+      "yes_no_sum": 0.99,
+      "threshold": 0.02,
+      "arbitrage_available": false,
+      "expected_result": "no_violation",
+      "description": "YES + NO prices (0.99) equal 1.0 within 2% tolerance"
+    },
+    {
+      "violation_id": "v_004_cross_platform_identical",
+      "pair_id": "pair_004",
+      "market_a": {
+        "id": "pm_002_cpi",
+        "platform": "polymarket",
+        "title": "US CPI below 3.0%",
+        "yes_price": 0.58
+      },
+      "market_b": {
+        "id": "ks_002_cpi",
+        "platform": "kalshi",
+        "title": "CPI Below 3% in November",
+        "yes_price": 0.57
+      },
+      "violation_type": "cross_platform_identical",
+      "raw_spread": 0.01,
+      "polymarket_fee": 0.002,
+      "kalshi_fee": 0.002,
+      "net_spread": 0.006,
+      "min_profitable_spread": 0.008,
+      "arbitrage_available": false,
+      "expected_result": "no_violation",
+      "description": "Spread of 60bp after fees (0.006) is below min profitable spread (0.008)"
+    },
+    {
+      "violation_id": "v_005_cross_platform_large_spread",
+      "pair_id": "pair_005",
+      "market_a": {
+        "id": "pm_003_btc",
+        "platform": "polymarket",
+        "title": "BTC reach $50,000",
+        "yes_price": 0.85
+      },
+      "market_b": {
+        "id": "ks_003_btc",
+        "platform": "kalshi",
+        "title": "Bitcoin Exceeds $50,000",
+        "yes_price": 0.84
+      },
+      "violation_type": "cross_platform_identical",
+      "raw_spread": 0.01,
+      "polymarket_fee": 0.002,
+      "kalshi_fee": 0.002,
+      "net_spread": 0.006,
+      "min_profitable_spread": 0.008,
+      "arbitrage_available": false,
+      "expected_result": "no_violation",
+      "description": "Despite similar pricing, spread insufficient after fees for execution"
+    }
+  ]
+}

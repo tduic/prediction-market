@@ -1,0 +1,89 @@
+{
+  "pairs": [
+    {
+      "name": "FOMC Rate Decision - March 2026",
+      "description": "Federal Open Market Committee interest rate decision for March 2026",
+      "category": "FOMC",
+      "resolution_criteria": "Based on official Federal Reserve FOMC announcement on March 18, 2026. Rate decision will be 0bps (no change), +25bps (hike), or -25bps (cut)",
+      "leg_a": {
+        "platform": "polymarket",
+        "market_id": "0x1234567890abcdef",
+        "description": "Will the Fed hike rates in March 2026?"
+      },
+      "leg_b": {
+        "platform": "kalshi",
+        "market_id": "fomc-rate-mar-2026",
+        "description": "Federal Reserve rate hike probability March 2026"
+      },
+      "match_method": "manual"
+    },
+    {
+      "name": "CPI Release - February 2026",
+      "description": "US Consumer Price Index for February 2026",
+      "category": "Economic",
+      "resolution_criteria": "Based on BLS CPI release on March 10, 2026. Resolution: Will headline CPI be above 3.5% year-over-year?",
+      "leg_a": {
+        "platform": "polymarket",
+        "market_id": "0xabcdef1234567890",
+        "description": "Will February 2026 CPI exceed 3.5%?"
+      },
+      "leg_b": {
+        "platform": "kalshi",
+        "market_id": "cpi-feb-2026-high",
+        "description": "CPI high inflation scenario February 2026"
+      },
+      "match_method": "manual"
+    },
+    {
+      "name": "S&P 500 Level - Quarter End",
+      "description": "S&P 500 closing level at Q1 2026 end",
+      "category": "Equity Index",
+      "resolution_criteria": "Based on official S&P 500 closing price on March 31, 2026. Resolution: Will SPX close above 5000?",
+      "leg_a": {
+        "platform": "polymarket",
+        "market_id": "0xfedcba9876543210",
+        "description": "Will S&P 500 exceed 5000 on March 31, 2026?"
+      },
+      "leg_b": {
+        "platform": "kalshi",
+        "market_id": "spx-q1-2026-level",
+        "description": "S&P 500 above 5000 at Q1 2026 end"
+      },
+      "match_method": "manual"
+    },
+    {
+      "name": "Bitcoin Price - Month End",
+      "description": "Bitcoin closing price at end of March 2026",
+      "category": "Crypto",
+      "resolution_criteria": "Based on major exchange closing price (coinbase/kraken) on March 31, 2026. Resolution: Will BTC exceed $50,000?",
+      "leg_a": {
+        "platform": "polymarket",
+        "market_id": "0x1111222233334444",
+        "description": "Bitcoin above $50k on March 31, 2026?"
+      },
+      "leg_b": {
+        "platform": "kalshi",
+        "market_id": "btc-price-mar-2026",
+        "description": "Bitcoin price level March 31, 2026"
+      },
+      "match_method": "manual"
+    },
+    {
+      "name": "Unemployment Rate - March 2026",
+      "description": "US unemployment rate for March 2026",
+      "category": "Labor",
+      "resolution_criteria": "Based on BLS employment report released April 3, 2026. Resolution: Will unemployment be below 4.0%?",
+      "leg_a": {
+        "platform": "polymarket",
+        "market_id": "0x5555666677778888",
+        "description": "Will March 2026 unemployment drop below 4.0%?"
+      },
+      "leg_b": {
+        "platform": "kalshi",
+        "market_id": "unemployment-mar-2026",
+        "description": "Unemployment rate low scenario March 2026"
+      },
+      "match_method": "manual"
+    }
+  ]
+}
