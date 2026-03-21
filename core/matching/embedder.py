@@ -5,7 +5,6 @@ from typing import List
 
 import numpy as np
 
-
 logger = logging.getLogger(__name__)
 
 

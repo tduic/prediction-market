@@ -99,8 +99,7 @@ class CoreService:
             return
 
         try:
-            await self.db.execute(
-                """
+            await self.db.execute("""
                 INSERT INTO pnl_snapshots
                 (timestamp_utc, total_positions, unrealized_pnl,
                  realized_pnl, total_return)
@@ -111,8 +110,7 @@ class CoreService:
                     0,
                     0
                 FROM positions
-                """
-            )
+                """)
             logger.debug("PnL snapshot taken")
         except Exception as e:
             logger.error("Error taking PnL snapshot: %s", e)

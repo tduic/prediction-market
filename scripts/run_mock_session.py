@@ -834,15 +834,13 @@ async def close_positions(db: aiosqlite.Connection) -> None:
     logger.info("Closing open positions with simulated P&L")
 
     # Get all open positions
-    cursor = await db.execute(
-        """
+    cursor = await db.execute("""
         SELECT id, signal_id, market_id, side, entry_price, entry_size,
                strategy
         FROM positions
         WHERE status = 'open'
         LIMIT 50
-        """
-    )
+        """)
     positions = await cursor.fetchall()
 
     closed_count = 0
@@ -942,16 +940,14 @@ async def take_pnl_snapshot(db: aiosqlite.Connection) -> None:
     logger.info("Taking P&L snapshot")
 
     # Calculate portfolio metrics
-    cursor = await db.execute(
-        """
+    cursor = await db.execute("""
         SELECT
             COUNT(CASE WHEN status = 'open' THEN 1 END) as open_count,
             SUM(CASE WHEN status = 'open' THEN unrealized_pnl ELSE 0 END) as unrealized,
             SUM(CASE WHEN status = 'closed' THEN realized_pnl ELSE 0 END) as realized_total,
             SUM(CASE WHEN status = 'closed' THEN fees_paid ELSE 0 END) as fees_total
         FROM positions
-        """
-    )
+        """)
     row = await cursor.fetchone()
     open_count = row[0] if row[0] else 0
     unrealized_pnl = row[1] if row[1] else 0.0
@@ -1039,14 +1035,12 @@ async def generate_report(db: aiosqlite.Connection, verbose: bool = False) -> No
     print("-" * 80)
     cursor = await db.execute("SELECT COUNT(*) FROM signals")
     signal_count = (await cursor.fetchone())[0]
-    cursor = await db.execute(
-        """
+    cursor = await db.execute("""
         SELECT strategy, COUNT(*) as count, AVG(model_edge) as avg_edge
         FROM signals
         GROUP BY strategy
         ORDER BY strategy
-        """
-    )
+        """)
     signals_by_strat = await cursor.fetchall()
     print(f"  Total signals generated: {signal_count}")
     print(f"  By strategy:")
@@ -1080,15 +1074,13 @@ async def generate_report(db: aiosqlite.Connection, verbose: bool = False) -> No
     # P&L Summary
     print("\nP&L SUMMARY")
     print("-" * 80)
-    cursor = await db.execute(
-        """
+    cursor = await db.execute("""
         SELECT
             SUM(CASE WHEN status = 'closed' THEN realized_pnl ELSE 0 END) as realized_pnl,
             SUM(CASE WHEN status = 'open' THEN unrealized_pnl ELSE 0 END) as unrealized_pnl,
             SUM(fees_paid) as total_fees
         FROM positions
-        """
-    )
+        """)
     row = await cursor.fetchone()
     realized_pnl, unrealized_pnl, total_fees = row if row else (0, 0, 0)
     realized_pnl = realized_pnl if realized_pnl else 0.0
@@ -1103,15 +1095,13 @@ async def generate_report(db: aiosqlite.Connection, verbose: bool = False) -> No
     # Snapshot summary
     print("\nLATEST P&L SNAPSHOT")
     print("-" * 80)
-    cursor = await db.execute(
-        """
+    cursor = await db.execute("""
         SELECT total_capital, cash, open_positions_count, unrealized_pnl,
                realized_pnl_total, fees_total, snapshotted_at
         FROM pnl_snapshots
         ORDER BY snapshotted_at DESC
         LIMIT 1
-        """
-    )
+        """)
     row = await cursor.fetchone()
     if row:
         (
@@ -1134,15 +1124,13 @@ async def generate_report(db: aiosqlite.Connection, verbose: bool = False) -> No
     # Risk check summary
     print("\nRISK CHECK SUMMARY")
     print("-" * 80)
-    cursor = await db.execute(
-        """
+    cursor = await db.execute("""
         SELECT check_type, SUM(CASE WHEN passed = 1 THEN 1 ELSE 0 END) as passed,
                COUNT(*) as total
         FROM risk_check_log
         GROUP BY check_type
         ORDER BY check_type
-        """
-    )
+        """)
     checks = await cursor.fetchall()
     for check_type, passed, total in checks:
         pct = (passed / total * 100) if total > 0 else 0
@@ -1151,15 +1139,13 @@ async def generate_report(db: aiosqlite.Connection, verbose: bool = False) -> No
     # Platform breakdown
     print("\nPLATFORM BREAKDOWN")
     print("-" * 80)
-    cursor = await db.execute(
-        """
+    cursor = await db.execute("""
         SELECT m.platform, COUNT(o.id) as order_count,
                SUM(CASE WHEN o.status IN ('FILLED', 'filled') THEN 1 ELSE 0 END) as filled_count
         FROM markets m
         LEFT JOIN orders o ON m.id = o.market_id
         GROUP BY m.platform
-        """
-    )
+        """)
     platforms = await cursor.fetchall()
     for platform, order_count, filled_count in platforms:
         filled = filled_count if filled_count else 0
@@ -1170,15 +1156,13 @@ async def generate_report(db: aiosqlite.Connection, verbose: bool = False) -> No
         # Detailed signal breakdown
         print("\nDETAILED SIGNAL BREAKDOWN (VERBOSE)")
         print("-" * 80)
-        cursor = await db.execute(
-            """
+        cursor = await db.execute("""
             SELECT id, strategy, model_edge, position_size_a, position_size_b,
                    total_capital_at_risk, status
             FROM signals
             ORDER BY fired_at DESC
             LIMIT 10
-            """
-        )
+            """)
         signals = await cursor.fetchall()
         for sig_id, strat, edge, size_a, size_b, risk, status in signals:
             print(

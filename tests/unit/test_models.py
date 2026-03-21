@@ -9,7 +9,6 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import Mock, patch, MagicMock
 from typing import List, Any
 
-
 # ============================================================================
 # Model Service Classes (Mock Implementations)
 # ============================================================================

@@ -7,7 +7,6 @@ Tests sizing calculations with various inputs and edge cases.
 import pytest
 from decimal import Decimal
 
-
 # ============================================================================
 # Kelly Sizing Implementation (Mock)
 # ============================================================================

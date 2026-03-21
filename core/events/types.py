@@ -215,7 +215,9 @@ class RiskCheckFailed:
     """Fired when a signal fails risk validation."""
 
     signal_id: str
-    check_type: str  # e.g., 'max_position_size', 'daily_loss_limit', 'portfolio_exposure'
+    check_type: (
+        str  # e.g., 'max_position_size', 'daily_loss_limit', 'portfolio_exposure'
+    )
     check_value: float
     threshold: float
     detail: str

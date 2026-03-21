@@ -552,16 +552,14 @@ class Dashboard:
         self, db: aiosqlite.Connection
     ) -> PortfolioMetrics:
         """Get portfolio-level metrics from pnl_snapshots."""
-        cursor = await db.execute(
-            """
+        cursor = await db.execute("""
             SELECT
                 total_capital, cash, open_positions_count,
                 unrealized_pnl, realized_pnl_today, realized_pnl_total, fees_total
             FROM pnl_snapshots
             ORDER BY snapshotted_at DESC
             LIMIT 1
-            """
-        )
+            """)
         row = await cursor.fetchone()
 
         if row:
@@ -799,8 +797,7 @@ class Dashboard:
                 running_max = max(running_max, current)
 
         # Max concentration
-        cursor = await db.execute(
-            """
+        cursor = await db.execute("""
             SELECT
                 SUM(p.entry_size * p.entry_price) /
                 COALESCE((SELECT total_capital FROM pnl_snapshots ORDER BY snapshotted_at DESC LIMIT 1), 1) as max_conc
@@ -809,8 +806,7 @@ class Dashboard:
             GROUP BY p.market_id
             ORDER BY max_conc DESC
             LIMIT 1
-            """
-        )
+            """)
         conc_row = await cursor.fetchone()
         max_concentration = (conc_row["max_conc"] or 0) * 100 if conc_row else 0
 

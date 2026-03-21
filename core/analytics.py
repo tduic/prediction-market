@@ -330,12 +330,10 @@ class TradeLifecycleManager:
 
         try:
             # Get all open positions and compute unrealized P&L
-            cursor = await self.db.execute(
-                """
+            cursor = await self.db.execute("""
                 SELECT id, strategy, side, entry_price, entry_size, current_price
                 FROM positions WHERE status = 'open'
-                """
-            )
+                """)
             open_rows = await cursor.fetchall()
             cols = [desc[0] for desc in cursor.description]
 

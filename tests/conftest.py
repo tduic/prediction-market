@@ -12,7 +12,6 @@ from datetime import datetime, timezone
 import pytest
 import pytest_asyncio
 
-
 # ============================================================================
 # Configuration and Data Models
 # ============================================================================

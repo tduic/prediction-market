@@ -260,12 +260,16 @@ class MetaculusClient:
                     else None
                 ),
                 community_prediction=float(item.get("community_prediction", 0.5)),
-                created_at=datetime.fromisoformat(item["created_at"])
-                if item.get("created_at")
-                else datetime.now(timezone.utc),
-                updated_at=datetime.fromisoformat(item["updated_at"])
-                if item.get("updated_at")
-                else datetime.now(timezone.utc),
+                created_at=(
+                    datetime.fromisoformat(item["created_at"])
+                    if item.get("created_at")
+                    else datetime.now(timezone.utc)
+                ),
+                updated_at=(
+                    datetime.fromisoformat(item["updated_at"])
+                    if item.get("updated_at")
+                    else datetime.now(timezone.utc)
+                ),
                 url=f"{self.BASE_URL}/questions/{item.get('slug', '')}",
             )
         except (KeyError, ValueError, TypeError) as e:

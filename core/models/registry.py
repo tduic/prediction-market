@@ -234,9 +234,9 @@ class ModelRegistry:
                     {
                         "version": v.version,
                         "status": v.status.value,
-                        "deployed_at": v.deployed_at.isoformat()
-                        if v.deployed_at
-                        else None,
+                        "deployed_at": (
+                            v.deployed_at.isoformat() if v.deployed_at else None
+                        ),
                         "metrics": v.metrics,
                     }
                     for v in versions

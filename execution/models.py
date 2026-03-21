@@ -4,7 +4,6 @@ Shared data models for the execution service.
 Extracted to break circular imports between handler, router, and platform clients.
 """
 
-
 from pydantic import BaseModel, Field, validator
 
 

@@ -13,7 +13,6 @@ import pytest
 from datetime import datetime, timedelta, timezone
 from unittest.mock import Mock, patch, MagicMock
 
-
 # ============================================================================
 # Risk Management Classes (Mock Implementations)
 # ============================================================================

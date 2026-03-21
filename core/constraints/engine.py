@@ -14,7 +14,6 @@ from core.constraints.rules import (
     subset_superset,
 )
 
-
 logger = logging.getLogger(__name__)
 
 
@@ -37,7 +36,9 @@ class MarketPair:
     pair_id: str
     market_id_a: str
     market_id_b: str
-    pair_type: str  # e.g., "complement", "subset", "cross_platform", "mutual_exclusivity"
+    pair_type: (
+        str  # e.g., "complement", "subset", "cross_platform", "mutual_exclusivity"
+    )
     relationship: str | None  # e.g., "subset", "superset" for subset_superset
     market_a_title: str
     market_b_title: str
