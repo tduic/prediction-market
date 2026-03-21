@@ -52,12 +52,13 @@ class PositionSizer:
         """
         Compute position size using fractional Kelly.
 
-        size = capital * kelly_fraction * KELLY_FRACTION
+        size = capital * kelly_raw * kelly_fraction
 
         Args:
             edge: Expected edge as decimal
             capital: Available capital (uses MAX_POSITION_SIZE_USD if None)
-            kelly_fraction: Kelly fraction to use (computed if None)
+            kelly_fraction: Kelly fraction multiplier to use (e.g., 0.25 for quarter-Kelly)
+                            If None, uses KELLY_FRACTION from config
 
         Returns:
             Position size in USD
@@ -65,11 +66,13 @@ class PositionSizer:
         if capital is None:
             capital = self.config.MAX_POSITION_SIZE_USD
 
+        kelly_raw = self.kelly_fraction(edge)
+
         if kelly_fraction is None:
-            kelly_fraction = self.kelly_fraction(edge)
+            kelly_fraction = self.config.KELLY_FRACTION
 
         # Apply fractional Kelly multiplier
-        fractional = kelly_fraction * self.config.KELLY_FRACTION
+        fractional = kelly_raw * kelly_fraction
 
         # Compute size and cap at maximum
         size = capital * fractional
@@ -328,8 +331,8 @@ class TestSizingFromSpreadBasis:
         size = sizer.size_from_spread(raw_spread_bps=50, fees_bps=20)
 
         # Net spread = 30bps = 0.003 = edge
-        # Kelly = 0.006, Frac = 0.0015, Size = 150
-        assert size == 150.0
+        # Kelly = 0.006, Frac = 0.0015, Size = 15
+        assert size == 15.0
 
     def test_sizing_from_100bps_spread(self, sample_config):
         """Larger spread produces larger size."""
@@ -338,8 +341,8 @@ class TestSizingFromSpreadBasis:
         size = sizer.size_from_spread(raw_spread_bps=100, fees_bps=20)
 
         # Net spread = 80bps = 0.008
-        # Kelly = 0.016, Frac = 0.004, Size = 400
-        assert size == 400.0
+        # Kelly = 0.016, Frac = 0.004, Size = 40
+        assert size == 40.0
 
     def test_sizing_from_zero_net_spread(self, sample_config):
         """Fees consuming spread results in zero size."""

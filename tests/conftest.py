@@ -322,7 +322,19 @@ def sample_markets() -> Dict[str, List[Market]]:
     result = {}
     for platform, markets_list in data.items():
         result[platform] = [
-            Market(**m) for m in markets_list
+            Market(
+                id=m["id"],
+                platform=m["platform"],
+                platform_id=m["platform_id"],
+                title=m["title"],
+                description=m["description"],
+                category=m["category"],
+                event_type=m["event_type"],
+                yes_price=m["yes_price"],
+                no_price=m["no_price"],
+                status=m["status"],
+            )
+            for m in markets_list
         ]
 
     return result

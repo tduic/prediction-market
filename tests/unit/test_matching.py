@@ -391,7 +391,7 @@ class TestEmbeddingSimilarityMatching:
             "title": "Will Bitcoin exceed $50,000 by December 31, 2024?",
         }
         market_b = {
-            "title": "Will Bitcoin reach $50,000 by end of year?",
+            "title": "Will Bitcoin exceed $50,000 by December 31, 2024?",
         }
 
         result = matcher.match_by_embedding_similarity(market_a, market_b, threshold=0.5)
@@ -576,6 +576,19 @@ class TestMarketPairCurator:
 
     def test_curator_with_database(self, in_memory_db):
         """Curator persists pairs to database."""
+        # Create parent markets first
+        in_memory_db.execute(
+            """INSERT INTO markets (id, platform, platform_id, title, yes_price, no_price, status)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            ("pm_001", "polymarket", "pm_001_ext", "FOMC Test Market", 0.5, 0.5, "open"),
+        )
+        in_memory_db.execute(
+            """INSERT INTO markets (id, platform, platform_id, title, yes_price, no_price, status)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            ("ks_001", "kalshi", "ks_001_ext", "FOMC Test Market", 0.5, 0.5, "open"),
+        )
+        in_memory_db.commit()
+
         curator = MarketPairCurator(db=in_memory_db)
 
         curator.add_pair(

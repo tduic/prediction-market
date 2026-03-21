@@ -323,10 +323,32 @@ class PlatformClientMock:
 class TestOrderSubmissionAndFills:
     """Test order submission and fill tracking."""
 
+    def _setup_db_dependencies(self, in_memory_db, prefix: str = ""):
+        """Create required parent records for FK constraints."""
+        # Create markets
+        in_memory_db.execute(
+            """INSERT INTO markets (id, platform, platform_id, title, yes_price, no_price)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (f"m1{prefix}", "polymarket", f"pm1{prefix}", f"Market 1{prefix}", 0.50, 0.50),
+        )
+        in_memory_db.execute(
+            """INSERT INTO markets (id, platform, platform_id, title, yes_price, no_price)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (f"m2{prefix}", "polymarket", f"pm2{prefix}", f"Market 2{prefix}", 0.49, 0.49),
+        )
+        # Create market pair
+        in_memory_db.execute(
+            """INSERT INTO market_pairs (id, market_a_id, market_b_id)
+               VALUES (?, ?, ?)""",
+            (f"pair{prefix}", f"m1{prefix}", f"m2{prefix}"),
+        )
+        in_memory_db.commit()
+
     @pytest.mark.asyncio
     async def test_expired_signal_discarded(self, in_memory_db, sample_config):
         """Order for expired signal is rejected."""
         execution = ExecutionService(in_memory_db)
+        self._setup_db_dependencies(in_memory_db, "_expired")
 
         # Create expired order
         order = Order(
@@ -338,6 +360,14 @@ class TestOrderSubmissionAndFills:
             quantity=100,
             price=0.50,
         )
+
+        # Create violation
+        in_memory_db.execute(
+            """INSERT INTO violations (id, pair_id, violation_type, price_a, price_b, raw_spread, net_spread)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            ("v_001", "pair_expired", "test", 0.50, 0.49, 0.01, 0.01),
+        )
+        in_memory_db.commit()
 
         # Mark signal as expired in DB
         in_memory_db.execute(
@@ -361,17 +391,28 @@ class TestOrderSubmissionAndFills:
             ("sig_expired",),
         ).fetchone()
 
-        assert signal["expires_at"] < datetime.utcnow()
+        # expires_at is stored as a datetime in the DB, compare as datetime
+        assert datetime.fromisoformat(signal["expires_at"]) < datetime.utcnow()
 
     @pytest.mark.asyncio
     async def test_duplicate_signal_rejected(self, in_memory_db):
         """Duplicate signal sends no redundant order."""
         # This is handled at signal generation level
         # Verify signal deduplication database field
+        self._setup_db_dependencies(in_memory_db, "_dup")
+
+        # Create violation
+        in_memory_db.execute(
+            """INSERT INTO violations (id, pair_id, violation_type, price_a, price_b, raw_spread, net_spread)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            ("v_dup", "pair_dup", "test", 0.50, 0.49, 0.01, 0.01),
+        )
+        in_memory_db.commit()
+
         in_memory_db.execute(
             """INSERT INTO signals (id, violation_id, signal_type, size_usd, status)
                VALUES (?, ?, ?, ?, ?)""",
-            ("sig_dup", "v_001", "test", 1000.0, "pending"),
+            ("sig_dup", "v_dup", "test", 1000.0, "pending"),
         )
         in_memory_db.commit()
 
@@ -380,7 +421,7 @@ class TestOrderSubmissionAndFills:
             in_memory_db.execute(
                 """INSERT INTO signals (id, violation_id, signal_type, size_usd, status)
                    VALUES (?, ?, ?, ?, ?)""",
-                ("sig_dup", "v_001", "test", 1000.0, "pending"),
+                ("sig_dup", "v_dup", "test", 1000.0, "pending"),
             )
 
     @pytest.mark.asyncio
@@ -394,6 +435,21 @@ class TestOrderSubmissionAndFills:
             polymarket_client=polymarket_client,
             kalshi_client=kalshi_client,
         )
+
+        self._setup_db_dependencies(in_memory_db, "_partial")
+
+        # Create violation and signal
+        in_memory_db.execute(
+            """INSERT INTO violations (id, pair_id, violation_type, price_a, price_b, raw_spread, net_spread)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            ("v_partial", "pair_partial", "test", 0.50, 0.49, 0.01, 0.01),
+        )
+        in_memory_db.execute(
+            """INSERT INTO signals (id, violation_id, signal_type, size_usd, status)
+               VALUES (?, ?, ?, ?, ?)""",
+            ("sig_001", "v_partial", "test", 1000.0, "pending"),
+        )
+        in_memory_db.commit()
 
         # Create two order legs
         leg_a = Order(
@@ -437,6 +493,21 @@ class TestOrderSubmissionAndFills:
             polymarket_client=client,
         )
 
+        self._setup_db_dependencies(in_memory_db, "_fill")
+
+        # Create violation and signal
+        in_memory_db.execute(
+            """INSERT INTO violations (id, pair_id, violation_type, price_a, price_b, raw_spread, net_spread)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            ("v_fill", "pair_fill", "test", 0.55, 0.54, 0.01, 0.01),
+        )
+        in_memory_db.execute(
+            """INSERT INTO signals (id, violation_id, signal_type, size_usd, status)
+               VALUES (?, ?, ?, ?, ?)""",
+            ("sig_fill", "v_fill", "test", 1000.0, "pending"),
+        )
+        in_memory_db.commit()
+
         order = Order(
             order_id="order_fill",
             signal_id="sig_fill",
@@ -475,6 +546,27 @@ class TestOrderSubmissionAndFills:
 class TestConcurrentExecution:
     """Test concurrent order execution."""
 
+    def _setup_db_dependencies(self, in_memory_db, prefix: str = ""):
+        """Create required parent records for FK constraints."""
+        # Create markets
+        in_memory_db.execute(
+            """INSERT INTO markets (id, platform, platform_id, title, yes_price, no_price)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (f"m1{prefix}", "polymarket", f"pm1{prefix}", f"Market 1{prefix}", 0.50, 0.50),
+        )
+        in_memory_db.execute(
+            """INSERT INTO markets (id, platform, platform_id, title, yes_price, no_price)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (f"m2{prefix}", "polymarket", f"pm2{prefix}", f"Market 2{prefix}", 0.49, 0.49),
+        )
+        # Create market pair
+        in_memory_db.execute(
+            """INSERT INTO market_pairs (id, market_a_id, market_b_id)
+               VALUES (?, ?, ?)""",
+            (f"pair{prefix}", f"m1{prefix}", f"m2{prefix}"),
+        )
+        in_memory_db.commit()
+
     @pytest.mark.asyncio
     async def test_simultaneous_execution_mode(self, in_memory_db):
         """Both legs submitted concurrently."""
@@ -486,6 +578,21 @@ class TestConcurrentExecution:
             polymarket_client=polymarket_client,
             kalshi_client=kalshi_client,
         )
+
+        self._setup_db_dependencies(in_memory_db, "_sim")
+
+        # Create violation and signal
+        in_memory_db.execute(
+            """INSERT INTO violations (id, pair_id, violation_type, price_a, price_b, raw_spread, net_spread)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            ("v_sim", "pair_sim", "test", 0.50, 0.49, 0.01, 0.01),
+        )
+        in_memory_db.execute(
+            """INSERT INTO signals (id, violation_id, signal_type, size_usd, status)
+               VALUES (?, ?, ?, ?, ?)""",
+            ("sig_sim", "v_sim", "test", 1000.0, "pending"),
+        )
+        in_memory_db.commit()
 
         leg_a = Order(
             order_id="sim_a",
@@ -536,6 +643,21 @@ class TestConcurrentExecution:
             kalshi_client=kalshi_client,
         )
 
+        self._setup_db_dependencies(in_memory_db, "_seq")
+
+        # Create violation and signal
+        in_memory_db.execute(
+            """INSERT INTO violations (id, pair_id, violation_type, price_a, price_b, raw_spread, net_spread)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            ("v_seq", "pair_seq", "test", 0.50, 0.49, 0.01, 0.01),
+        )
+        in_memory_db.execute(
+            """INSERT INTO signals (id, violation_id, signal_type, size_usd, status)
+               VALUES (?, ?, ?, ?, ?)""",
+            ("sig_seq", "v_seq", "test", 1000.0, "pending"),
+        )
+        in_memory_db.commit()
+
         leg_a = Order(
             order_id="seq_a",
             signal_id="sig_seq",
@@ -577,10 +699,46 @@ class TestConcurrentExecution:
 class TestExecutionErrorHandling:
     """Test error handling in execution."""
 
+    def _setup_db_dependencies(self, in_memory_db, prefix: str = ""):
+        """Create required parent records for FK constraints."""
+        # Create markets
+        in_memory_db.execute(
+            """INSERT INTO markets (id, platform, platform_id, title, yes_price, no_price)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (f"m1{prefix}", "polymarket", f"pm1{prefix}", f"Market 1{prefix}", 0.50, 0.50),
+        )
+        in_memory_db.execute(
+            """INSERT INTO markets (id, platform, platform_id, title, yes_price, no_price)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (f"m2{prefix}", "polymarket", f"pm2{prefix}", f"Market 2{prefix}", 0.49, 0.49),
+        )
+        # Create market pair
+        in_memory_db.execute(
+            """INSERT INTO market_pairs (id, market_a_id, market_b_id)
+               VALUES (?, ?, ?)""",
+            (f"pair{prefix}", f"m1{prefix}", f"m2{prefix}"),
+        )
+        in_memory_db.commit()
+
     @pytest.mark.asyncio
     async def test_unknown_platform_rejected(self, in_memory_db):
         """Order for unknown platform is rejected."""
         execution = ExecutionService(in_memory_db)
+
+        self._setup_db_dependencies(in_memory_db, "_bad")
+
+        # Create violation and signal
+        in_memory_db.execute(
+            """INSERT INTO violations (id, pair_id, violation_type, price_a, price_b, raw_spread, net_spread)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            ("v_bad", "pair_bad", "test", 0.50, 0.49, 0.01, 0.01),
+        )
+        in_memory_db.execute(
+            """INSERT INTO signals (id, violation_id, signal_type, size_usd, status)
+               VALUES (?, ?, ?, ?, ?)""",
+            ("sig_001", "v_bad", "test", 1000.0, "pending"),
+        )
+        in_memory_db.commit()
 
         order = Order(
             order_id="order_bad_platform",
@@ -606,6 +764,21 @@ class TestExecutionErrorHandling:
             kalshi_client=None,
         )
 
+        self._setup_db_dependencies(in_memory_db, "_noclient")
+
+        # Create violation and signal
+        in_memory_db.execute(
+            """INSERT INTO violations (id, pair_id, violation_type, price_a, price_b, raw_spread, net_spread)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            ("v_noclient", "pair_noclient", "test", 0.50, 0.49, 0.01, 0.01),
+        )
+        in_memory_db.execute(
+            """INSERT INTO signals (id, violation_id, signal_type, size_usd, status)
+               VALUES (?, ?, ?, ?, ?)""",
+            ("sig_001", "v_noclient", "test", 1000.0, "pending"),
+        )
+        in_memory_db.commit()
+
         order = Order(
             order_id="order_no_client",
             signal_id="sig_001",
@@ -629,6 +802,21 @@ class TestExecutionErrorHandling:
             in_memory_db,
             polymarket_client=client,
         )
+
+        self._setup_db_dependencies(in_memory_db, "_timeout")
+
+        # Create violation and signal
+        in_memory_db.execute(
+            """INSERT INTO violations (id, pair_id, violation_type, price_a, price_b, raw_spread, net_spread)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            ("v_timeout", "pair_timeout", "test", 0.50, 0.49, 0.01, 0.01),
+        )
+        in_memory_db.execute(
+            """INSERT INTO signals (id, violation_id, signal_type, size_usd, status)
+               VALUES (?, ?, ?, ?, ?)""",
+            ("sig_timeout", "v_timeout", "test", 1000.0, "pending"),
+        )
+        in_memory_db.commit()
 
         order = Order(
             order_id="order_timeout",

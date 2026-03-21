@@ -285,6 +285,36 @@ class TestViolationToSignalFlow:
         generator = SignalGenerator(in_memory_db, event_bus, sample_config)
         router = SignalRouter(in_memory_db, event_bus, sample_config)
 
+        # Create parent market records
+        in_memory_db.execute(
+            """INSERT INTO markets (id, platform, platform_id, title, description,
+               category, event_type, yes_price, no_price, status)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            ("market_001", "polymarket", "pm_001", "Test Market A", "Test", "category", "event", 0.5, 0.5, "open"),
+        )
+        in_memory_db.execute(
+            """INSERT INTO markets (id, platform, platform_id, title, description,
+               category, event_type, yes_price, no_price, status)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            ("market_002", "kalshi", "k_001", "Test Market B", "Test", "category", "event", 0.5, 0.5, "open"),
+        )
+
+        # Create market pair
+        in_memory_db.execute(
+            """INSERT INTO market_pairs (id, market_a_id, market_b_id, pair_type, status, verified)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            ("pair_001", "market_001", "market_002", "subset_superset", "active", 1),
+        )
+
+        # Create violation record
+        in_memory_db.execute(
+            """INSERT INTO violations (id, pair_id, violation_type, price_a, price_b,
+               raw_spread, net_spread, severity)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            ("v_001", "pair_001", "subset_superset", 0.5, 0.44, 0.06, 0.06, "medium"),
+        )
+        in_memory_db.commit()
+
         # Create violation event
         violation_event = ConstraintViolationEvent(
             violation_id="v_001",
@@ -321,6 +351,36 @@ class TestViolationToSignalFlow:
         """With PAPER_TRADING=true, signal is logged but not queued."""
         generator = SignalGenerator(in_memory_db, event_bus, sample_config)
         router = SignalRouter(in_memory_db, event_bus, sample_config)
+
+        # Create parent market records
+        in_memory_db.execute(
+            """INSERT INTO markets (id, platform, platform_id, title, description,
+               category, event_type, yes_price, no_price, status)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            ("market_003", "polymarket", "pm_002", "Test Market C", "Test", "category", "event", 0.5, 0.5, "open"),
+        )
+        in_memory_db.execute(
+            """INSERT INTO markets (id, platform, platform_id, title, description,
+               category, event_type, yes_price, no_price, status)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            ("market_004", "kalshi", "k_002", "Test Market D", "Test", "category", "event", 0.5, 0.5, "open"),
+        )
+
+        # Create market pair
+        in_memory_db.execute(
+            """INSERT INTO market_pairs (id, market_a_id, market_b_id, pair_type, status, verified)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            ("pair_002", "market_003", "market_004", "cross_platform_identical", "active", 1),
+        )
+
+        # Create violation record
+        in_memory_db.execute(
+            """INSERT INTO violations (id, pair_id, violation_type, price_a, price_b,
+               raw_spread, net_spread, severity)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            ("v_002", "pair_002", "cross_platform_identical", 0.5, 0.49, 0.01, 0.01, "medium"),
+        )
+        in_memory_db.commit()
 
         violation_event = ConstraintViolationEvent(
             violation_id="v_002",
@@ -441,6 +501,36 @@ class TestSignalMultipleCycles:
 
         # Generate 3 signals
         for i in range(3):
+            # Create parent market records
+            in_memory_db.execute(
+                """INSERT INTO markets (id, platform, platform_id, title, description,
+                   category, event_type, yes_price, no_price, status)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (f"market_multi_{i}_a", "polymarket", f"pm_multi_{i}_a", f"Multi Test {i} A", "Test", "category", "event", 0.5, 0.5, "open"),
+            )
+            in_memory_db.execute(
+                """INSERT INTO markets (id, platform, platform_id, title, description,
+                   category, event_type, yes_price, no_price, status)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (f"market_multi_{i}_b", "kalshi", f"k_multi_{i}_b", f"Multi Test {i} B", "Test", "category", "event", 0.5, 0.5, "open"),
+            )
+
+            # Create market pair
+            in_memory_db.execute(
+                """INSERT INTO market_pairs (id, market_a_id, market_b_id, pair_type, status, verified)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (f"pair_{i:03d}", f"market_multi_{i}_a", f"market_multi_{i}_b", "test", "active", 1),
+            )
+
+            # Create violation record
+            in_memory_db.execute(
+                """INSERT INTO violations (id, pair_id, violation_type, price_a, price_b,
+                   raw_spread, net_spread, severity)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (f"v_{i:03d}", f"pair_{i:03d}", "test", 0.5, 0.48, 0.02, 0.02, "medium"),
+            )
+            in_memory_db.commit()
+
             violation = ConstraintViolationEvent(
                 violation_id=f"v_{i:03d}",
                 pair_id=f"pair_{i:03d}",
@@ -462,7 +552,37 @@ class TestSignalMultipleCycles:
     @pytest.mark.asyncio
     async def test_signal_timestamps_recorded(self, in_memory_db, sample_config):
         """Signal timestamps are accurately recorded."""
-        generator = SignalGenerator(in_memory_db, sample_config=sample_config)
+        generator = SignalGenerator(event_bus=None, db=in_memory_db, config=sample_config)
+
+        # Create parent market records
+        in_memory_db.execute(
+            """INSERT INTO markets (id, platform, platform_id, title, description,
+               category, event_type, yes_price, no_price, status)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            ("market_time_a", "polymarket", "pm_time_a", "Time Test A", "Test", "category", "event", 0.5, 0.5, "open"),
+        )
+        in_memory_db.execute(
+            """INSERT INTO markets (id, platform, platform_id, title, description,
+               category, event_type, yes_price, no_price, status)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            ("market_time_b", "kalshi", "k_time_b", "Time Test B", "Test", "category", "event", 0.5, 0.5, "open"),
+        )
+
+        # Create market pair
+        in_memory_db.execute(
+            """INSERT INTO market_pairs (id, market_a_id, market_b_id, pair_type, status, verified)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            ("pair_time", "market_time_a", "market_time_b", "test", "active", 1),
+        )
+
+        # Create violation record
+        in_memory_db.execute(
+            """INSERT INTO violations (id, pair_id, violation_type, price_a, price_b,
+               raw_spread, net_spread, severity)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            ("v_time", "pair_time", "test", 0.5, 0.48, 0.02, 0.02, "medium"),
+        )
+        in_memory_db.commit()
 
         violation = ConstraintViolationEvent(
             violation_id="v_time",
@@ -490,6 +610,32 @@ class TestSignalMultipleCycles:
         generator = SignalGenerator(in_memory_db, event_bus, sample_config)
         router = SignalRouter(in_memory_db, event_bus, sample_config)
 
+        # Create parent market records for violation 1
+        in_memory_db.execute(
+            """INSERT INTO markets (id, platform, platform_id, title, description,
+               category, event_type, yes_price, no_price, status)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            ("market_mix_001_a", "polymarket", "pm_mix_001_a", "Mix Test 001 A", "Test", "category", "event", 0.5, 0.5, "open"),
+        )
+        in_memory_db.execute(
+            """INSERT INTO markets (id, platform, platform_id, title, description,
+               category, event_type, yes_price, no_price, status)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            ("market_mix_001_b", "kalshi", "k_mix_001_b", "Mix Test 001 B", "Test", "category", "event", 0.5, 0.5, "open"),
+        )
+        in_memory_db.execute(
+            """INSERT INTO market_pairs (id, market_a_id, market_b_id, pair_type, status, verified)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            ("pair_001", "market_mix_001_a", "market_mix_001_b", "test", "active", 1),
+        )
+        in_memory_db.execute(
+            """INSERT INTO violations (id, pair_id, violation_type, price_a, price_b,
+               raw_spread, net_spread, severity)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            ("v_001", "pair_001", "test", 0.5, 0.48, 0.02, 0.02, "medium"),
+        )
+        in_memory_db.commit()
+
         # Paper trading mode
         result1 = await router.process_signal(
             generator.generate_signal_from_violation(
@@ -500,6 +646,32 @@ class TestSignalMultipleCycles:
 
         assert result1["mode"] == "paper_trading"
         assert len(router.queue.queue) == 0
+
+        # Create parent market records for violation 2
+        in_memory_db.execute(
+            """INSERT INTO markets (id, platform, platform_id, title, description,
+               category, event_type, yes_price, no_price, status)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            ("market_mix_002_a", "polymarket", "pm_mix_002_a", "Mix Test 002 A", "Test", "category", "event", 0.5, 0.5, "open"),
+        )
+        in_memory_db.execute(
+            """INSERT INTO markets (id, platform, platform_id, title, description,
+               category, event_type, yes_price, no_price, status)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            ("market_mix_002_b", "kalshi", "k_mix_002_b", "Mix Test 002 B", "Test", "category", "event", 0.5, 0.5, "open"),
+        )
+        in_memory_db.execute(
+            """INSERT INTO market_pairs (id, market_a_id, market_b_id, pair_type, status, verified)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            ("pair_002", "market_mix_002_a", "market_mix_002_b", "test", "active", 1),
+        )
+        in_memory_db.execute(
+            """INSERT INTO violations (id, pair_id, violation_type, price_a, price_b,
+               raw_spread, net_spread, severity)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            ("v_002", "pair_002", "test", 0.5, 0.48, 0.02, 0.02, "medium"),
+        )
+        in_memory_db.commit()
 
         # Switch to live trading
         sample_config.PAPER_TRADING = False

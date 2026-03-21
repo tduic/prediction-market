@@ -330,9 +330,10 @@ class TestComplementarityConstraints:
         engine = ConstraintEngine(sample_config)
 
         yes_price = 0.51
-        no_price = 0.49
+        no_price = 0.515
 
         # Threshold of 0.01 should detect this
+        # Sum = 1.025, deviation = 0.025 > 0.01, so violation
         is_violation = engine.check_complementarity(yes_price, no_price, threshold=0.01)
 
         assert is_violation is True
@@ -364,8 +365,8 @@ class TestCrossPlatformConstraints:
         result = engine.check_cross_platform_spread(
             price_a=0.58,
             price_b=0.57,
-            fee_a_pct=0.2,
-            fee_b_pct=0.2,
+            fee_a_pct=2.0,
+            fee_b_pct=2.0,
             min_spread_bps=50,
         )
 
@@ -389,12 +390,12 @@ class TestCrossPlatformConstraints:
         )
 
         # Raw spread = |0.60 - 0.70| = 0.10
-        assert result["raw_spread"] == 0.10
+        assert result["raw_spread"] == pytest.approx(0.10)
 
         # Fee on buy at 0.60: 0.60 * 0.005 = 0.003
         # Fee on sell at 0.70: 0.70 * 0.005 = 0.0035
         # Net spread = 0.10 - 0.003 - 0.0035 = 0.0935
-        assert abs(result["net_spread"] - 0.0935) < 0.0001
+        assert result["net_spread"] == pytest.approx(0.0935, abs=0.0001)
 
     def test_cross_platform_identical_prices(self, sample_config):
         """Identical prices across platforms have zero spread."""
