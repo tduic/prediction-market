@@ -16,7 +16,7 @@ import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+
 from urllib.parse import urlparse
 
 import aiosqlite
@@ -56,7 +56,7 @@ class OrderStatus:
     order_id: str
     status: str  # "resting", "canceled", "executed", "pending"
     filled_amount: float
-    fill_price: Optional[float]
+    fill_price: float | None
     timestamp: float
 
 
@@ -67,8 +67,8 @@ class OrderResult:
     order_id: str
     status: str  # "ACCEPTED", "REJECTED", "PENDING"
     submission_latency_ms: int
-    fill_latency_ms: Optional[int] = None
-    error_message: Optional[str] = None
+    fill_latency_ms: int | None = None
+    error_message: str | None = None
 
 
 class KalshiExecutionClient:
@@ -77,9 +77,9 @@ class KalshiExecutionClient:
     def __init__(
         self,
         db_connection: aiosqlite.Connection,
-        api_key: Optional[str] = None,
-        rsa_key_path: Optional[str] = None,
-        api_base: Optional[str] = None,
+        api_key: str | None = None,
+        rsa_key_path: str | None = None,
+        api_base: str | None = None,
     ) -> None:
         """
         Initialize the Kalshi execution client.
@@ -322,7 +322,7 @@ class KalshiExecutionClient:
             logger.error("Error cancelling order: %s", e, exc_info=True)
             return False
 
-    async def get_order_status(self, order_id: str) -> Optional[OrderStatus]:
+    async def get_order_status(self, order_id: str) -> OrderStatus | None:
         """Get the status of an order via Kalshi REST API."""
         await self._acquire_rate_limit()
 
@@ -356,7 +356,7 @@ class KalshiExecutionClient:
             logger.error("Error getting order status: %s", e, exc_info=True)
             return None
 
-    async def get_balance(self) -> Optional[float]:
+    async def get_balance(self) -> float | None:
         """Get account balance in dollars."""
         await self._acquire_rate_limit()
 

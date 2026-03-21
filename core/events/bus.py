@@ -5,7 +5,7 @@ Provides pub/sub functionality with error isolation between subscribers.
 
 import asyncio
 import logging
-from typing import Callable, Dict, List, Type, Optional
+from typing import Callable, Type
 from functools import partial
 
 from .types import Event
@@ -31,10 +31,10 @@ class EventBus:
         Args:
             max_queue_size: Maximum size of the event queue
         """
-        self._subscribers: Dict[Type[Event], List[Callable]] = {}
+        self._subscribers: dict[Type[Event], list[Callable]] = {}
         self._event_queue: asyncio.Queue = asyncio.Queue(maxsize=max_queue_size)
         self._running = False
-        self._processor_task: Optional[asyncio.Task] = None
+        self._processor_task: asyncio.Task | None = None
         self._lock = asyncio.Lock()
 
     async def subscribe(

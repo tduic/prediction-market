@@ -12,7 +12,7 @@ import logging
 import os
 import time
 from dataclasses import dataclass
-from typing import Optional
+
 
 import aiosqlite
 
@@ -47,7 +47,7 @@ class OrderStatus:
     order_id: str
     status: str
     filled_amount: float
-    fill_price: Optional[float]
+    fill_price: float | None
     timestamp: float
 
 
@@ -58,8 +58,8 @@ class OrderResult:
     order_id: str
     status: str  # "ACCEPTED", "REJECTED", "PENDING"
     submission_latency_ms: int
-    fill_latency_ms: Optional[int] = None
-    error_message: Optional[str] = None
+    fill_latency_ms: int | None = None
+    error_message: str | None = None
 
 
 class PolymarketExecutionClient:
@@ -68,8 +68,8 @@ class PolymarketExecutionClient:
     def __init__(
         self,
         db_connection: aiosqlite.Connection,
-        private_key: Optional[str] = None,
-        funder: Optional[str] = None,
+        private_key: str | None = None,
+        funder: str | None = None,
         chain_id: int = 137,
     ) -> None:
         """
@@ -286,7 +286,7 @@ class PolymarketExecutionClient:
             logger.error("Error cancelling order: %s", e, exc_info=True)
             return False
 
-    async def get_order_status(self, order_id: str) -> Optional[OrderStatus]:
+    async def get_order_status(self, order_id: str) -> OrderStatus | None:
         """Get the status of an order on Polymarket."""
         await self._acquire_rate_limit()
 

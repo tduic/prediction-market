@@ -10,7 +10,7 @@ Tests order execution pipeline:
 
 import pytest
 from unittest.mock import Mock, patch, MagicMock, AsyncMock
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 import asyncio
 
@@ -52,7 +52,7 @@ class Order:
         self.quantity = quantity
         self.price = price
         self.status = OrderStatus.PENDING
-        self.created_at = datetime.utcnow()
+        self.created_at = datetime.now(timezone.utc)
         self.submitted_at = None
         self.filled_at = None
         self.fill_price = None
@@ -124,7 +124,7 @@ class ExecutionService:
 
         if result.get("success"):
             order.status = OrderStatus.SUBMITTED
-            order.submitted_at = datetime.utcnow()
+            order.submitted_at = datetime.now(timezone.utc)
             order.platform_order_id = result.get("platform_order_id")
 
             # Update database
@@ -172,13 +172,13 @@ class ExecutionService:
             return {"success": False, "reason": "client_unavailable"}
 
         # Poll for fill
-        start = datetime.utcnow()
-        while datetime.utcnow() - start < timedelta(seconds=timeout):
+        start = datetime.now(timezone.utc)
+        while datetime.now(timezone.utc) - start < timedelta(seconds=timeout):
             result = await client.check_order_status(order.platform_order_id)
 
             if result.get("status") == "filled":
                 order.status = OrderStatus.FILLED
-                order.filled_at = datetime.utcnow()
+                order.filled_at = datetime.now(timezone.utc)
                 order.fill_price = result.get("fill_price")
 
                 # Update database
@@ -279,7 +279,7 @@ class PlatformClientMock:
 
         self.orders[platform_order_id] = {
             "order": order,
-            "submitted_at": datetime.utcnow(),
+            "submitted_at": datetime.now(timezone.utc),
             "status": "submitted",
             "fill_price": order.price,
         }
@@ -296,7 +296,7 @@ class PlatformClientMock:
 
         order_data = self.orders[platform_order_id]
         submitted_at = order_data["submitted_at"]
-        elapsed = (datetime.utcnow() - submitted_at).total_seconds()
+        elapsed = (datetime.now(timezone.utc) - submitted_at).total_seconds()
 
         if elapsed >= self.fill_delay_s:
             order_data["status"] = "filled"
@@ -399,7 +399,7 @@ class TestOrderSubmissionAndFills:
                 "v_001",
                 "test",
                 1000.0,
-                datetime.utcnow() - timedelta(seconds=1),
+                datetime.now(timezone.utc) - timedelta(seconds=1),
                 "expired",
             ),
         )
@@ -413,7 +413,7 @@ class TestOrderSubmissionAndFills:
         ).fetchone()
 
         # expires_at is stored as a datetime in the DB, compare as datetime
-        assert datetime.fromisoformat(signal["expires_at"]) < datetime.utcnow()
+        assert datetime.fromisoformat(signal["expires_at"]) < datetime.now(timezone.utc)
 
     @pytest.mark.asyncio
     async def test_duplicate_signal_rejected(self, in_memory_db):
@@ -548,9 +548,9 @@ class TestOrderSubmissionAndFills:
 
         # Manually mark as filled in mock
         client.orders[platform_order_id]["status"] = "filled"
-        client.orders[platform_order_id][
-            "submitted_at"
-        ] = datetime.utcnow() - timedelta(seconds=5)
+        client.orders[platform_order_id]["submitted_at"] = datetime.now(
+            timezone.utc
+        ) - timedelta(seconds=5)
 
         fill_result = await execution.wait_for_fill(order, timeout_s=10)
 

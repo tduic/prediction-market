@@ -6,7 +6,7 @@ Implements single-writer pattern with concurrent read support via WAL mode.
 import asyncio
 import logging
 from pathlib import Path
-from typing import Any, List, Optional, Dict
+from typing import Any, List
 
 import aiosqlite
 
@@ -34,7 +34,7 @@ class Database:
         """
         self.db_path = db_path
         self.migrations_dir = Path(migrations_dir)
-        self._conn: Optional[aiosqlite.Connection] = None
+        self._conn: aiosqlite.Connection | None = None
         self._write_lock = asyncio.Lock()
         self._initialized = False
 
@@ -103,7 +103,7 @@ class Database:
     async def execute(
         self,
         sql: str,
-        params: Optional[tuple] = None,
+        params: tuple | None = None,
     ) -> int:
         """
         Execute a single SQL statement (INSERT, UPDATE, DELETE).
@@ -133,7 +133,7 @@ class Database:
     async def executemany(
         self,
         sql: str,
-        params_list: List[tuple],
+        params_list: list[tuple],
     ) -> int:
         """
         Execute multiple SQL statements in a transaction.
@@ -161,8 +161,8 @@ class Database:
     async def fetch_one(
         self,
         sql: str,
-        params: Optional[tuple] = None,
-    ) -> Optional[Dict[str, Any]]:
+        params: tuple | None = None,
+    ) -> dict[str, Any] | None:
         """
         Fetch a single row as a dictionary.
 
@@ -195,8 +195,8 @@ class Database:
     async def fetch_all(
         self,
         sql: str,
-        params: Optional[tuple] = None,
-    ) -> List[Dict[str, Any]]:
+        params: tuple | None = None,
+    ) -> list[dict[str, Any]]:
         """
         Fetch all rows as dictionaries.
 
@@ -227,7 +227,7 @@ class Database:
     async def fetch_val(
         self,
         sql: str,
-        params: Optional[tuple] = None,
+        params: tuple | None = None,
     ) -> Any:
         """
         Fetch a single scalar value.

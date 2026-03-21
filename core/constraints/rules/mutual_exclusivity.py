@@ -4,7 +4,7 @@ Enforces: P(A wins) + P(B wins) + P(C wins) ≤ 100% for exhaustive outcomes
 """
 
 from dataclasses import dataclass
-from typing import Optional, List
+from typing import List
 
 
 @dataclass
@@ -17,7 +17,7 @@ class ViolationInfo:
     implied_arbitrage: float  # Estimated profit opportunity in percent
 
 
-def check(prices: List[float]) -> Optional[ViolationInfo]:
+def check(prices: list[float]) -> ViolationInfo | None:
     """
     Check mutual exclusivity constraint for a group of exhaustive outcomes.
 

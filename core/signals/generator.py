@@ -3,9 +3,9 @@
 import logging
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +59,7 @@ class Signal:
     execution_mode: ExecutionMode = ExecutionMode.LIVE
     abort_on_partial: bool = True
     max_total_slippage_usd: float = 0.0
-    fired_at: datetime = field(default_factory=datetime.utcnow)
+    fired_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     ttl_s: int = 300
 
     def to_dict(self) -> dict[str, Any]:
@@ -103,7 +103,7 @@ class ViolationDetected:
     fair_value: float
     market_price: float
     edge: float  # fair_value - market_price
-    detected_at: datetime = field(default_factory=datetime.utcnow)
+    detected_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     metadata: dict = field(default_factory=dict)
 
 
@@ -115,9 +115,9 @@ class SignalGenerator:
 
     def __init__(
         self,
-        event_bus: Optional[Any] = None,
-        db: Optional[Any] = None,
-        config: Optional[dict] = None,
+        event_bus: Any | None = None,
+        db: Any | None = None,
+        config: dict | None = None,
     ):
         """
         Initialize signal generator.
@@ -132,7 +132,7 @@ class SignalGenerator:
         self.config = config or {}
         self.paper_trading = self.config.get("paper_trading", False)
 
-    async def process_violation(self, violation: ViolationDetected) -> Optional[Signal]:
+    async def process_violation(self, violation: ViolationDetected) -> Signal | None:
         """
         Process a violation event and generate signal if warranted.
 

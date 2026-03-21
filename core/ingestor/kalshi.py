@@ -6,7 +6,7 @@ import logging
 import os
 import time
 from datetime import datetime
-from typing import Optional
+
 
 import httpx
 
@@ -20,7 +20,7 @@ class KalshiClient:
 
     BASE_URL = "https://trading-api.kalshi.com/trade-api/v2"
 
-    def __init__(self, api_key: Optional[str] = None, api_secret: Optional[str] = None):
+    def __init__(self, api_key: str | None = None, api_secret: str | None = None):
         """
         Args:
             api_key: API key (or from KALSHI_API_KEY env var)
@@ -29,7 +29,7 @@ class KalshiClient:
         self.api_key = api_key or os.getenv("KALSHI_API_KEY", "")
         self.api_secret = api_secret or os.getenv("KALSHI_API_SECRET", "")
         self.rate_limiter = TokenBucket(capacity=10.0, refill_rate=10.0 / 1.0)
-        self._client: Optional[httpx.AsyncClient] = None
+        self._client: httpx.AsyncClient | None = None
 
     async def __aenter__(self):
         """Async context manager entry."""
@@ -67,8 +67,8 @@ class KalshiClient:
 
     async def poll_markets(
         self,
-        status: Optional[str] = None,
-        category: Optional[str] = None,
+        status: str | None = None,
+        category: str | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> list[MarketData]:
@@ -115,7 +115,7 @@ class KalshiClient:
             logger.error(f"Kalshi API error: {e}")
             return []
 
-    async def get_market(self, ticker: str) -> Optional[MarketData]:
+    async def get_market(self, ticker: str) -> MarketData | None:
         """
         Get single market by ticker.
 
@@ -148,7 +148,7 @@ class KalshiClient:
             logger.error(f"Kalshi API error: {e}")
             return None
 
-    async def get_orderbook(self, ticker: str) -> Optional[OrderBook]:
+    async def get_orderbook(self, ticker: str) -> OrderBook | None:
         """
         Get orderbook for a market.
 
@@ -181,7 +181,7 @@ class KalshiClient:
             logger.error(f"Error fetching orderbook for {ticker}: {e}")
             return None
 
-    def _parse_market(self, item: dict) -> Optional[MarketData]:
+    def _parse_market(self, item: dict) -> MarketData | None:
         """Parse Kalshi API response into MarketData."""
         try:
             return MarketData(

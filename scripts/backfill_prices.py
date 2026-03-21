@@ -8,7 +8,7 @@ import argparse
 import asyncio
 import logging
 from datetime import datetime, timedelta
-from typing import List, Optional
+from typing import List
 
 import aiosqlite
 import httpx
@@ -46,7 +46,7 @@ class PriceBackfiller:
         self,
         since: datetime,
         until: datetime,
-    ) -> List[dict]:
+    ) -> list[dict]:
         """
         Fetch historical prices from Polymarket API.
 
@@ -63,7 +63,7 @@ class PriceBackfiller:
             until.isoformat(),
         )
 
-        prices: List[dict] = []
+        prices: list[dict] = []
 
         try:
             # Get all markets
@@ -127,7 +127,7 @@ class PriceBackfiller:
         self,
         since: datetime,
         until: datetime,
-    ) -> List[dict]:
+    ) -> list[dict]:
         """
         Fetch historical prices from Kalshi API.
 
@@ -144,7 +144,7 @@ class PriceBackfiller:
             until.isoformat(),
         )
 
-        prices: List[dict] = []
+        prices: list[dict] = []
 
         try:
             # Get all markets
@@ -205,7 +205,7 @@ class PriceBackfiller:
 
         return prices
 
-    async def write_prices_to_db(self, prices: List[dict]) -> int:
+    async def write_prices_to_db(self, prices: list[dict]) -> int:
         """
         Write price records to the database.
 
@@ -249,8 +249,8 @@ class PriceBackfiller:
 
     async def backfill(
         self,
-        since: Optional[str],
-        until: Optional[str],
+        since: str | None,
+        until: str | None,
     ) -> int:
         """
         Run the backfill process.
@@ -267,7 +267,7 @@ class PriceBackfiller:
             if until:
                 end_date = datetime.fromisoformat(until)
             else:
-                end_date = datetime.utcnow()
+                end_date = datetime.now(timezone.utc)
 
             if since:
                 try:

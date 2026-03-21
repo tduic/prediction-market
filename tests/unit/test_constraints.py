@@ -10,7 +10,7 @@ Tests all constraint rule implementations:
 
 import pytest
 from unittest.mock import Mock, patch, MagicMock
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 # ============================================================================
@@ -156,7 +156,7 @@ class ConstraintEngine:
                     "spread": violation.spread,
                     "is_violation": violation.is_violation,
                     "details": violation.details,
-                    "timestamp": datetime.utcnow().isoformat(),
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
                 },
             )
 

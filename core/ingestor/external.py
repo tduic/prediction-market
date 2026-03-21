@@ -3,7 +3,7 @@
 import logging
 import re
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 import httpx
@@ -24,7 +24,7 @@ class FedWatchData:
 
     def __post_init__(self):
         if self.timestamp is None:
-            self.timestamp = datetime.utcnow()
+            self.timestamp = datetime.now(timezone.utc)
 
 
 @dataclass
@@ -40,7 +40,7 @@ class NowcastData:
 
     def __post_init__(self):
         if self.timestamp is None:
-            self.timestamp = datetime.utcnow()
+            self.timestamp = datetime.now(timezone.utc)
 
 
 @dataclass
@@ -50,7 +50,7 @@ class MetaculusQuestion:
     question_id: int
     title: str
     description: str
-    resolution_date: Optional[datetime]
+    resolution_date: datetime | None
     community_prediction: float
     created_at: datetime
     updated_at: datetime
@@ -63,7 +63,7 @@ class BLSRelease:
 
     release_name: str
     release_date: datetime
-    data_date: Optional[datetime]
+    data_date: datetime | None
     notes: str
 
 
@@ -72,7 +72,7 @@ class CMEFedWatchScraper:
 
     URL = "https://www.cmegroup.com/markets/miscellaneous/fed-funds.quotes.html"
 
-    async def fetch_fed_watch(self) -> Optional[FedWatchData]:
+    async def fetch_fed_watch(self) -> FedWatchData | None:
         """
         Scrape CME FedWatch data.
 
@@ -109,7 +109,7 @@ class CMEFedWatchScraper:
             logger.error(f"Unexpected error scraping CME FedWatch: {e}")
             return None
 
-    def _extract_implied_probabilities(self, soup: BeautifulSoup) -> Optional[dict]:
+    def _extract_implied_probabilities(self, soup: BeautifulSoup) -> dict | None:
         """Extract rate probabilities from parsed HTML."""
         try:
             # This is a simplified extraction - actual CME structure varies
@@ -127,7 +127,7 @@ class CMEFedWatchScraper:
                 return None
 
             return {
-                "meeting_date": datetime.utcnow(),
+                "meeting_date": datetime.now(timezone.utc),
                 "hike": float(cells[1].text.strip().rstrip("%")) / 100,
                 "hold": float(cells[2].text.strip().rstrip("%")) / 100,
                 "cut": float(cells[3].text.strip().rstrip("%")) / 100,
@@ -142,7 +142,7 @@ class ClevelandFedScraper:
 
     URL = "https://www.clevelandfed.org/indicators-and-data/nowcast/"
 
-    async def fetch_nowcast(self) -> Optional[NowcastData]:
+    async def fetch_nowcast(self) -> NowcastData | None:
         """
         Fetch Cleveland Fed Nowcast.
 
@@ -178,7 +178,7 @@ class ClevelandFedScraper:
             logger.error(f"Unexpected error scraping Cleveland Fed Nowcast: {e}")
             return None
 
-    def _extract_nowcast(self, soup: BeautifulSoup) -> Optional[dict]:
+    def _extract_nowcast(self, soup: BeautifulSoup) -> dict | None:
         """Extract nowcast values from parsed HTML."""
         try:
             # Simplified extraction - actual page structure varies
@@ -192,7 +192,7 @@ class ClevelandFedScraper:
                 return None
 
             return {
-                "forecast_date": datetime.utcnow(),
+                "forecast_date": datetime.now(timezone.utc),
                 "gdp": float(gdp_match.group(1)) / 100,
                 "gdp_std": 0.01,  # Placeholder
                 "cpi": float(cpi_match.group(1)) / 100,
@@ -210,7 +210,7 @@ class MetaculusClient:
     API_BASE = "https://www.metaculus.com/api2"
 
     async def fetch_questions(
-        self, category: Optional[str] = None
+        self, category: str | None = None
     ) -> list[MetaculusQuestion]:
         """
         Fetch questions from Metaculus.
@@ -247,7 +247,7 @@ class MetaculusClient:
             logger.error(f"Error fetching Metaculus questions: {e}")
             return []
 
-    def _parse_question(self, item: dict) -> Optional[MetaculusQuestion]:
+    def _parse_question(self, item: dict) -> MetaculusQuestion | None:
         """Parse Metaculus API response into MetaculusQuestion."""
         try:
             return MetaculusQuestion(
@@ -262,10 +262,10 @@ class MetaculusClient:
                 community_prediction=float(item.get("community_prediction", 0.5)),
                 created_at=datetime.fromisoformat(item["created_at"])
                 if item.get("created_at")
-                else datetime.utcnow(),
+                else datetime.now(timezone.utc),
                 updated_at=datetime.fromisoformat(item["updated_at"])
                 if item.get("updated_at")
-                else datetime.utcnow(),
+                else datetime.now(timezone.utc),
                 url=f"{self.BASE_URL}/questions/{item.get('slug', '')}",
             )
         except (KeyError, ValueError, TypeError) as e:

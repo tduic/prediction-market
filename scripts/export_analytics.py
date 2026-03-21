@@ -8,7 +8,7 @@ import argparse
 import asyncio
 import logging
 from pathlib import Path
-from typing import Optional
+
 
 import aiosqlite
 import pandas as pd
@@ -137,7 +137,7 @@ class AnalyticsExporter:
 
     async def export_all(
         self,
-        output_dir: Optional[str] = None,
+        output_dir: str | None = None,
     ) -> dict[str, int]:
         """
         Export all analytics tables.

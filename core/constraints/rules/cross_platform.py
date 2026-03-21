@@ -4,7 +4,6 @@ Detects identical-event spread violations across different platforms.
 """
 
 from dataclasses import dataclass
-from typing import Optional
 
 
 @dataclass
@@ -48,8 +47,8 @@ def check(
     platform_a: str,
     platform_b: str,
     min_net_spread_threshold: float = 0.03,
-    fee_config: Optional[FeeConfig] = None,
-) -> Optional[ViolationInfo]:
+    fee_config: FeeConfig | None = None,
+) -> ViolationInfo | None:
     """
     Check cross-platform spread constraint for identical events.
 

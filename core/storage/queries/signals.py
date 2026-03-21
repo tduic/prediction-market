@@ -2,8 +2,8 @@
 Database queries for signal management and risk tracking.
 """
 
-from typing import Optional, List, Dict, Any
-from datetime import datetime
+from typing import Optional, List, Any
+from datetime import datetime, timezone
 import logging
 
 from ..db import Database
@@ -17,19 +17,19 @@ async def insert_signal(
     strategy: str,
     signal_type: str,
     market_id_a: str,
-    market_id_b: Optional[str],
+    market_id_b: str | None,
     model_edge: float,
     kelly_fraction: float,
     position_size_a: float,
-    position_size_b: Optional[float],
+    position_size_b: float | None,
     total_capital_at_risk: float,
-    violation_id: Optional[str] = None,
-    target_price_a: Optional[float] = None,
-    target_price_b: Optional[float] = None,
-    model_fair_value: Optional[float] = None,
+    violation_id: str | None = None,
+    target_price_a: float | None = None,
+    target_price_b: float | None = None,
+    model_fair_value: float | None = None,
     risk_check_passed: int = 1,
-    daily_loss_limit_remaining: Optional[float] = None,
-    portfolio_exposure_pct: Optional[float] = None,
+    daily_loss_limit_remaining: float | None = None,
+    portfolio_exposure_pct: float | None = None,
     status: str = "queued",
 ) -> str:
     """
@@ -59,7 +59,7 @@ async def insert_signal(
     Returns:
         The signal_id
     """
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
 
     sql = """
     INSERT INTO signals (
@@ -101,7 +101,7 @@ async def insert_signal(
 async def get_signal(
     db: Database,
     signal_id: str,
-) -> Optional[Dict[str, Any]]:
+) -> dict[str, Any] | None:
     """
     Retrieve a single signal by ID.
 
@@ -129,7 +129,7 @@ async def update_signal_status(
         signal_id: Signal ID
         status: New status (queued, submitted, filled, cancelled, etc.)
     """
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
 
     sql = """
     UPDATE signals
@@ -142,11 +142,11 @@ async def update_signal_status(
 
 async def get_recent_signals(
     db: Database,
-    strategy: Optional[str] = None,
-    status: Optional[str] = None,
+    strategy: str | None = None,
+    status: str | None = None,
     limit: int = 100,
     minutes: int = 60,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """
     Get recent signals, optionally filtered.
 
@@ -187,7 +187,7 @@ async def get_recent_signals(
 async def get_signals_by_violation(
     db: Database,
     violation_id: str,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """
     Get all signals associated with a violation.
 
@@ -210,7 +210,7 @@ async def get_signals_by_violation(
 async def get_open_signals(
     db: Database,
     limit: int = 1000,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """
     Get all open/unfilled signals.
 
@@ -236,10 +236,10 @@ async def insert_risk_check(
     signal_id: str,
     check_type: str,
     passed: int,
-    check_value: Optional[float] = None,
-    threshold: Optional[float] = None,
-    detail: Optional[str] = None,
-    violation_id: Optional[str] = None,
+    check_value: float | None = None,
+    threshold: float | None = None,
+    detail: str | None = None,
+    violation_id: str | None = None,
 ) -> int:
     """
     Insert a risk check log entry.
@@ -257,7 +257,7 @@ async def insert_risk_check(
     Returns:
         Row ID
     """
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
 
     sql = """
     INSERT INTO risk_check_log (
@@ -283,7 +283,7 @@ async def insert_risk_check(
 async def get_risk_checks_for_signal(
     db: Database,
     signal_id: str,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """
     Get all risk checks performed for a signal.
 
@@ -307,7 +307,7 @@ async def get_failed_risk_checks(
     db: Database,
     limit: int = 100,
     minutes: int = 60,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """
     Get recent failed risk checks.
 
@@ -332,8 +332,8 @@ async def get_failed_risk_checks(
 
 async def get_signal_count(
     db: Database,
-    strategy: Optional[str] = None,
-    status: Optional[str] = None,
+    strategy: str | None = None,
+    status: str | None = None,
 ) -> int:
     """
     Count signals, optionally filtered.
@@ -367,7 +367,7 @@ async def get_signal_count(
 
 async def get_signal_statistics(
     db: Database,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Get summary statistics on signals.
 

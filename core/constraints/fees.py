@@ -1,7 +1,6 @@
 """Fee estimation and management for prediction market platforms."""
 
 from dataclasses import dataclass
-from typing import Dict
 
 
 @dataclass
@@ -28,7 +27,7 @@ class FeeEstimator:
             config: FeeConfig with per-platform rates
         """
         self.config = config
-        self._platform_rates: Dict[str, float] = {
+        self._platform_rates: dict[str, float] = {
             "polymarket": config.polymarket,
             "kalshi": config.kalshi,
             "manifold": config.manifold,

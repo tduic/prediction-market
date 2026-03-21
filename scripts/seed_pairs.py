@@ -9,7 +9,7 @@ import asyncio
 import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, List
 
 import aiosqlite
 from pydantic import BaseModel, ValidationError, validator
@@ -61,7 +61,7 @@ class PairSeeder:
         """
         self.db_path = db_path
 
-    async def load_pairs_from_file(self, file_path: str) -> List[MarketPair]:
+    async def load_pairs_from_file(self, file_path: str) -> list[MarketPair]:
         """
         Load and validate market pairs from JSON file.
 
@@ -89,7 +89,7 @@ class PairSeeder:
         pairs_data = data.get("pairs", [])
         logger.info("Found %d pairs in file", len(pairs_data))
 
-        pairs: List[MarketPair] = []
+        pairs: list[MarketPair] = []
 
         for idx, pair_data in enumerate(pairs_data):
             try:
@@ -102,7 +102,7 @@ class PairSeeder:
 
         return pairs
 
-    async def seed_pairs_to_db(self, pairs: List[MarketPair]) -> int:
+    async def seed_pairs_to_db(self, pairs: list[MarketPair]) -> int:
         """
         Insert pairs into the database.
 

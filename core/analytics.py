@@ -54,7 +54,7 @@ class TradeLifecycleManager:
         slippage: float,
         fill_latency_ms: int,
         signal_edge: float,
-        violation_id: Optional[str] = None,
+        violation_id: str | None = None,
     ) -> str:
         """
         Record a filled order as a new position.
@@ -84,7 +84,7 @@ class TradeLifecycleManager:
             Exception: If database insert fails
         """
         position_id = str(uuid.uuid4())
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
 
         try:
             await self.db.execute(
@@ -141,7 +141,7 @@ class TradeLifecycleManager:
         exit_price: float,
         exit_size: float,
         fees_paid: float = 0.0,
-        resolution_outcome: Optional[str] = None,
+        resolution_outcome: str | None = None,
     ) -> str:
         """
         Close an open position and record the trade outcome.
@@ -163,7 +163,7 @@ class TradeLifecycleManager:
             Exception: If position not found or database operation fails
         """
         outcome_id = str(uuid.uuid4())
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
 
         try:
             # Fetch the position
@@ -325,8 +325,8 @@ class TradeLifecycleManager:
         Raises:
             Exception: If database operations fail
         """
-        now = datetime.utcnow().isoformat()
-        today_start = (datetime.utcnow() - timedelta(hours=24)).isoformat()
+        now = datetime.now(timezone.utc).isoformat()
+        today_start = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
 
         try:
             # Get all open positions and compute unrealized P&L
@@ -487,9 +487,9 @@ class StrategyScorecard:
 
     async def get_strategy_summary(
         self,
-        strategy: Optional[str] = None,
+        strategy: str | None = None,
         days: int = 7,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Get performance summary for a strategy (or all strategies if strategy=None).
 
@@ -509,7 +509,7 @@ class StrategyScorecard:
             - avg_edge_captured_pct: Average edge capture
             - avg_execution_latency_ms: Average signal-to-fill latency
         """
-        lookback = (datetime.utcnow() - timedelta(days=days)).isoformat()
+        lookback = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
 
         try:
             # Build query
@@ -604,7 +604,7 @@ class StrategyScorecard:
             )
             raise
 
-    async def get_portfolio_summary(self, days: int = 7) -> Dict[str, Any]:
+    async def get_portfolio_summary(self, days: int = 7) -> dict[str, Any]:
         """
         Get overall portfolio performance summary across all strategies.
 
@@ -616,7 +616,7 @@ class StrategyScorecard:
         """
         return await self.get_strategy_summary(strategy=None, days=days)
 
-    async def get_daily_pnl_series(self, days: int = 30) -> List[Dict[str, Any]]:
+    async def get_daily_pnl_series(self, days: int = 30) -> list[dict[str, Any]]:
         """
         Get daily P&L series for charting.
 
@@ -633,7 +633,7 @@ class StrategyScorecard:
             - cumulative_pnl: Running cumulative P&L
             - num_trades: Number of closed trades that day
         """
-        lookback = (datetime.utcnow() - timedelta(days=days)).isoformat()
+        lookback = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
 
         try:
             cursor = await self.db.execute(
@@ -683,7 +683,7 @@ class StrategyScorecard:
             self.logger.error(f"Failed to get daily P&L series: {str(e)}")
             raise
 
-    async def compare_strategies(self, days: int = 7) -> Dict[str, Dict[str, Any]]:
+    async def compare_strategies(self, days: int = 7) -> dict[str, dict[str, Any]]:
         """
         Compare performance across all active strategies.
 
@@ -719,7 +719,7 @@ class StrategyScorecard:
     # Private helper methods
 
     def _compute_sharpe_ratio(
-        self, pnl_values: List[float], risk_free_rate: float = 0.01
+        self, pnl_values: list[float], risk_free_rate: float = 0.01
     ) -> float:
         """
         Compute annualized Sharpe ratio from daily P&L values.
@@ -750,7 +750,7 @@ class StrategyScorecard:
             self.logger.warning(f"Failed to compute Sharpe ratio: {str(e)}")
             return 0.0
 
-    def _compute_max_drawdown(self, pnl_values: List[float]) -> float:
+    def _compute_max_drawdown(self, pnl_values: list[float]) -> float:
         """
         Compute maximum peak-to-trough drawdown as a percentage.
 

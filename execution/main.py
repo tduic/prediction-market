@@ -10,7 +10,7 @@ import json
 import logging
 import signal as signal_module
 import sys
-from typing import Optional, Set
+
 
 import aiosqlite
 import redis.asyncio as redis
@@ -49,12 +49,12 @@ class ExecutionService:
         self.max_retries = max_retries
         self.execution_mode = execution_mode
 
-        self.redis_client: Optional[redis.Redis] = None
-        self.db_connection: Optional[aiosqlite.Connection] = None
-        self.signal_handler: Optional[SignalHandler] = None
-        self.position_manager: Optional[PositionStateManager] = None
+        self.redis_client: redis.Redis | None = None
+        self.db_connection: aiosqlite.Connection | None = None
+        self.signal_handler: SignalHandler | None = None
+        self.position_manager: PositionStateManager | None = None
 
-        self.processed_signal_ids: Set[str] = set()
+        self.processed_signal_ids: set[str] = set()
         self.running = True
 
     async def connect(self) -> None:

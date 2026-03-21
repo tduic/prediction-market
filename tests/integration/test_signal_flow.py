@@ -11,7 +11,7 @@ Tests the complete pipeline:
 
 import pytest
 from unittest.mock import Mock, patch, MagicMock, AsyncMock
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import asyncio
 import json
 
@@ -34,7 +34,7 @@ class MarketUpdatedEvent:
         self.market_id = market_id
         self.yes_price = yes_price
         self.no_price = no_price
-        self.timestamp = timestamp or datetime.utcnow()
+        self.timestamp = timestamp or datetime.now(timezone.utc)
 
 
 class ConstraintViolationEvent:
@@ -51,7 +51,7 @@ class ConstraintViolationEvent:
         self.pair_id = pair_id
         self.violation_type = violation_type
         self.spread = spread
-        self.timestamp = datetime.utcnow()
+        self.timestamp = datetime.now(timezone.utc)
 
 
 class TradeSignal:
@@ -74,7 +74,7 @@ class TradeSignal:
         self.kelly_fraction = kelly_fraction
         self.expected_edge = expected_edge
         self.ttl_s = ttl_s
-        self.created_at = datetime.utcnow()
+        self.created_at = datetime.now(timezone.utc)
         self.expires_at = self.created_at + timedelta(seconds=ttl_s)
 
 
@@ -190,7 +190,7 @@ class SignalRouter:
             dict with processing result
         """
         # Check if signal expired
-        if datetime.utcnow() > signal.expires_at:
+        if datetime.now(timezone.utc) > signal.expires_at:
             return {
                 "success": False,
                 "reason": "signal_expired",
@@ -499,7 +499,7 @@ class TestViolationToSignalFlow:
         )
 
         # Manually expire it
-        signal.expires_at = datetime.utcnow() - timedelta(seconds=1)
+        signal.expires_at = datetime.now(timezone.utc) - timedelta(seconds=1)
 
         result = await router.process_signal(signal)
 

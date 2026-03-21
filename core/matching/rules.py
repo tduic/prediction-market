@@ -2,7 +2,7 @@
 
 import re
 from dataclasses import dataclass
-from typing import Optional, Dict, List, Callable
+from typing import Optional, Callable
 
 
 @dataclass
@@ -10,7 +10,7 @@ class MatchResult:
     """Result of market pair matching."""
 
     pair_type: str  # "complement", "subset", "cross_platform", etc.
-    relationship: Optional[str]  # e.g., "subset", "superset"
+    relationship: str | None  # e.g., "subset", "superset"
     confidence: float  # 0.0 to 1.0
 
 
@@ -28,7 +28,7 @@ class RuleTemplate:
         self.name = name
         self.category = category
 
-    def extract_key_info(self, title: str) -> Optional[Dict[str, str]]:
+    def extract_key_info(self, title: str) -> dict[str, str] | None:
         """
         Extract key information from market title.
 
@@ -56,7 +56,7 @@ class FOCMTemplate(RuleTemplate):
             r"Interest.*?Rate.*?Decision.*?FOMC",
         ]
 
-    def extract_key_info(self, title: str) -> Optional[Dict[str, str]]:
+    def extract_key_info(self, title: str) -> dict[str, str] | None:
         """Extract FOMC decision info from title."""
         title_lower = title.lower()
 
@@ -88,7 +88,7 @@ class CPITemplate(RuleTemplate):
             r"Inflation.*?Rate",
         ]
 
-    def extract_key_info(self, title: str) -> Optional[Dict[str, str]]:
+    def extract_key_info(self, title: str) -> dict[str, str] | None:
         """Extract CPI decision info from title."""
         title_lower = title.lower()
 
@@ -118,7 +118,7 @@ class ElectionTemplate(RuleTemplate):
             r"(Trump|Harris|DeSantis|Newsom).*?(President|Senate|House)",
         ]
 
-    def extract_key_info(self, title: str) -> Optional[Dict[str, str]]:
+    def extract_key_info(self, title: str) -> dict[str, str] | None:
         """Extract election info from title."""
         title_lower = title.lower()
 
@@ -147,7 +147,7 @@ class SportsTemplate(RuleTemplate):
             r"(AFC|NFC|NBA|MLB|NHL|Premier League)",
         ]
 
-    def extract_key_info(self, title: str) -> Optional[Dict[str, str]]:
+    def extract_key_info(self, title: str) -> dict[str, str] | None:
         """Extract sports info from title."""
         title_lower = title.lower()
 
@@ -170,7 +170,7 @@ class TemplateRegistry:
 
     def __init__(self):
         """Initialize template registry with default templates."""
-        self.templates: List[RuleTemplate] = [
+        self.templates: list[RuleTemplate] = [
             FOCMTemplate(),
             CPITemplate(),
             ElectionTemplate(),
@@ -181,11 +181,11 @@ class TemplateRegistry:
         """Add a template to the registry."""
         self.templates.append(template)
 
-    def get_templates_for_category(self, category: str) -> List[RuleTemplate]:
+    def get_templates_for_category(self, category: str) -> list[RuleTemplate]:
         """Get all templates for a category."""
         return [t for t in self.templates if t.category == category]
 
-    def extract_info_all(self, title: str) -> List[Dict[str, str]]:
+    def extract_info_all(self, title: str) -> list[dict[str, str]]:
         """Try all templates on a title."""
         results = []
         for template in self.templates:
@@ -202,9 +202,9 @@ _template_registry = TemplateRegistry()
 def match_by_rules(
     market_a_title: str,
     market_b_title: str,
-    category: Optional[str] = None,
-    registry: Optional[TemplateRegistry] = None,
-) -> Optional[MatchResult]:
+    category: str | None = None,
+    registry: TemplateRegistry | None = None,
+) -> MatchResult | None:
     """
     Match two markets using rule-based templates.
 
@@ -254,7 +254,7 @@ def match_by_rules(
     return None
 
 
-def _events_match(info_a: Dict[str, str], info_b: Dict[str, str]) -> bool:
+def _events_match(info_a: dict[str, str], info_b: dict[str, str]) -> bool:
     """Check if two extracted event infos match."""
     # Events must be of same type
     if info_a.get("event_type") != info_b.get("event_type"):
@@ -276,7 +276,7 @@ def _events_match(info_a: Dict[str, str], info_b: Dict[str, str]) -> bool:
 
 
 def _infer_pair_type(
-    title_a: str, title_b: str, info_a: Dict[str, str], info_b: Dict[str, str]
+    title_a: str, title_b: str, info_a: dict[str, str], info_b: dict[str, str]
 ) -> str:
     """Infer the pair type from market titles and extracted info."""
     # Check for subset/superset patterns

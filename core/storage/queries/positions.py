@@ -2,8 +2,8 @@
 Database queries for position and order management.
 """
 
-from typing import Optional, List, Dict, Any
-from datetime import datetime
+from typing import Optional, List, Any
+from datetime import datetime, timezone
 import logging
 
 from ..db import Database
@@ -20,8 +20,8 @@ async def insert_order(
     side: str,
     order_type: str,
     requested_size: float,
-    requested_price: Optional[float] = None,
-    platform_order_id: Optional[str] = None,
+    requested_price: float | None = None,
+    platform_order_id: str | None = None,
 ) -> str:
     """
     Insert an order record.
@@ -41,7 +41,7 @@ async def insert_order(
     Returns:
         The order_id
     """
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
 
     sql = """
     INSERT INTO orders (
@@ -74,7 +74,7 @@ async def insert_order(
 async def get_order(
     db: Database,
     order_id: str,
-) -> Optional[Dict[str, Any]]:
+) -> dict[str, Any] | None:
     """
     Retrieve a single order by ID.
 
@@ -92,14 +92,14 @@ async def get_order(
 async def update_order(
     db: Database,
     order_id: str,
-    filled_price: Optional[float] = None,
-    filled_size: Optional[float] = None,
-    slippage: Optional[float] = None,
-    fee_paid: Optional[float] = None,
-    status: Optional[str] = None,
-    platform_order_id: Optional[str] = None,
-    failure_reason: Optional[str] = None,
-    fill_latency_ms: Optional[int] = None,
+    filled_price: float | None = None,
+    filled_size: float | None = None,
+    slippage: float | None = None,
+    fee_paid: float | None = None,
+    status: str | None = None,
+    platform_order_id: str | None = None,
+    failure_reason: str | None = None,
+    fill_latency_ms: int | None = None,
 ) -> None:
     """
     Update order record.
@@ -116,7 +116,7 @@ async def update_order(
         failure_reason: Reason for failure
         fill_latency_ms: Latency from submission to fill
     """
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
 
     updates = []
     params = []
@@ -165,7 +165,7 @@ async def update_order(
 async def get_orders_for_signal(
     db: Database,
     signal_id: str,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """
     Get all orders for a signal.
 
@@ -188,7 +188,7 @@ async def get_orders_for_signal(
 async def get_pending_orders(
     db: Database,
     limit: int = 1000,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """
     Get pending orders.
 
@@ -213,9 +213,9 @@ async def insert_order_event(
     db: Database,
     order_id: str,
     event_type: str,
-    price: Optional[float] = None,
-    size: Optional[float] = None,
-    detail: Optional[str] = None,
+    price: float | None = None,
+    size: float | None = None,
+    detail: str | None = None,
 ) -> int:
     """
     Insert an order event (fill, cancel, etc.).
@@ -231,7 +231,7 @@ async def insert_order_event(
     Returns:
         Row ID
     """
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
 
     sql = """
     INSERT INTO order_events (
@@ -246,7 +246,7 @@ async def insert_order_event(
 async def get_order_events(
     db: Database,
     order_id: str,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """
     Get event history for an order.
 
@@ -292,7 +292,7 @@ async def insert_position(
     Returns:
         The position_id
     """
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
 
     sql = """
     INSERT INTO positions (
@@ -321,7 +321,7 @@ async def insert_position(
 async def get_position(
     db: Database,
     position_id: str,
-) -> Optional[Dict[str, Any]]:
+) -> dict[str, Any] | None:
     """
     Retrieve a single position by ID.
 
@@ -339,8 +339,8 @@ async def get_position(
 async def update_position(
     db: Database,
     position_id: str,
-    current_price: Optional[float] = None,
-    unrealized_pnl: Optional[float] = None,
+    current_price: float | None = None,
+    unrealized_pnl: float | None = None,
 ) -> None:
     """
     Update position with current market data.
@@ -351,7 +351,7 @@ async def update_position(
         current_price: Current market price
         unrealized_pnl: Unrealized PnL
     """
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
 
     updates = []
     params = []
@@ -378,8 +378,8 @@ async def close_position(
     exit_price: float,
     exit_size: float,
     realized_pnl: float,
-    fees_paid: Optional[float] = None,
-    resolution_outcome: Optional[str] = None,
+    fees_paid: float | None = None,
+    resolution_outcome: str | None = None,
 ) -> None:
     """
     Close a position.
@@ -393,7 +393,7 @@ async def close_position(
         fees_paid: Fees paid
         resolution_outcome: Market resolution outcome
     """
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
 
     sql = """
     UPDATE positions
@@ -419,8 +419,8 @@ async def close_position(
 
 async def get_open_positions(
     db: Database,
-    strategy: Optional[str] = None,
-) -> List[Dict[str, Any]]:
+    strategy: str | None = None,
+) -> list[dict[str, Any]]:
     """
     Get all open positions.
 
@@ -450,7 +450,7 @@ async def get_open_positions(
 async def get_positions_for_market(
     db: Database,
     market_id: str,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """
     Get all positions for a market.
 
@@ -472,7 +472,7 @@ async def get_positions_for_market(
 
 async def get_position_count(
     db: Database,
-    status: Optional[str] = None,
+    status: str | None = None,
 ) -> int:
     """
     Count positions, optionally by status.

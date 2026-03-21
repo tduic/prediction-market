@@ -3,8 +3,8 @@
 import asyncio
 import logging
 from dataclasses import dataclass
-from datetime import datetime
-from typing import Any, Callable, Dict, List, Optional, Set
+from datetime import datetime, timezone
+from typing import Any, Callable, List
 
 from core.constraints.fees import FeeEstimator, FeeConfig
 from core.constraints.rules import (
@@ -25,7 +25,7 @@ class ConstraintConfig:
     min_net_spread_single_platform: float = 0.02  # 2%
     min_net_spread_cross_platform: float = 0.03  # 3%
     complementarity_tolerance: float = 0.01  # 1%
-    fee_config: Optional[FeeConfig] = None
+    fee_config: FeeConfig | None = None
     enable_logging: bool = True
     max_violation_age_seconds: int = 3600  # 1 hour
 
@@ -38,11 +38,11 @@ class MarketPair:
     market_id_a: str
     market_id_b: str
     pair_type: str  # e.g., "complement", "subset", "cross_platform", "mutual_exclusivity"
-    relationship: Optional[str]  # e.g., "subset", "superset" for subset_superset
+    relationship: str | None  # e.g., "subset", "superset" for subset_superset
     market_a_title: str
     market_b_title: str
-    platform_a: Optional[str]
-    platform_b: Optional[str]
+    platform_a: str | None
+    platform_b: str | None
     is_active: bool
 
 
@@ -82,7 +82,7 @@ class SpreadHistoryEntry:
     market_b_price: float
     raw_spread: float
     net_spread: float
-    rule_violations: List[str]
+    rule_violations: list[str]
     recorded_at: datetime
 
 
@@ -93,7 +93,7 @@ class ConstraintEngine:
         self,
         event_bus: Any,
         db: Any,
-        config: Optional[ConstraintConfig] = None,
+        config: ConstraintConfig | None = None,
     ):
         """
         Initialize constraint engine.
@@ -109,7 +109,7 @@ class ConstraintEngine:
         self.fee_estimator = FeeEstimator(self.config.fee_config or FeeConfig())
 
         # Track known violations to avoid duplicate events
-        self._active_violations: Dict[str, datetime] = {}
+        self._active_violations: dict[str, datetime] = {}
 
         # Rule checkers
         self._rule_checkers = {
@@ -136,7 +136,7 @@ class ConstraintEngine:
         logger.info("Stopping ConstraintEngine")
         self.event_bus.unsubscribe("MarketUpdated", self._on_market_updated)
 
-    async def _on_market_updated(self, event: Dict[str, Any]) -> None:
+    async def _on_market_updated(self, event: dict[str, Any]) -> None:
         """
         Handle market update event.
 
@@ -205,7 +205,7 @@ class ConstraintEngine:
 
     async def _check_subset_superset(
         self, market_a: MarketData, market_b: MarketData, pair: MarketPair
-    ) -> Optional[Any]:
+    ) -> Any | None:
         """Check subset/superset constraint."""
         violation_info = subset_superset.check(
             market_a.current_price,
@@ -216,7 +216,7 @@ class ConstraintEngine:
 
     async def _check_complementarity(
         self, market_a: MarketData, market_b: MarketData, pair: MarketPair
-    ) -> Optional[Any]:
+    ) -> Any | None:
         """Check complementarity constraint for binary markets."""
         violation_info = complementarity.check(
             market_a.current_price,
@@ -227,7 +227,7 @@ class ConstraintEngine:
 
     async def _check_mutual_exclusivity(
         self, market_a: MarketData, market_b: MarketData, pair: MarketPair
-    ) -> Optional[Any]:
+    ) -> Any | None:
         """
         Check mutual exclusivity constraint.
 
@@ -241,7 +241,7 @@ class ConstraintEngine:
 
     async def _check_cross_platform(
         self, market_a: MarketData, market_b: MarketData, pair: MarketPair
-    ) -> Optional[Any]:
+    ) -> Any | None:
         """Check cross-platform spread constraint."""
         violation_info = cross_platform.check(
             market_a.current_price,
@@ -258,7 +258,7 @@ class ConstraintEngine:
         pair: MarketPair,
         market_a: MarketData,
         market_b: MarketData,
-        violations: List[Any],
+        violations: list[Any],
     ) -> None:
         """
         Record spread history to database.
@@ -293,7 +293,7 @@ class ConstraintEngine:
                 raw_spread=raw_spread,
                 net_spread=net_spread,
                 rule_violations=violation_types,
-                recorded_at=datetime.utcnow(),
+                recorded_at=datetime.now(timezone.utc),
             )
 
             await self.db.insert_pair_spread_history(history_entry)
@@ -315,7 +315,7 @@ class ConstraintEngine:
             violation_info: Violation information
         """
         try:
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)
 
             # Generate violation ID
             violation_id = (
@@ -371,7 +371,7 @@ class ConstraintEngine:
 
     async def _cleanup_stale_violations(self) -> None:
         """Remove stale violations from tracking."""
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         max_age = self.config.max_violation_age_seconds
 
         stale_ids = [

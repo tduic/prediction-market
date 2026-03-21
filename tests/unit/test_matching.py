@@ -9,7 +9,7 @@ Tests market matching via:
 
 import pytest
 from unittest.mock import Mock, patch, MagicMock
-from datetime import datetime
+from datetime import datetime, timezone
 import math
 
 
@@ -38,7 +38,7 @@ class MarketPair:
         self.similarity = similarity
         self.verified = verified
         self.status = status
-        self.created_at = datetime.utcnow()
+        self.created_at = datetime.now(timezone.utc)
 
 
 class MarketMatcher:

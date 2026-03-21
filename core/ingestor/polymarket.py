@@ -6,8 +6,8 @@ import logging
 import os
 import time
 from dataclasses import dataclass, field
-from datetime import datetime
-from typing import Optional
+from datetime import datetime, timezone
+
 
 import httpx
 
@@ -21,8 +21,8 @@ class OrderBook:
     token_id: str
     bids: list[dict] = field(default_factory=list)
     asks: list[dict] = field(default_factory=list)
-    mid_price: Optional[float] = None
-    timestamp: datetime = field(default_factory=datetime.utcnow)
+    mid_price: float | None = None
+    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     def compute_mid_price(self) -> None:
         """Compute mid price from top bid/ask."""
@@ -41,11 +41,11 @@ class MarketData:
     symbol: str
     question: str
     description: str
-    resolution_date: Optional[datetime]
+    resolution_date: datetime | None
     last_price: float
-    order_book: Optional[OrderBook] = None
-    created_at: datetime = field(default_factory=datetime.utcnow)
-    updated_at: datetime = field(default_factory=datetime.utcnow)
+    order_book: OrderBook | None = None
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     is_active: bool = True
     metadata: dict = field(default_factory=dict)
 
@@ -85,7 +85,7 @@ class PolymarketClient:
 
     BASE_URL = "https://clob.polymarket.com"
 
-    def __init__(self, api_key: Optional[str] = None, api_secret: Optional[str] = None):
+    def __init__(self, api_key: str | None = None, api_secret: str | None = None):
         """
         Args:
             api_key: API key (or from POLYMARKET_API_KEY env var)
@@ -94,7 +94,7 @@ class PolymarketClient:
         self.api_key = api_key or os.getenv("POLYMARKET_API_KEY", "")
         self.api_secret = api_secret or os.getenv("POLYMARKET_API_SECRET", "")
         self.rate_limiter = TokenBucket(capacity=10.0, refill_rate=10.0 / 1.0)
-        self._client: Optional[httpx.AsyncClient] = None
+        self._client: httpx.AsyncClient | None = None
 
     async def __aenter__(self):
         """Async context manager entry."""
@@ -166,7 +166,7 @@ class PolymarketClient:
             logger.error(f"Polymarket API error: {e}")
             return []
 
-    async def get_market(self, condition_id: str) -> Optional[MarketData]:
+    async def get_market(self, condition_id: str) -> MarketData | None:
         """
         Get single market by condition ID.
 
@@ -199,7 +199,7 @@ class PolymarketClient:
             logger.error(f"Polymarket API error: {e}")
             return None
 
-    async def get_orderbook(self, token_id: str) -> Optional[OrderBook]:
+    async def get_orderbook(self, token_id: str) -> OrderBook | None:
         """
         Get orderbook for a token.
 
@@ -232,7 +232,7 @@ class PolymarketClient:
             logger.error(f"Error fetching orderbook for {token_id}: {e}")
             return None
 
-    def _parse_market(self, item: dict) -> Optional[MarketData]:
+    def _parse_market(self, item: dict) -> MarketData | None:
         """Parse Polymarket API response into MarketData."""
         try:
             return MarketData(

@@ -8,7 +8,7 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import List
 
 import aiosqlite
 
@@ -26,7 +26,7 @@ class Position:
     quantity: float
     entry_price: float
     entry_timestamp: float
-    current_price: Optional[float] = None
+    current_price: float | None = None
     unrealized_pnl: float = 0.0
 
     def update_price(self, current_price: float) -> None:
@@ -63,10 +63,10 @@ class PositionStateManager:
         self.flush_interval_s = flush_interval_s
 
         # In-memory position store
-        self.positions: Dict[str, Position] = {}
+        self.positions: dict[str, Position] = {}
 
         # Pending writes for batch flushing
-        self.pending_writes: List[Position] = []
+        self.pending_writes: list[Position] = []
 
         self.last_flush_time = time.time()
         self.running = True
@@ -128,7 +128,7 @@ class PositionStateManager:
         self,
         market_id: str,
         current_price: float,
-    ) -> Dict[str, float]:
+    ) -> dict[str, float]:
         """
         Update unrealized PnL for all positions in a market.
 
@@ -139,7 +139,7 @@ class PositionStateManager:
         Returns:
             Dictionary of position_id -> unrealized_pnl
         """
-        updated_pnl: Dict[str, float] = {}
+        updated_pnl: dict[str, float] = {}
 
         for position_id, position in self.positions.items():
             if position.market_id == market_id:
@@ -154,7 +154,7 @@ class PositionStateManager:
 
         return updated_pnl
 
-    def get_open_positions(self) -> List[Position]:
+    def get_open_positions(self) -> list[Position]:
         """
         Get all currently open positions.
 
@@ -163,7 +163,7 @@ class PositionStateManager:
         """
         return list(self.positions.values())
 
-    def get_positions_by_market(self, market_id: str) -> List[Position]:
+    def get_positions_by_market(self, market_id: str) -> list[Position]:
         """
         Get all positions for a specific market.
 
@@ -175,7 +175,7 @@ class PositionStateManager:
         """
         return [pos for pos in self.positions.values() if pos.market_id == market_id]
 
-    def get_position(self, position_id: str) -> Optional[Position]:
+    def get_position(self, position_id: str) -> Position | None:
         """
         Get a specific position by ID.
 
@@ -292,14 +292,14 @@ class PositionStateManager:
         """
         return sum(pos.unrealized_pnl for pos in self.positions.values())
 
-    def get_market_exposure(self) -> Dict[str, float]:
+    def get_market_exposure(self) -> dict[str, float]:
         """
         Get net exposure by market.
 
         Returns:
             Dictionary of market_id -> net_quantity
         """
-        exposure: Dict[str, float] = {}
+        exposure: dict[str, float] = {}
 
         for position in self.positions.values():
             if position.market_id not in exposure:

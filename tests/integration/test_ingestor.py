@@ -10,7 +10,7 @@ Tests data ingestion pipeline:
 
 import pytest
 from unittest.mock import Mock, patch, MagicMock, AsyncMock
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import asyncio
 
 
@@ -94,7 +94,7 @@ class MarketIngestor:
         cursor = self.db.execute(
             """INSERT INTO ingestor_runs (started_at, status)
                VALUES (?, ?)""",
-            (datetime.utcnow(), "running"),
+            (datetime.now(timezone.utc), "running"),
         )
         run_id = cursor.lastrowid
         self.db.commit()
@@ -128,7 +128,7 @@ class MarketIngestor:
                         (
                             market["yes_price"],
                             market["no_price"],
-                            datetime.utcnow(),
+                            datetime.now(timezone.utc),
                             market["id"],
                         ),
                     )
@@ -164,7 +164,7 @@ class MarketIngestor:
                        markets_fetched = ?, markets_inserted = ?, markets_updated = ?
                    WHERE id = ?""",
                 (
-                    datetime.utcnow(),
+                    datetime.now(timezone.utc),
                     "completed",
                     markets_fetched,
                     inserted,
@@ -188,7 +188,7 @@ class MarketIngestor:
                    SET completed_at = ?, status = ?, errors = ?
                    WHERE id = ?""",
                 (
-                    datetime.utcnow(),
+                    datetime.now(timezone.utc),
                     "rate_limited",
                     str(e),
                     run_id,
@@ -224,7 +224,7 @@ class MarketIngestor:
         self.db.execute(
             """INSERT INTO market_prices (market_id, yes_price, no_price, timestamp)
                VALUES (?, ?, ?, ?)""",
-            (market_id, yes_price, no_price, datetime.utcnow()),
+            (market_id, yes_price, no_price, datetime.now(timezone.utc)),
         )
         self.db.commit()
 

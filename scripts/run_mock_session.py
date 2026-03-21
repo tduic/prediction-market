@@ -22,7 +22,7 @@ import sqlite3
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 from uuid import uuid4
 
 # Setup path for imports
@@ -197,7 +197,7 @@ async def init_database(db_path: str) -> aiosqlite.Connection:
 # ============================================================================
 
 
-async def seed_markets(db: aiosqlite.Connection, num_markets: int = 12) -> List[str]:
+async def seed_markets(db: aiosqlite.Connection, num_markets: int = 12) -> list[str]:
     """Seed database with mock market data. Returns list of market IDs."""
     logger.info(f"Seeding {num_markets} mock markets")
 
@@ -261,14 +261,14 @@ async def seed_markets(db: aiosqlite.Connection, num_markets: int = 12) -> List[
     return market_ids
 
 
-async def create_market_pairs(db: aiosqlite.Connection, market_ids: List[str]) -> None:
+async def create_market_pairs(db: aiosqlite.Connection, market_ids: list[str]) -> None:
     """Create market pairs across platforms with similarity scores."""
     logger.info(f"Creating market pairs from {len(market_ids)} markets")
 
     pair_count = 0
 
     # Group by category to create realistic pairs
-    markets_by_cat: Dict[str, List[str]] = {}
+    markets_by_cat: dict[str, list[str]] = {}
     for market_id in market_ids:
         cursor = await db.execute(
             "SELECT category FROM markets WHERE id = ?", (market_id,)
@@ -365,7 +365,7 @@ async def add_price_snapshots(db: aiosqlite.Connection) -> None:
 
 async def generate_violations(
     db: aiosqlite.Connection, num_violations: int = 8
-) -> List[str]:
+) -> list[str]:
     """Generate realistic violation scenarios with arbitrage opportunities."""
     logger.info(f"Generating {num_violations} mock violations")
 
@@ -448,8 +448,8 @@ async def generate_violations(
 
 
 async def generate_signals(
-    db: aiosqlite.Connection, violation_ids: List[str]
-) -> List[str]:
+    db: aiosqlite.Connection, violation_ids: list[str]
+) -> list[str]:
     """Generate trading signals for violations with Kelly sizing and risk checks."""
     logger.info(f"Generating trading signals for {len(violation_ids)} violations")
 
@@ -589,8 +589,8 @@ async def generate_signals(
 
 
 async def execute_signals(
-    db: aiosqlite.Connection, signal_ids: List[str]
-) -> List[Dict[str, Any]]:
+    db: aiosqlite.Connection, signal_ids: list[str]
+) -> list[dict[str, Any]]:
     """Execute trading signals with simulated fills."""
     logger.info(f"Simulating execution for {len(signal_ids)} signals")
 
@@ -765,7 +765,7 @@ async def execute_signals(
 # ============================================================================
 
 
-async def record_positions(db: aiosqlite.Connection, signal_ids: List[str]) -> None:
+async def record_positions(db: aiosqlite.Connection, signal_ids: list[str]) -> None:
     """Record positions from filled orders."""
     logger.info(f"Recording positions for {len(signal_ids)} signals")
 

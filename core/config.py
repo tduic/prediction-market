@@ -4,7 +4,7 @@ Loads all settings from environment variables with sensible defaults.
 """
 
 from dataclasses import dataclass, field
-from typing import Optional
+
 import os
 from pathlib import Path
 
@@ -277,7 +277,7 @@ def load_config() -> Config:
 
 
 # Global config instance
-_config: Optional[Config] = None
+_config: Config | None = None
 
 
 def get_config() -> Config:

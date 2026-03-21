@@ -1,7 +1,7 @@
 """Kelly fraction and position sizing calculations."""
 
 import logging
-from typing import Optional
+
 
 import numpy as np
 
@@ -108,8 +108,8 @@ def compute_risk_adjusted_sizing(
     kelly_f: float,
     bankroll: float,
     max_size: float,
-    volatility: Optional[float] = None,
-    confidence: Optional[float] = None,
+    volatility: float | None = None,
+    confidence: float | None = None,
 ) -> float:
     """
     Compute position size with risk and confidence adjustments.

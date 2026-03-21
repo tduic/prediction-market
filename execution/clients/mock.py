@@ -15,7 +15,7 @@ import random
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Dict
 
 import aiosqlite
 
@@ -84,12 +84,12 @@ class MockOrderResult:
     platform: str = "mock"
     status: str = "ACCEPTED"  # ACCEPTED | REJECTED | PENDING
     submission_latency_ms: int = 0
-    fill_latency_ms: Optional[int] = None
-    filled_price: Optional[float] = None
-    filled_size: Optional[float] = None
-    fee_paid: Optional[float] = None
-    slippage: Optional[float] = None
-    error_message: Optional[str] = None
+    fill_latency_ms: int | None = None
+    filled_price: float | None = None
+    filled_size: float | None = None
+    fee_paid: float | None = None
+    slippage: float | None = None
+    error_message: str | None = None
 
 
 @dataclass
@@ -104,7 +104,7 @@ class MockOrderBook:
     last_updated: float = field(default_factory=time.time)
 
     def simulate_fill_price(
-        self, side: str, limit_price: Optional[float], max_slippage: float
+        self, side: str, limit_price: float | None, max_slippage: float
     ) -> float:
         """
         Simulate a realistic fill price given side and limit.
@@ -142,7 +142,7 @@ class MockExecutionClient:
     def __init__(
         self,
         db_connection: aiosqlite.Connection,
-        config: Optional[MockConfig] = None,
+        config: MockConfig | None = None,
         platform_label: str = "mock",
     ) -> None:
         """
@@ -160,10 +160,10 @@ class MockExecutionClient:
         self.platform_label = platform_label
 
         # Simulated order book per market
-        self._order_books: Dict[str, MockOrderBook] = {}
+        self._order_books: dict[str, MockOrderBook] = {}
 
         # Track all mock orders for inspection
-        self.order_history: List[MockOrderResult] = []
+        self.order_history: list[MockOrderResult] = []
 
         # Stats
         self.total_submitted = 0
@@ -477,7 +477,7 @@ class MockExecutionClient:
         except Exception as e:
             logger.error("[MOCK] Failed to write fill event to DB: %s", e)
 
-    def get_stats(self) -> Dict[str, int]:
+    def get_stats(self) -> dict[str, int]:
         """Return summary stats for the mock session."""
         return {
             "total_submitted": self.total_submitted,

@@ -2,7 +2,7 @@
 
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional
 
@@ -25,11 +25,11 @@ class ModelVersion:
     model_name: str
     version: str
     status: ModelStatus = ModelStatus.DRAFT
-    deployed_at: Optional[datetime] = None
-    retired_at: Optional[datetime] = None
+    deployed_at: datetime | None = None
+    retired_at: datetime | None = None
     metrics: dict = field(default_factory=dict)
     notes: str = ""
-    created_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class ModelRegistry:
@@ -44,7 +44,7 @@ class ModelRegistry:
         self,
         model_name: str,
         version: str,
-        metrics: Optional[dict] = None,
+        metrics: dict | None = None,
         notes: str = "",
     ) -> ModelVersion:
         """
@@ -81,7 +81,7 @@ class ModelRegistry:
 
         return model_version
 
-    def get_active_version(self, model_name: str) -> Optional[ModelVersion]:
+    def get_active_version(self, model_name: str) -> ModelVersion | None:
         """
         Get active version of a model.
 
@@ -137,7 +137,7 @@ class ModelRegistry:
 
         # Activate new version
         target.status = ModelStatus.ACTIVE
-        target.deployed_at = datetime.utcnow()
+        target.deployed_at = datetime.now(timezone.utc)
         self.active_versions[model_name] = version
 
         logger.info(f"Deployed {model_name} version {version}")
@@ -173,7 +173,7 @@ class ModelRegistry:
             return False
 
         target.status = ModelStatus.RETIRED
-        target.retired_at = datetime.utcnow()
+        target.retired_at = datetime.now(timezone.utc)
 
         logger.info(f"Retired {model_name} version {version}")
         return True
@@ -197,7 +197,7 @@ class ModelRegistry:
             reverse=True,
         )
 
-    def get_version(self, model_name: str, version: str) -> Optional[ModelVersion]:
+    def get_version(self, model_name: str, version: str) -> ModelVersion | None:
         """
         Get specific model version.
 

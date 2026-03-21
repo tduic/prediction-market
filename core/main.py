@@ -11,7 +11,7 @@ import os
 import signal as signal_module
 import sys
 from pathlib import Path
-from typing import Optional
+
 
 from core.events.bus import EventBus
 from core.constraints.engine import ConstraintEngine
@@ -42,11 +42,11 @@ class CoreService:
         self.db_path = db_path
         self.migrations_dir = migrations_dir
 
-        self.db: Optional[Database] = None
-        self.event_bus: Optional[EventBus] = None
-        self.constraint_engine: Optional[ConstraintEngine] = None
-        self.signal_generator: Optional[SignalGenerator] = None
-        self.scheduler: Optional[IngestorScheduler] = None
+        self.db: Database | None = None
+        self.event_bus: EventBus | None = None
+        self.constraint_engine: ConstraintEngine | None = None
+        self.signal_generator: SignalGenerator | None = None
+        self.scheduler: IngestorScheduler | None = None
 
         self.running = True
 

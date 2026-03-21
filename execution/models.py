@@ -4,7 +4,6 @@ Shared data models for the execution service.
 Extracted to break circular imports between handler, router, and platform clients.
 """
 
-from typing import Optional
 
 from pydantic import BaseModel, Field, validator
 
@@ -16,7 +15,7 @@ class OrderLeg(BaseModel):
     platform: str  # "polymarket" or "kalshi"
     side: str  # "BUY" or "SELL"
     size: float = Field(gt=0)
-    limit_price: Optional[float] = Field(None, ge=0, le=1)
+    limit_price: float | None = Field(None, ge=0, le=1)
     order_type: str = "LIMIT"  # "LIMIT" or "MARKET"
 
     @validator("platform")

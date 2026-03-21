@@ -4,7 +4,6 @@ Enforces: P(X) + P(not X) = 100% on binary markets
 """
 
 from dataclasses import dataclass
-from typing import Optional
 
 
 @dataclass
@@ -19,7 +18,7 @@ class ViolationInfo:
 
 def check(
     yes_price: float, no_price: float, tolerance: float = 0.01
-) -> Optional[ViolationInfo]:
+) -> ViolationInfo | None:
     """
     Check complementarity constraint for binary markets.
 

@@ -2,8 +2,8 @@
 Database queries for violation and arbitrage opportunity management.
 """
 
-from typing import Optional, List, Dict, Any
-from datetime import datetime
+from typing import Optional, List, Any
+from datetime import datetime, timezone
 import logging
 
 from ..db import Database
@@ -20,8 +20,8 @@ async def insert_violation(
     price_b_at_detect: float,
     raw_spread: float,
     net_spread: float,
-    fee_estimate_a: Optional[float] = None,
-    fee_estimate_b: Optional[float] = None,
+    fee_estimate_a: float | None = None,
+    fee_estimate_b: float | None = None,
     status: str = "detected",
 ) -> str:
     """
@@ -43,7 +43,7 @@ async def insert_violation(
     Returns:
         The violation_id
     """
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
 
     sql = """
     INSERT INTO violations (
@@ -77,7 +77,7 @@ async def insert_violation(
 async def get_violation(
     db: Database,
     violation_id: str,
-) -> Optional[Dict[str, Any]]:
+) -> dict[str, Any] | None:
     """
     Retrieve a single violation by ID.
 
@@ -96,7 +96,7 @@ async def update_violation_status(
     db: Database,
     violation_id: str,
     status: str,
-    rejection_reason: Optional[str] = None,
+    rejection_reason: str | None = None,
 ) -> None:
     """
     Update violation status.
@@ -107,7 +107,7 @@ async def update_violation_status(
         status: New status (closed, rejected, etc.)
         rejection_reason: Optional reason for closure
     """
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
 
     sql = """
     UPDATE violations
@@ -121,7 +121,7 @@ async def update_violation_status(
 async def close_violation(
     db: Database,
     violation_id: str,
-    closed_at: Optional[str] = None,
+    closed_at: str | None = None,
 ) -> None:
     """
     Close a violation and record duration.
@@ -132,7 +132,7 @@ async def close_violation(
         closed_at: Closure time (defaults to now)
     """
     if closed_at is None:
-        closed_at = datetime.utcnow().isoformat()
+        closed_at = datetime.now(timezone.utc).isoformat()
 
     # Get the violation to calculate duration
     sql = "SELECT detected_at FROM violations WHERE id = ?"
@@ -152,14 +152,14 @@ async def close_violation(
     WHERE id = ?
     """
 
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
     await db.execute(sql, (closed_at, duration_ms, now, violation_id))
 
 
 async def get_active_violations(
     db: Database,
     limit: int = 1000,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """
     Get all active (detected) violations.
 
@@ -184,7 +184,7 @@ async def get_violations_by_pair(
     db: Database,
     pair_id: str,
     limit: int = 100,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """
     Get all violations for a specific market pair.
 
@@ -210,7 +210,7 @@ async def get_violations_by_status(
     db: Database,
     status: str,
     limit: int = 1000,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """
     Get violations with a specific status.
 
@@ -234,7 +234,7 @@ async def get_violations_by_status(
 
 async def get_violation_count(
     db: Database,
-    status: Optional[str] = None,
+    status: str | None = None,
 ) -> int:
     """
     Count violations, optionally by status.
@@ -263,7 +263,7 @@ async def insert_pair_spread_history(
     price_b: float,
     raw_spread: float,
     net_spread: float,
-    constraint_satisfied: Optional[int] = None,
+    constraint_satisfied: int | None = None,
 ) -> int:
     """
     Insert a pair spread history record.
@@ -280,7 +280,7 @@ async def insert_pair_spread_history(
     Returns:
         Row ID
     """
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
 
     sql = """
     INSERT INTO pair_spread_history (
@@ -306,7 +306,7 @@ async def get_pair_spread_history(
     db: Database,
     pair_id: str,
     limit: int = 100,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """
     Get spread history for a pair.
 
@@ -332,7 +332,7 @@ async def get_max_spread_in_period(
     db: Database,
     pair_id: str,
     minutes: int = 60,
-) -> Optional[Dict[str, Any]]:
+) -> dict[str, Any] | None:
     """
     Get the record with maximum net spread in recent period.
 
@@ -357,7 +357,7 @@ async def get_max_spread_in_period(
 
 async def get_violation_statistics(
     db: Database,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Get summary statistics on violations.
 

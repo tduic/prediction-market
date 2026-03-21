@@ -7,7 +7,7 @@ Shows pairs side-by-side with resolution criteria and allows manual approval/rej
 import argparse
 import asyncio
 import logging
-from typing import List, Optional, Tuple
+from typing import List
 
 import aiosqlite
 
@@ -26,7 +26,7 @@ class PairValidator:
         """
         self.db_path = db_path
 
-    async def get_pairs_by_status(self, verified: Optional[int]) -> List[dict]:
+    async def get_pairs_by_status(self, verified: int | None) -> list[dict]:
         """
         Get pairs filtered by verification status.
 
@@ -82,7 +82,7 @@ class PairValidator:
     async def validate_pair(
         self,
         pair: dict,
-    ) -> Optional[bool]:
+    ) -> bool | None:
         """
         Interactively validate a single pair.
 

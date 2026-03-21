@@ -2,7 +2,7 @@
 Database queries for PnL tracking and trade analysis.
 """
 
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Any
 from datetime import datetime, timedelta
 import logging
 
@@ -16,20 +16,20 @@ async def insert_snapshot(
     total_capital: float,
     cash: float,
     open_positions_count: int,
-    open_notional: Optional[float] = None,
-    unrealized_pnl: Optional[float] = None,
-    realized_pnl_today: Optional[float] = None,
-    realized_pnl_total: Optional[float] = None,
-    fees_today: Optional[float] = None,
-    fees_total: Optional[float] = None,
+    open_notional: float | None = None,
+    unrealized_pnl: float | None = None,
+    realized_pnl_today: float | None = None,
+    realized_pnl_total: float | None = None,
+    fees_today: float | None = None,
+    fees_total: float | None = None,
     snapshot_type: str = "scheduled",
-    pnl_constraint_arb: Optional[float] = None,
-    pnl_event_model: Optional[float] = None,
-    pnl_calibration: Optional[float] = None,
-    pnl_liquidity: Optional[float] = None,
-    pnl_latency: Optional[float] = None,
-    capital_polymarket: Optional[float] = None,
-    capital_kalshi: Optional[float] = None,
+    pnl_constraint_arb: float | None = None,
+    pnl_event_model: float | None = None,
+    pnl_calibration: float | None = None,
+    pnl_liquidity: float | None = None,
+    pnl_latency: float | None = None,
+    capital_polymarket: float | None = None,
+    capital_kalshi: float | None = None,
 ) -> int:
     """
     Insert a PnL snapshot.
@@ -57,7 +57,7 @@ async def insert_snapshot(
     Returns:
         Row ID
     """
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
 
     sql = """
     INSERT INTO pnl_snapshots (
@@ -95,7 +95,7 @@ async def insert_snapshot(
 
 async def get_latest_snapshot(
     db: Database,
-) -> Optional[Dict[str, Any]]:
+) -> dict[str, Any] | None:
     """
     Get the most recent PnL snapshot.
 
@@ -118,7 +118,7 @@ async def get_daily_snapshots(
     db: Database,
     days: int = 7,
     limit: int = 1000,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """
     Get snapshots from the last N days.
 
@@ -144,7 +144,7 @@ async def get_snapshots_by_type(
     db: Database,
     snapshot_type: str,
     limit: int = 100,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """
     Get snapshots of a specific type.
 
@@ -172,18 +172,18 @@ async def insert_trade_outcome(
     signal_id: str,
     strategy: str,
     market_id_a: str,
-    predicted_edge: Optional[float] = None,
-    predicted_pnl: Optional[float] = None,
-    actual_pnl: Optional[float] = None,
-    fees_total: Optional[float] = None,
-    edge_captured_pct: Optional[float] = None,
-    signal_to_fill_ms: Optional[int] = None,
-    holding_period_ms: Optional[int] = None,
-    spread_at_signal: Optional[float] = None,
-    volume_at_signal: Optional[float] = None,
-    liquidity_at_signal: Optional[float] = None,
-    violation_id: Optional[str] = None,
-    market_id_b: Optional[str] = None,
+    predicted_edge: float | None = None,
+    predicted_pnl: float | None = None,
+    actual_pnl: float | None = None,
+    fees_total: float | None = None,
+    edge_captured_pct: float | None = None,
+    signal_to_fill_ms: int | None = None,
+    holding_period_ms: int | None = None,
+    spread_at_signal: float | None = None,
+    volume_at_signal: float | None = None,
+    liquidity_at_signal: float | None = None,
+    violation_id: str | None = None,
+    market_id_b: str | None = None,
 ) -> str:
     """
     Insert a trade outcome record.
@@ -210,7 +210,7 @@ async def insert_trade_outcome(
     Returns:
         The trade_id
     """
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
 
     sql = """
     INSERT INTO trade_outcomes (
@@ -250,7 +250,7 @@ async def insert_trade_outcome(
 async def get_trade_outcome(
     db: Database,
     trade_id: str,
-) -> Optional[Dict[str, Any]]:
+) -> dict[str, Any] | None:
     """
     Retrieve a single trade outcome by ID.
 
@@ -268,7 +268,7 @@ async def get_trade_outcome(
 async def get_trade_outcomes_by_signal(
     db: Database,
     signal_id: str,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """
     Get trade outcomes for a signal.
 
@@ -292,7 +292,7 @@ async def get_strategy_pnl(
     db: Database,
     strategy: str,
     days: int = 7,
-) -> Optional[Dict[str, Any]]:
+) -> dict[str, Any] | None:
     """
     Get PnL summary for a strategy over recent period.
 
@@ -326,7 +326,7 @@ async def get_strategy_pnl(
 async def get_overall_pnl(
     db: Database,
     days: int = 7,
-) -> Optional[Dict[str, Any]]:
+) -> dict[str, Any] | None:
     """
     Get overall PnL statistics.
 
@@ -357,10 +357,10 @@ async def get_overall_pnl(
 
 async def get_recent_trades(
     db: Database,
-    strategy: Optional[str] = None,
+    strategy: str | None = None,
     limit: int = 100,
     days: int = 7,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """
     Get recent completed trades.
 
@@ -395,7 +395,7 @@ async def get_recent_trades(
 async def get_hourly_pnl_series(
     db: Database,
     hours: int = 24,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """
     Get hourly PnL series for charting.
 

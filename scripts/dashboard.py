@@ -18,7 +18,7 @@ import sys
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Optional, Dict, List, Tuple, Any
+from typing import Dict, Any
 import statistics
 
 import aiosqlite
@@ -154,10 +154,10 @@ class Dashboard:
     def _output_terminal(
         self,
         portfolio: PortfolioMetrics,
-        strategies: List[StrategyMetrics],
+        strategies: list[StrategyMetrics],
         execution: ExecutionMetrics,
         risk: RiskMetrics,
-        recent_trades: List[Dict],
+        recent_trades: list[Dict],
         violations: Dict,
         mode: str,
     ):
@@ -247,7 +247,7 @@ class Dashboard:
 
         print(f"{Color.format('─' * 70, Color.DIM)}\n")
 
-    def _print_strategy_breakdown(self, strategies: List[StrategyMetrics]):
+    def _print_strategy_breakdown(self, strategies: list[StrategyMetrics]):
         """Print strategy breakdown table."""
         print(Color.format("STRATEGY BREAKDOWN", Color.WHITE, bold=True))
         print(Color.format("─" * 100, Color.DIM))
@@ -398,7 +398,7 @@ class Dashboard:
 
         print(f"{Color.format('─' * 70, Color.DIM)}\n")
 
-    def _print_recent_trades(self, trades: List[Dict]):
+    def _print_recent_trades(self, trades: list[Dict]):
         """Print recent trades table."""
         print(Color.format("RECENT TRADES (Last 10)", Color.WHITE, bold=True))
         print(Color.format("─" * 110, Color.DIM))
@@ -473,10 +473,10 @@ class Dashboard:
     def _output_json(
         self,
         portfolio: PortfolioMetrics,
-        strategies: List[StrategyMetrics],
+        strategies: list[StrategyMetrics],
         execution: ExecutionMetrics,
         risk: RiskMetrics,
-        recent_trades: List[Dict],
+        recent_trades: list[Dict],
         violations: Dict,
         mode: str,
     ):
@@ -603,7 +603,7 @@ class Dashboard:
 
     async def _get_strategy_metrics(
         self, db: aiosqlite.Connection
-    ) -> List[StrategyMetrics]:
+    ) -> list[StrategyMetrics]:
         """Get per-strategy metrics from trade_outcomes and signals."""
         cursor = await db.execute(
             """
@@ -825,7 +825,7 @@ class Dashboard:
 
     async def _get_recent_trades(
         self, db: aiosqlite.Connection, limit: int = 10
-    ) -> List[Dict]:
+    ) -> list[Dict]:
         """Get last N closed trades with market info."""
         cursor = await db.execute(
             """

@@ -2,7 +2,7 @@
 
 import logging
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +19,7 @@ class RiskCheckResult:
 
 
 async def check_position_limit(
-    signal: Any, config: dict, db: Optional[Any] = None
+    signal: Any, config: dict, db: Any | None = None
 ) -> RiskCheckResult:
     """
     Check if signal respects maximum position size limit.
@@ -47,7 +47,7 @@ async def check_position_limit(
 
 
 async def check_daily_loss_limit(
-    signal: Any, config: dict, db: Optional[Any] = None
+    signal: Any, config: dict, db: Any | None = None
 ) -> RiskCheckResult:
     """
     Check daily loss limit not exceeded.
@@ -89,7 +89,7 @@ async def check_daily_loss_limit(
 
 
 async def check_concentration(
-    signal: Any, config: dict, db: Optional[Any] = None
+    signal: Any, config: dict, db: Any | None = None
 ) -> RiskCheckResult:
     """
     Check market concentration limit.
@@ -134,7 +134,7 @@ async def check_concentration(
 
 
 async def check_duplicate_signal(
-    signal: Any, config: dict, db: Optional[Any] = None
+    signal: Any, config: dict, db: Any | None = None
 ) -> RiskCheckResult:
     """
     Check for duplicate signals on same market.
@@ -176,7 +176,7 @@ async def check_duplicate_signal(
 
 
 async def check_min_edge(
-    signal: Any, config: dict, db: Optional[Any] = None
+    signal: Any, config: dict, db: Any | None = None
 ) -> RiskCheckResult:
     """
     Check minimum edge threshold.
@@ -206,7 +206,7 @@ async def check_min_edge(
 
 
 async def run_all_checks(
-    signal: Any, config: dict, db: Optional[Any] = None
+    signal: Any, config: dict, db: Any | None = None
 ) -> tuple[bool, list[RiskCheckResult]]:
     """
     Run all risk checks on signal.

@@ -10,7 +10,7 @@ Tests all risk control implementations:
 """
 
 import pytest
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import Mock, patch, MagicMock
 
 
@@ -36,7 +36,7 @@ class RiskSignal:
         self.size_usd = size_usd
         self.kelly_fraction = kelly_fraction
         self.expected_edge = expected_edge
-        self.created_at = created_at or datetime.utcnow()
+        self.created_at = created_at or datetime.now(timezone.utc)
 
 
 class RiskManager:
@@ -134,7 +134,7 @@ class RiskManager:
         Returns:
             True if signal is new, False if duplicate
         """
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         window = timedelta(seconds=self.config.DUPLICATE_SIGNAL_WINDOW_S)
 
         # Check for existing signal
@@ -453,7 +453,7 @@ class TestDuplicateSignalSuppression:
             size_usd=1000.0,
             kelly_fraction=0.25,
             expected_edge=0.05,
-            created_at=datetime.utcnow() - timedelta(seconds=window + 1),
+            created_at=datetime.now(timezone.utc) - timedelta(seconds=window + 1),
         )
 
         # First occurrence

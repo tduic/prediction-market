@@ -9,7 +9,7 @@ import asyncio
 import logging
 from dataclasses import dataclass
 from enum import Enum
-from typing import List, Optional
+from typing import List
 
 import aiosqlite
 
@@ -37,8 +37,8 @@ class OrderResult:
     platform: str
     status: str  # "ACCEPTED", "REJECTED", "PENDING"
     submission_latency_ms: int
-    fill_latency_ms: Optional[int] = None
-    error_message: Optional[str] = None
+    fill_latency_ms: int | None = None
+    error_message: str | None = None
 
 
 class OrderRouter:
@@ -177,7 +177,7 @@ class OrderRouter:
     async def route_orders(
         self,
         signal_id: str,
-        legs: List[OrderLeg],
+        legs: list[OrderLeg],
         execution_mode: str = "simultaneous",
         abort_on_partial: bool = False,
         expiry_s: int = 300,
@@ -192,7 +192,7 @@ class OrderRouter:
             abort_on_partial: Cancel all orders if any leg fails
             expiry_s: Seconds to keep positions open
         """
-        results: List[OrderResult] = []
+        results: list[OrderResult] = []
 
         try:
             if execution_mode == ExecutionMode.SIMULTANEOUS.value:
@@ -220,8 +220,8 @@ class OrderRouter:
     async def _execute_simultaneous(
         self,
         signal_id: str,
-        legs: List[OrderLeg],
-    ) -> List[OrderResult]:
+        legs: list[OrderLeg],
+    ) -> list[OrderResult]:
         """
         Execute all legs simultaneously using asyncio.gather.
 
@@ -242,8 +242,8 @@ class OrderRouter:
     async def _execute_sequential(
         self,
         signal_id: str,
-        legs: List[OrderLeg],
-    ) -> List[OrderResult]:
+        legs: list[OrderLeg],
+    ) -> list[OrderResult]:
         """
         Execute legs sequentially: leg A first, then B on fill.
 
@@ -256,7 +256,7 @@ class OrderRouter:
         """
         logger.info("Executing %d legs sequentially", len(legs))
 
-        results: List[OrderResult] = []
+        results: list[OrderResult] = []
 
         for idx, leg in enumerate(legs):
             result = await self.route_order(leg, idx, signal_id)
@@ -279,7 +279,7 @@ class OrderRouter:
     async def _cancel_all_orders(
         self,
         signal_id: str,
-        results: List[OrderResult],
+        results: list[OrderResult],
     ) -> None:
         """
         Cancel all filled orders (abort_on_partial logic).

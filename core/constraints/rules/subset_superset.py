@@ -4,7 +4,6 @@ Enforces logical consistency: P(X in Q1) ≤ P(X in H1) ≤ P(X in 2026)
 """
 
 from dataclasses import dataclass
-from typing import Optional
 
 
 @dataclass
@@ -19,7 +18,7 @@ class ViolationInfo:
 
 def check(
     market_a_price: float, market_b_price: float, relationship: str
-) -> Optional[ViolationInfo]:
+) -> ViolationInfo | None:
     """
     Check subset/superset relationship between two markets.
 

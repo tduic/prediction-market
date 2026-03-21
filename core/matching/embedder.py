@@ -1,7 +1,7 @@
 """Sentence embeddings for semantic market matching."""
 
 import logging
-from typing import List, Optional, Tuple
+from typing import List
 
 import numpy as np
 
@@ -53,7 +53,7 @@ class MarketEmbedder:
         """Check if embedder is available."""
         return self._available
 
-    def embed(self, text: str) -> Optional[np.ndarray]:
+    def embed(self, text: str) -> np.ndarray | None:
         """
         Generate embedding for text.
 
@@ -81,7 +81,7 @@ class MarketEmbedder:
             logger.error(f"Error generating embedding: {e}")
             return None
 
-    def similarity(self, text_a: str, text_b: str) -> Optional[float]:
+    def similarity(self, text_a: str, text_b: str) -> float | None:
         """
         Calculate cosine similarity between two texts.
 
@@ -114,8 +114,8 @@ class MarketEmbedder:
             return None
 
     def find_matches(
-        self, new_market_title: str, existing_titles: List[str], threshold: float = 0.75
-    ) -> List[Tuple[int, float]]:
+        self, new_market_title: str, existing_titles: list[str], threshold: float = 0.75
+    ) -> list[tuple[int, float]]:
         """
         Find matches for a new market among existing markets.
 
@@ -160,8 +160,8 @@ class MarketEmbedder:
             return []
 
     def batch_embed(
-        self, texts: List[str], show_progress: bool = False
-    ) -> Optional[np.ndarray]:
+        self, texts: list[str], show_progress: bool = False
+    ) -> np.ndarray | None:
         """
         Generate embeddings for multiple texts at once.
 
@@ -191,7 +191,7 @@ class MarketEmbedder:
             logger.error(f"Error batch embedding: {e}")
             return None
 
-    def batch_similarity(self, text_a: str, texts_b: List[str]) -> Optional[np.ndarray]:
+    def batch_similarity(self, text_a: str, texts_b: list[str]) -> np.ndarray | None:
         """
         Calculate similarity between one text and multiple texts.
 

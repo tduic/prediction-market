@@ -3,8 +3,8 @@ Database queries for market data operations.
 All functions are async and take a Database instance as first argument.
 """
 
-from typing import Optional, List, Dict, Any
-from datetime import datetime
+from typing import Optional, List, Any
+from datetime import datetime, timezone
 import logging
 
 from ..db import Database
@@ -18,13 +18,13 @@ async def upsert_market(
     platform: str,
     platform_id: str,
     title: str,
-    description: Optional[str] = None,
-    category: Optional[str] = None,
-    event_type: Optional[str] = None,
-    resolution_source: Optional[str] = None,
-    resolution_criteria: Optional[str] = None,
-    close_time: Optional[str] = None,
-    resolve_time: Optional[str] = None,
+    description: str | None = None,
+    category: str | None = None,
+    event_type: str | None = None,
+    resolution_source: str | None = None,
+    resolution_criteria: str | None = None,
+    close_time: str | None = None,
+    resolve_time: str | None = None,
     status: str = "open",
 ) -> str:
     """
@@ -48,7 +48,7 @@ async def upsert_market(
     Returns:
         The market_id
     """
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
 
     sql = """
     INSERT INTO markets (
@@ -94,7 +94,7 @@ async def upsert_market(
 async def get_market(
     db: Database,
     market_id: str,
-) -> Optional[Dict[str, Any]]:
+) -> dict[str, Any] | None:
     """
     Retrieve a single market by ID.
 
@@ -112,10 +112,10 @@ async def get_market(
 async def get_markets_by_platform(
     db: Database,
     platform: str,
-    status: Optional[str] = None,
+    status: str | None = None,
     limit: int = 1000,
     offset: int = 0,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """
     Retrieve markets for a specific platform.
 
@@ -152,13 +152,13 @@ async def get_markets_by_platform(
 async def insert_price(
     db: Database,
     market_id: str,
-    yes_price: Optional[float] = None,
-    no_price: Optional[float] = None,
-    spread: Optional[float] = None,
-    volume_24h: Optional[float] = None,
-    open_interest: Optional[float] = None,
-    liquidity: Optional[float] = None,
-    poll_latency_ms: Optional[int] = None,
+    yes_price: float | None = None,
+    no_price: float | None = None,
+    spread: float | None = None,
+    volume_24h: float | None = None,
+    open_interest: float | None = None,
+    liquidity: float | None = None,
+    poll_latency_ms: int | None = None,
 ) -> int:
     """
     Insert a market price record.
@@ -177,7 +177,7 @@ async def insert_price(
     Returns:
         Row ID of inserted record
     """
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
 
     sql = """
     INSERT INTO market_prices (
@@ -205,7 +205,7 @@ async def get_latest_prices(
     db: Database,
     market_id: str,
     limit: int = 1,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """
     Retrieve the latest price records for a market.
 
@@ -234,8 +234,8 @@ async def insert_ingestor_run(
     markets_new: int,
     markets_updated: int,
     errors: int = 0,
-    error_detail: Optional[str] = None,
-    duration_ms: Optional[int] = None,
+    error_detail: str | None = None,
+    duration_ms: int | None = None,
 ) -> int:
     """
     Insert an ingestor run record.
@@ -253,7 +253,7 @@ async def insert_ingestor_run(
     Returns:
         Row ID of inserted record
     """
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
 
     sql = """
     INSERT INTO ingestor_runs (
@@ -278,9 +278,9 @@ async def insert_ingestor_run(
 
 async def get_ingestor_runs(
     db: Database,
-    platform: Optional[str] = None,
+    platform: str | None = None,
     limit: int = 100,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """
     Retrieve ingestor run records.
 
@@ -313,7 +313,7 @@ async def get_ingestor_runs(
 
 async def get_market_count(
     db: Database,
-    platform: Optional[str] = None,
+    platform: str | None = None,
 ) -> int:
     """
     Count markets, optionally filtered by platform.
@@ -340,7 +340,7 @@ async def get_markets_needing_update(
     platform: str,
     minutes_old: int = 10,
     limit: int = 500,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """
     Get markets that haven't been updated recently.
 

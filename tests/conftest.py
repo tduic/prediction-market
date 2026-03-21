@@ -5,9 +5,9 @@ Shared pytest fixtures for prediction market trading system tests.
 import json
 import sqlite3
 from pathlib import Path
-from typing import Generator, Dict, Any, List
+from typing import Generator, Any, List
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 
 import pytest
 import pytest_asyncio
@@ -71,8 +71,8 @@ class EventBus:
     """Simple in-memory event bus for testing."""
 
     def __init__(self):
-        self.events: List[Dict[str, Any]] = []
-        self.subscribers: Dict[str, List[callable]] = {}
+        self.events: list[dict[str, Any]] = []
+        self.subscribers: dict[str, list[callable]] = {}
 
     def subscribe(self, event_type: str, handler: callable) -> None:
         """Subscribe handler to event type."""
@@ -80,12 +80,12 @@ class EventBus:
             self.subscribers[event_type] = []
         self.subscribers[event_type].append(handler)
 
-    def emit(self, event_type: str, data: Dict[str, Any]) -> None:
+    def emit(self, event_type: str, data: dict[str, Any]) -> None:
         """Emit event and notify subscribers."""
         event = {
             "type": event_type,
             "data": data,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         }
         self.events.append(event)
 
@@ -93,7 +93,7 @@ class EventBus:
             for handler in self.subscribers[event_type]:
                 handler(event)
 
-    def get_events(self, event_type: str = None) -> List[Dict[str, Any]]:
+    def get_events(self, event_type: str = None) -> list[dict[str, Any]]:
         """Retrieve events, optionally filtered by type."""
         if event_type is None:
             return self.events
@@ -315,12 +315,12 @@ def event_bus() -> EventBus:
 
 
 @pytest.fixture
-def sample_markets() -> Dict[str, List[Market]]:
+def sample_markets() -> dict[str, list[Market]]:
     """
     Load sample market data from fixtures/markets.json.
 
     Returns:
-        Dict[str, List[Market]]: Markets organized by platform.
+        dict[str, list[Market]]: Markets organized by platform.
     """
     fixture_path = Path(__file__).parent / "fixtures" / "markets.json"
 
@@ -349,12 +349,12 @@ def sample_markets() -> Dict[str, List[Market]]:
 
 
 @pytest.fixture
-def sample_violations() -> List[Violation]:
+def sample_violations() -> list[Violation]:
     """
     Load sample violation data from fixtures/violations.json.
 
     Returns:
-        List[Violation]: List of violation data objects.
+        list[Violation]: List of violation data objects.
     """
     fixture_path = Path(__file__).parent / "fixtures" / "violations.json"
 

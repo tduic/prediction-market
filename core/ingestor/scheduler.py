@@ -3,7 +3,7 @@
 import logging
 import os
 from datetime import datetime
-from typing import Any, Callable, Optional
+from typing import Any, Callable
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
@@ -16,9 +16,9 @@ class IngestorScheduler:
 
     def __init__(
         self,
-        polymarket_poll_interval_s: Optional[int] = None,
-        kalshi_poll_interval_s: Optional[int] = None,
-        external_poll_interval_s: Optional[int] = None,
+        polymarket_poll_interval_s: int | None = None,
+        kalshi_poll_interval_s: int | None = None,
+        external_poll_interval_s: int | None = None,
     ):
         """
         Initialize scheduler with configurable intervals.
@@ -206,7 +206,7 @@ class IngestorScheduler:
             return True
         return False
 
-    def get_job_status(self, job_name: str) -> Optional[dict]:
+    def get_job_status(self, job_name: str) -> dict | None:
         """
         Get status of a registered job.
 

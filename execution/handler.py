@@ -6,8 +6,8 @@ to the order router for execution.
 """
 
 import logging
-from datetime import datetime
-from typing import Any, Dict, Optional
+from datetime import datetime, timezone
+from typing import Any
 
 import aiosqlite
 import redis.asyncio as redis
@@ -41,7 +41,7 @@ class SignalHandler:
         self.execution_mode = execution_mode
         self.order_router = OrderRouter(db_connection, execution_mode=execution_mode)
 
-    async def validate_signal(self, payload: Dict[str, Any]) -> bool:
+    async def validate_signal(self, payload: dict[str, Any]) -> bool:
         """
         Validate signal against schema.
 
@@ -61,7 +61,7 @@ class SignalHandler:
             expires_at = datetime.fromisoformat(
                 signal.expires_at_utc.replace("Z", "+00:00")
             )
-            now = datetime.utcnow().replace(tzinfo=expires_at.tzinfo)
+            now = datetime.now(timezone.utc).replace(tzinfo=expires_at.tzinfo)
 
             if expires_at <= now:
                 logger.warning("Signal has expired: %s", signal.signal_id)
@@ -110,7 +110,7 @@ class SignalHandler:
         logger.debug("Parameter validation passed for market: %s", leg.market_id)
         return True
 
-    async def process_signal(self, payload: Dict[str, Any]) -> None:
+    async def process_signal(self, payload: dict[str, Any]) -> None:
         """
         Process a trading signal end-to-end.
 

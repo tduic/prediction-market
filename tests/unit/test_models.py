@@ -5,9 +5,9 @@ Tests model training, prediction, calibration, and lifecycle management.
 """
 
 import pytest
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import Mock, patch, MagicMock
-from typing import List, Dict, Any
+from typing import List, Any
 
 
 # ============================================================================
@@ -18,7 +18,7 @@ from typing import List, Dict, Any
 class TrainingData:
     """Container for model training data."""
 
-    def __init__(self, samples: List[Dict[str, float]]):
+    def __init__(self, samples: list[dict[str, float]]):
         self.samples = samples
         self.count = len(samples)
 
@@ -67,7 +67,7 @@ class FOCMModel:
 
         return True
 
-    def predict(self, features: Dict[str, float]) -> float:
+    def predict(self, features: dict[str, float]) -> float:
         """
         Predict probability of rate cut.
 
@@ -99,7 +99,7 @@ class CalibrationModel:
 
     def compute_calibration_curves(
         self,
-        resolved_market_history: List[Dict[str, Any]],
+        resolved_market_history: list[dict[str, Any]],
     ) -> bool:
         """
         Compute calibration curves from resolved market outcomes.
@@ -130,7 +130,7 @@ class CalibrationModel:
         self.is_trained = True
         return True
 
-    def get_calibration_curve(self) -> Dict[str, Any]:
+    def get_calibration_curve(self) -> dict[str, Any]:
         """Retrieve computed calibration curve."""
         return self.calibration_curves
 
@@ -162,7 +162,7 @@ class ModelRegistry:
         self.models[model_id] = {
             "model": model,
             "version": version,
-            "deployed_at": datetime.utcnow(),
+            "deployed_at": datetime.now(timezone.utc),
             "status": "active",
         }
 
@@ -198,7 +198,7 @@ class ModelRegistry:
             return self.models[self.active_model]["model"]
         return None
 
-    def list_models(self, status: str = None) -> List[Dict[str, Any]]:
+    def list_models(self, status: str = None) -> list[dict[str, Any]]:
         """
         List all models, optionally filtered by status.
 
@@ -245,8 +245,8 @@ class WalkForwardValidator:
 
     def validate_no_leakage(
         self,
-        training_data: List[Dict[str, Any]],
-        test_data: List[Dict[str, Any]],
+        training_data: list[dict[str, Any]],
+        test_data: list[dict[str, Any]],
     ) -> bool:
         """
         Verify no data leakage between train/test windows.
@@ -545,7 +545,7 @@ class TestWalkForwardValidation:
         """Properly separated windows have no leakage."""
         validator = WalkForwardValidator()
 
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         train_end = now - timedelta(days=1)
         test_start = now
 
@@ -571,7 +571,7 @@ class TestWalkForwardValidation:
         """Training data after window end is detected."""
         validator = WalkForwardValidator()
 
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         train_end = now - timedelta(days=1)
         test_start = now
 
@@ -592,7 +592,7 @@ class TestWalkForwardValidation:
         """Test data before window start is detected."""
         validator = WalkForwardValidator()
 
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         train_end = now - timedelta(days=1)
         test_start = now
 
@@ -613,7 +613,7 @@ class TestWalkForwardValidation:
         """Overlapping train/test windows are rejected."""
         validator = WalkForwardValidator()
 
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         train_end = now
         test_start = now - timedelta(hours=1)  # Overlaps!
 
@@ -625,8 +625,8 @@ class TestWalkForwardValidation:
         """Validation without set windows returns False."""
         validator = WalkForwardValidator()
 
-        training_data = [{"timestamp": datetime.utcnow()}]
-        test_data = [{"timestamp": datetime.utcnow()}]
+        training_data = [{"timestamp": datetime.now(timezone.utc)}]
+        test_data = [{"timestamp": datetime.now(timezone.utc)}]
 
         result = validator.validate_no_leakage(training_data, test_data)
 
