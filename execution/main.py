@@ -140,6 +140,29 @@ class ExecutionService:
         except Exception as e:
             logger.error("Error processing signal: %s", exc_info=e)
 
+    async def _reconnect_redis(self) -> bool:
+        """Attempt to reconnect to Redis with exponential backoff."""
+        max_attempts = 10
+        for attempt in range(max_attempts):
+            backoff = min(2 ** attempt, 30)
+            logger.info(
+                "Redis reconnection attempt %d/%d (backoff: %ds)",
+                attempt + 1, max_attempts, backoff,
+            )
+            try:
+                if self.redis_client:
+                    await self.redis_client.close()
+                self.redis_client = await redis.from_url(self.redis_url)
+                await self.redis_client.ping()
+                logger.info("Redis reconnected successfully")
+                return True
+            except Exception as e:
+                logger.warning("Redis reconnection failed: %s", e)
+                await asyncio.sleep(backoff)
+
+        logger.error("Failed to reconnect to Redis after %d attempts", max_attempts)
+        return False
+
     async def consume_queue(self) -> None:
         """Main loop: consume signals from Redis queue and process them."""
         if not self.redis_client:
@@ -170,8 +193,13 @@ class ExecutionService:
             except asyncio.CancelledError:
                 logger.info("Signal consumer cancelled")
                 break
+            except (redis.ConnectionError, redis.TimeoutError, ConnectionResetError) as e:
+                logger.warning("Redis connection lost: %s. Attempting reconnect...", e)
+                if not await self._reconnect_redis():
+                    logger.error("Giving up on Redis reconnection, shutting down")
+                    self.running = False
             except Exception as e:
-                logger.error("Error consuming from queue: %s", exc_info=e)
+                logger.error("Error consuming from queue: %s", e, exc_info=True)
                 await asyncio.sleep(1)
 
     def _shutdown_handler(self, signum: int, frame) -> None:
@@ -199,11 +227,8 @@ class ExecutionService:
 async def main() -> None:
     """Main entry point."""
     import os
-
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    )
+    from core.logging_config import configure_from_env
+    configure_from_env()
 
     redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
     signal_queue_name = os.getenv("SIGNAL_QUEUE_NAME", "trading_signals")

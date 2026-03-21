@@ -12,12 +12,14 @@ from pathlib import Path
 @dataclass
 class PlatformCredentials:
     """Platform-specific API credentials."""
-    polymarket_api_key: str = field(default_factory=lambda: os.getenv("POLYMARKET_API_KEY", ""))
     polymarket_private_key: str = field(default_factory=lambda: os.getenv("POLYMARKET_PRIVATE_KEY", ""))
     polymarket_wallet_address: str = field(default_factory=lambda: os.getenv("POLYMARKET_WALLET_ADDRESS", ""))
     kalshi_api_key: str = field(default_factory=lambda: os.getenv("KALSHI_API_KEY", ""))
-    kalshi_api_secret: str = field(default_factory=lambda: os.getenv("KALSHI_API_SECRET", ""))
+    kalshi_rsa_key_path: str = field(default_factory=lambda: os.getenv("KALSHI_RSA_KEY_PATH", ""))
     kalshi_environment: str = field(default_factory=lambda: os.getenv("KALSHI_ENVIRONMENT", "prod"))
+    kalshi_api_base: str = field(default_factory=lambda: os.getenv(
+        "KALSHI_API_BASE", "https://api.elections.kalshi.com/trade-api/v2"
+    ))
 
 
 @dataclass
@@ -186,11 +188,10 @@ class Config:
         # Credentials validation
         if not self.observability.paper_trading and self.execution.execution_mode != "mock":
             if not all([
-                self.platform_credentials.polymarket_api_key,
                 self.platform_credentials.polymarket_private_key,
                 self.platform_credentials.polymarket_wallet_address,
                 self.platform_credentials.kalshi_api_key,
-                self.platform_credentials.kalshi_api_secret,
+                self.platform_credentials.kalshi_rsa_key_path,
             ]):
                 raise ValueError(
                     "All platform credentials required when PAPER_TRADING=false"

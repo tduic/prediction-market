@@ -83,6 +83,16 @@ class CoreService:
 
         logger.info("Core service initialization complete")
 
+    async def _checkpoint_wal(self) -> None:
+        """Checkpoint the WAL to keep it from growing unbounded."""
+        if not self.db:
+            return
+        try:
+            await self.db.checkpoint()
+            logger.debug("WAL checkpoint completed")
+        except Exception as e:
+            logger.error("Error during WAL checkpoint: %s", e)
+
     async def _snapshot_pnl(self) -> None:
         """Take a PnL snapshot."""
         if not self.db:
@@ -153,10 +163,8 @@ class CoreService:
 
 async def main() -> None:
     """Main entry point."""
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    )
+    from core.logging_config import configure_from_env
+    configure_from_env()
 
     db_path = os.getenv("DB_PATH", "prediction_market.db")
     migrations_dir = os.getenv("MIGRATIONS_DIR", "core/storage/migrations")

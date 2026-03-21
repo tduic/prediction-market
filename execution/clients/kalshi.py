@@ -1,27 +1,52 @@
 """
 Kalshi REST API execution client.
 
-Submits orders via Kalshi's REST API with HMAC-SHA256 authentication,
+Submits orders via Kalshi's REST API with RSA-PSS authentication,
 handles rate limiting, and tracks latency metrics.
+
+Auth reference: Kalshi uses RSA-PSS (SHA-256) signatures.
+Message format: timestamp_ms + method + path
+Headers: KALSHI-ACCESS-KEY, KALSHI-ACCESS-SIGNATURE, KALSHI-ACCESS-TIMESTAMP
 """
 
-import hashlib
-import hmac
+import base64
 import json
 import logging
+import os
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional
+from urllib.parse import urlparse
 
 import aiosqlite
 import httpx
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import padding
 
 from execution.models import OrderLeg
 
 logger = logging.getLogger(__name__)
 
-KALSHI_API_BASE = "https://trading-api.kalshi.com/trade-api/v2"
 DEFAULT_TIMEOUT = 30
+
+
+def _load_rsa_private_key(key_path: str) -> object:
+    """
+    Load RSA private key from PEM file.
+
+    Args:
+        key_path: Path to RSA private key PEM file (supports ~)
+
+    Returns:
+        RSA private key object
+    """
+    expanded = Path(key_path).expanduser()
+    if not expanded.exists():
+        raise FileNotFoundError(f"RSA key file not found: {expanded}")
+
+    pem_data = expanded.read_bytes()
+    return serialization.load_pem_private_key(pem_data, password=None)
 
 
 @dataclass
@@ -29,7 +54,7 @@ class OrderStatus:
     """Status of an order on Kalshi."""
 
     order_id: str
-    status: str  # "PENDING", "FILLED", "PARTIALLY_FILLED", "CANCELLED"
+    status: str  # "resting", "canceled", "executed", "pending"
     filled_amount: float
     fill_price: Optional[float]
     timestamp: float
@@ -47,61 +72,100 @@ class OrderResult:
 
 
 class KalshiExecutionClient:
-    """Handles order submission to Kalshi via REST API."""
+    """Handles order submission to Kalshi via REST API with RSA-PSS auth."""
 
     def __init__(
         self,
         db_connection: aiosqlite.Connection,
         api_key: Optional[str] = None,
-        api_secret: Optional[str] = None,
+        rsa_key_path: Optional[str] = None,
+        api_base: Optional[str] = None,
     ) -> None:
         """
         Initialize the Kalshi execution client.
 
         Args:
             db_connection: SQLite connection for tracking
-            api_key: Kalshi API key for authentication
-            api_secret: Kalshi API secret for HMAC signing
+            api_key: Kalshi API key ID (UUID)
+            rsa_key_path: Path to RSA private key PEM file
+            api_base: API base URL (prod or demo)
         """
         self.db_connection = db_connection
-        self.api_key = api_key
-        self.api_secret = api_secret
+        self.api_key = api_key or os.getenv("KALSHI_API_KEY", "")
+        self.api_base = api_base or os.getenv(
+            "KALSHI_API_BASE", "https://api.elections.kalshi.com/trade-api/v2"
+        )
+
+        # Load RSA key
+        key_path = rsa_key_path or os.getenv("KALSHI_RSA_KEY_PATH", "")
+        self._private_key = None
+        if key_path:
+            try:
+                self._private_key = _load_rsa_private_key(key_path)
+                logger.info("Kalshi RSA key loaded from %s", key_path)
+            except Exception as e:
+                logger.error("Failed to load Kalshi RSA key: %s", e)
+
         self.http_client = httpx.AsyncClient(timeout=DEFAULT_TIMEOUT)
 
-    async def _sign_request(
-        self,
-        method: str,
-        path: str,
-        body: Optional[str] = None,
-    ) -> dict[str, str]:
+        # Rate limiter: token bucket
+        self._rate_limit_tokens = 10.0
+        self._rate_limit_max = 10.0
+        self._rate_limit_refill_per_sec = 10.0
+        self._rate_limit_last_refill = time.monotonic()
+
+    async def _acquire_rate_limit(self) -> None:
+        """Wait until a rate limit token is available."""
+        import asyncio
+
+        while True:
+            now = time.monotonic()
+            elapsed = now - self._rate_limit_last_refill
+            self._rate_limit_tokens = min(
+                self._rate_limit_max,
+                self._rate_limit_tokens + elapsed * self._rate_limit_refill_per_sec,
+            )
+            self._rate_limit_last_refill = now
+
+            if self._rate_limit_tokens >= 1.0:
+                self._rate_limit_tokens -= 1.0
+                return
+
+            await asyncio.sleep(0.1)
+
+    def _sign_request(self, method: str, path: str) -> dict[str, str]:
         """
-        Generate HMAC-SHA256 signature for Kalshi API request.
+        Generate RSA-PSS signature for Kalshi API request.
 
         Args:
-            method: HTTP method (GET, POST, etc.)
-            path: API path (e.g., "/orders")
-            body: Request body JSON string
+            method: HTTP method (GET, POST, DELETE)
+            path: Full API path (e.g., /trade-api/v2/portfolio/orders)
 
         Returns:
-            Dictionary with Authorization and other headers
+            Dictionary with Kalshi authentication headers
         """
-        if not self.api_key or not self.api_secret:
-            raise ValueError("API key and secret required for authentication")
+        if not self.api_key or not self._private_key:
+            raise ValueError("API key and RSA private key required for authentication")
 
-        timestamp = str(int(time.time() * 1000))
+        timestamp_ms = str(int(time.time() * 1000))
 
-        # Message to sign: METHOD|PATH|TIMESTAMP|BODY
-        message = f"{method}|{path}|{timestamp}|{body or ''}"
+        # Message to sign: timestamp + METHOD + path
+        message = (timestamp_ms + method.upper() + path).encode("utf-8")
 
-        # HMAC-SHA256 signature
-        signature = hmac.new(
-            self.api_secret.encode(),
-            message.encode(),
-            hashlib.sha256,
-        ).hexdigest()
+        # RSA-PSS signature with SHA-256
+        signature = self._private_key.sign(
+            message,
+            padding.PSS(
+                mgf=padding.MGF1(hashes.SHA256()),
+                salt_length=padding.PSS.DIGEST_LENGTH,
+            ),
+            hashes.SHA256(),
+        )
 
         return {
-            "Authorization": f"HMAC {self.api_key}:{signature}",
+            "KALSHI-ACCESS-KEY": self.api_key,
+            "KALSHI-ACCESS-SIGNATURE": base64.b64encode(signature).decode("utf-8"),
+            "KALSHI-ACCESS-TIMESTAMP": timestamp_ms,
             "Content-Type": "application/json",
         }
 
@@ -115,6 +179,7 @@ class KalshiExecutionClient:
         Returns:
             OrderResult with order details
         """
+        await self._acquire_rate_limit()
         start_time = time.time()
 
         try:
@@ -127,33 +192,38 @@ class KalshiExecutionClient:
 
             # Prepare request body
             body_dict = {
-                "market_id": leg.market_id,
-                "side": leg.side.upper(),
+                "ticker": leg.market_id,
+                "action": "buy" if leg.side.upper() == "BUY" else "sell",
                 "count": int(leg.size),
-                "type": leg.order_type.upper(),
+                "type": leg.order_type.lower(),
+                "side": "yes",  # default to yes side; override if needed
             }
 
             if leg.order_type.upper() == "LIMIT" and leg.limit_price is not None:
-                # Kalshi uses cent prices (0-100)
-                body_dict["limit_cents"] = int(leg.limit_price * 100)
+                # Kalshi uses cent prices (1-99)
+                body_dict["yes_price"] = int(leg.limit_price * 100)
 
             body_json = json.dumps(body_dict)
 
-            # Generate signature
-            headers = await self._sign_request("POST", "/orders", body_json)
+            # Sign request
+            path = "/trade-api/v2/portfolio/orders"
+            headers = self._sign_request("POST", path)
 
             # Submit order
             response = await self.http_client.post(
-                f"{KALSHI_API_BASE}/orders",
+                f"{self.api_base}/portfolio/orders",
                 content=body_json,
                 headers=headers,
             )
 
             submission_latency_ms = int((time.time() - start_time) * 1000)
 
-            if response.status_code == 201 or response.status_code == 200:
+            if response.status_code in (200, 201):
                 order_data = response.json()
-                order_id = order_data.get("order_id", f"KAL-{leg.market_id}-{int(time.time() * 1000)}")
+                order_obj = order_data.get("order", order_data)
+                order_id = order_obj.get(
+                    "order_id", f"KAL-{leg.market_id}-{int(time.time() * 1000)}"
+                )
 
                 # Log order to database
                 await self.db_connection.execute(
@@ -209,7 +279,7 @@ class KalshiExecutionClient:
             )
         except Exception as e:
             submission_latency_ms = int((time.time() - start_time) * 1000)
-            logger.error("Error submitting order: %s", exc_info=e)
+            logger.error("Error submitting order: %s", e, exc_info=True)
             return OrderResult(
                 order_id=f"FAILED-{leg.market_id}",
                 status="REJECTED",
@@ -218,35 +288,26 @@ class KalshiExecutionClient:
             )
 
     async def cancel_order(self, order_id: str) -> bool:
-        """
-        Cancel an order via Kalshi REST API.
+        """Cancel an order via Kalshi REST API."""
+        await self._acquire_rate_limit()
 
-        Args:
-            order_id: The order ID to cancel
-
-        Returns:
-            True if cancellation successful
-        """
         try:
             logger.info("Cancelling order: %s", order_id)
 
-            # Generate signature for DELETE request
-            headers = await self._sign_request("DELETE", f"/orders/{order_id}")
+            path = f"/trade-api/v2/portfolio/orders/{order_id}"
+            headers = self._sign_request("DELETE", path)
 
-            # Send cancellation request
             response = await self.http_client.delete(
-                f"{KALSHI_API_BASE}/orders/{order_id}",
+                f"{self.api_base}/portfolio/orders/{order_id}",
                 headers=headers,
             )
 
             if response.status_code in (200, 204):
-                # Update order status in database
                 await self.db_connection.execute(
                     "UPDATE orders SET status = ? WHERE order_id = ?",
                     ("CANCELLED", order_id),
                 )
                 await self.db_connection.commit()
-
                 logger.info("Order cancelled: %s", order_id)
                 return True
             else:
@@ -258,54 +319,64 @@ class KalshiExecutionClient:
                 return False
 
         except Exception as e:
-            logger.error("Error cancelling order: %s", exc_info=e)
+            logger.error("Error cancelling order: %s", e, exc_info=True)
             return False
 
     async def get_order_status(self, order_id: str) -> Optional[OrderStatus]:
-        """
-        Get the status of an order via Kalshi REST API.
+        """Get the status of an order via Kalshi REST API."""
+        await self._acquire_rate_limit()
 
-        Args:
-            order_id: The order ID to check
-
-        Returns:
-            OrderStatus if found, None otherwise
-        """
         try:
-            logger.debug("Fetching order status: %s", order_id)
+            path = f"/trade-api/v2/portfolio/orders/{order_id}"
+            headers = self._sign_request("GET", path)
 
-            # Generate signature for GET request
-            headers = await self._sign_request("GET", f"/orders/{order_id}")
-
-            # Fetch order status
             response = await self.http_client.get(
-                f"{KALSHI_API_BASE}/orders/{order_id}",
+                f"{self.api_base}/portfolio/orders/{order_id}",
                 headers=headers,
             )
 
             if response.status_code == 200:
                 order_data = response.json()
-
-                status = order_data.get("status", "UNKNOWN")
-                filled_amount = order_data.get("filled_count", 0)
-                fill_price = order_data.get("execution_price")
+                order_obj = order_data.get("order", order_data)
 
                 return OrderStatus(
                     order_id=order_id,
-                    status=status,
-                    filled_amount=filled_amount,
-                    fill_price=fill_price,
+                    status=order_obj.get("status", "unknown"),
+                    filled_amount=order_obj.get("filled_count", 0),
+                    fill_price=order_obj.get("average_fill_price"),
                     timestamp=time.time(),
                 )
             else:
                 logger.warning(
-                    "Failed to fetch order status: HTTP %d",
-                    response.status_code,
+                    "Failed to fetch order status: HTTP %d", response.status_code
                 )
                 return None
 
         except Exception as e:
-            logger.error("Error getting order status: %s", exc_info=e)
+            logger.error("Error getting order status: %s", e, exc_info=True)
+            return None
+
+    async def get_balance(self) -> Optional[float]:
+        """Get account balance in dollars."""
+        await self._acquire_rate_limit()
+
+        try:
+            path = "/trade-api/v2/portfolio/balance"
+            headers = self._sign_request("GET", path)
+
+            response = await self.http_client.get(
+                f"{self.api_base}/portfolio/balance",
+                headers=headers,
+            )
+
+            if response.status_code == 200:
+                data = response.json()
+                # Balance returned in cents
+                return data.get("balance", 0) / 100.0
+            return None
+
+        except Exception as e:
+            logger.error("Error getting balance: %s", e, exc_info=True)
             return None
 
     async def close(self) -> None:

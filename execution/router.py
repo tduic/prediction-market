@@ -75,8 +75,14 @@ class OrderRouter:
             from execution.clients.polymarket import PolymarketExecutionClient
             from execution.clients.kalshi import KalshiExecutionClient
 
-            self.polymarket_client = PolymarketExecutionClient(db_connection)
-            self.kalshi_client = KalshiExecutionClient(db_connection)
+            self.polymarket_client = PolymarketExecutionClient(
+                db_connection=db_connection,
+                # Credentials loaded from env vars inside the client
+            )
+            self.kalshi_client = KalshiExecutionClient(
+                db_connection=db_connection,
+                # Credentials loaded from env vars inside the client
+            )
 
     async def route_order(
         self,

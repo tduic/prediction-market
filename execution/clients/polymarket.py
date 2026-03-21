@@ -1,49 +1,43 @@
 """
-Polymarket execution client using web3.py for Polygon smart contracts.
+Polymarket CLOB execution client using py-clob-client.
 
-Submits limit and market orders via Polygon network, handles gas price spikes,
-and tracks submission and fill latencies.
+Submits orders via Polymarket's CLOB API with two-stage authentication:
+1. Derive API credentials from private key
+2. Create and post signed orders
+
+Reference: https://github.com/Polymarket/py-clob-client
 """
 
-import asyncio
 import logging
+import os
 import time
 from dataclasses import dataclass
-from enum import Enum
 from typing import Optional
 
 import aiosqlite
-from web3 import Web3
-from web3.contract import Contract
-from web3.exceptions import ContractLogicError, TransactionFailed
 
 from execution.models import OrderLeg
 
 logger = logging.getLogger(__name__)
 
-# Polygon RPC and market contract details
-POLYGON_RPC_URL = "https://polygon-rpc.com"
-POLYGON_CHAIN_ID = 137
-USDC_CONTRACT = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"
-USDC_DECIMALS = 6
-
-# Polymarket AMM contract (example - replace with actual)
-POLYMARKET_AMM_CONTRACT = "0x0000000000000000000000000000000000000000"
-AMM_ABI = []  # Would be populated with actual Polymarket AMM ABI
+# Lazy imports for py_clob_client to avoid import errors when in mock mode
+_ClobClient = None
+_ApiCreds = None
+_OrderArgs = None
+_OrderType = None
 
 
-class OrderType(str, Enum):
-    """Order type for Polymarket."""
+def _ensure_clob_imports():
+    """Lazy-load py_clob_client modules."""
+    global _ClobClient, _ApiCreds, _OrderArgs, _OrderType
+    if _ClobClient is None:
+        from py_clob_client.client import ClobClient
+        from py_clob_client.clob_types import ApiCreds, OrderArgs, OrderType
 
-    LIMIT = "LIMIT"
-    MARKET = "MARKET"
-
-
-class Side(str, Enum):
-    """Order side."""
-
-    BUY = "BUY"
-    SELL = "SELL"
+        _ClobClient = ClobClient
+        _ApiCreds = ApiCreds
+        _OrderArgs = OrderArgs
+        _OrderType = OrderType
 
 
 @dataclass
@@ -51,7 +45,7 @@ class OrderStatus:
     """Status of an order on Polymarket."""
 
     order_id: str
-    status: str  # "PENDING", "FILLED", "PARTIALLY_FILLED", "CANCELLED"
+    status: str
     filled_amount: float
     fill_price: Optional[float]
     timestamp: float
@@ -69,155 +63,161 @@ class OrderResult:
 
 
 class PolymarketExecutionClient:
-    """Handles order submission to Polymarket via Polygon."""
+    """Handles order submission to Polymarket via CLOB API."""
 
     def __init__(
         self,
         db_connection: aiosqlite.Connection,
         private_key: Optional[str] = None,
-        wallet_address: Optional[str] = None,
+        funder: Optional[str] = None,
+        chain_id: int = 137,
     ) -> None:
         """
         Initialize the Polymarket execution client.
 
         Args:
             db_connection: SQLite connection for tracking
-            private_key: Private key for transaction signing
-            wallet_address: Wallet address for orders
+            private_key: Ethereum hex private key (0x...)
+            funder: Proxy wallet address (optional)
+            chain_id: Polygon chain ID (default: 137)
         """
         self.db_connection = db_connection
-        self.private_key = private_key
-        self.wallet_address = wallet_address
+        self.private_key = private_key or os.getenv("POLYMARKET_PRIVATE_KEY", "")
+        self.funder = funder or os.getenv("POLYMARKET_WALLET_ADDRESS", "")
+        self.chain_id = chain_id
+        self.host = os.getenv("POLYMARKET_API_BASE", "https://clob.polymarket.com")
+        self.signature_type = int(os.getenv("POLYMARKET_SIGNATURE_TYPE", "1"))
 
-        # Initialize Web3 connection
-        self.w3 = Web3(Web3.HTTPProvider(POLYGON_RPC_URL))
-        if not self.w3.is_connected():
-            logger.warning("Web3 connection to Polygon failed")
+        self._client = None
+        self._initialized = False
 
-        self.usdc_contract: Optional[Contract] = None
-        self.amm_contract: Optional[Contract] = None
+        # Rate limiter
+        self._rate_limit_tokens = 10.0
+        self._rate_limit_max = 10.0
+        self._rate_limit_refill_per_sec = 5.0
+        self._rate_limit_last_refill = time.monotonic()
 
-        self.transaction_confirmations_required = 3
-        self.block_time_estimate_s = 2
+    async def _acquire_rate_limit(self) -> None:
+        """Wait until a rate limit token is available."""
+        import asyncio
 
-    async def _initialize_contracts(self) -> None:
-        """Initialize Web3 contracts asynchronously."""
-        if not self.usdc_contract:
-            # Standard ERC20 ABI
-            erc20_abi = [
-                {
-                    "constant": False,
-                    "inputs": [
-                        {"name": "spender", "type": "address"},
-                        {"name": "amount", "type": "uint256"},
-                    ],
-                    "name": "approve",
-                    "outputs": [{"name": "", "type": "bool"}],
-                    "type": "function",
-                }
-            ]
-            self.usdc_contract = self.w3.eth.contract(
-                address=Web3.to_checksum_address(USDC_CONTRACT),
-                abi=erc20_abi,
+        while True:
+            now = time.monotonic()
+            elapsed = now - self._rate_limit_last_refill
+            self._rate_limit_tokens = min(
+                self._rate_limit_max,
+                self._rate_limit_tokens + elapsed * self._rate_limit_refill_per_sec,
             )
+            self._rate_limit_last_refill = now
 
-        if not self.amm_contract and AMM_ABI:
-            self.amm_contract = self.w3.eth.contract(
-                address=Web3.to_checksum_address(POLYMARKET_AMM_CONTRACT),
-                abi=AMM_ABI,
-            )
+            if self._rate_limit_tokens >= 1.0:
+                self._rate_limit_tokens -= 1.0
+                return
 
-    async def _approve_usdc_spending(self, amount: float) -> bool:
+            await asyncio.sleep(0.1)
+
+    def _ensure_client(self) -> None:
         """
-        Pre-approve USDC spending allowance.
+        Initialize the CLOB client with two-stage auth.
 
-        Args:
-            amount: Amount to approve (in USDC)
-
-        Returns:
-            True if approval successful
+        Stage 1: Create L1 client and derive API credentials
+        Stage 2: Create L2 client with credentials for authenticated trading
         """
-        try:
-            await self._initialize_contracts()
+        if self._initialized:
+            return
 
-            if not self.usdc_contract or not self.wallet_address or not self.private_key:
-                logger.error("Missing contract or wallet information")
-                return False
+        _ensure_clob_imports()
 
-            amount_wei = int(amount * (10 ** USDC_DECIMALS))
+        if not self.private_key:
+            raise ValueError("Polymarket private key required")
 
-            # Build approval transaction
-            tx = self.usdc_contract.functions.approve(
-                Web3.to_checksum_address(POLYMARKET_AMM_CONTRACT),
-                amount_wei,
-            ).build_transaction(
-                {
-                    "from": Web3.to_checksum_address(self.wallet_address),
-                    "nonce": self.w3.eth.get_transaction_count(self.wallet_address),
-                    "gasPrice": self.w3.eth.gas_price,
-                }
-            )
+        logger.info("Initializing Polymarket CLOB client")
 
-            # Sign and send transaction
-            signed_tx = self.w3.eth.account.sign_transaction(tx, self.private_key)
-            tx_hash = self.w3.eth.send_raw_transaction(signed_tx.rawTransaction)
+        # Stage 1: derive API credentials
+        l1_client = _ClobClient(
+            host=self.host,
+            key=self.private_key,
+            chain_id=self.chain_id,
+        )
+        creds = l1_client.create_or_derive_api_creds()
+        logger.info("Polymarket API credentials derived successfully")
 
-            logger.info("USDC approval transaction sent: %s", tx_hash.hex())
+        # Stage 2: authenticated client
+        self._client = _ClobClient(
+            host=self.host,
+            key=self.private_key,
+            chain_id=self.chain_id,
+            creds=creds,
+            signature_type=self.signature_type,
+            funder=self.funder if self.funder else None,
+        )
 
-            # Wait for confirmation
-            receipt = self.w3.eth.wait_for_transaction_receipt(
-                tx_hash,
-                timeout=30,
-                poll_latency=0.5,
-            )
-
-            if receipt["status"] == 1:
-                logger.info("USDC approval successful")
-                return True
-            else:
-                logger.error("USDC approval failed")
-                return False
-
-        except Exception as e:
-            logger.error("Error approving USDC spending: %s", exc_info=e)
-            return False
+        self._initialized = True
+        logger.info("Polymarket CLOB client initialized")
 
     async def submit_order(self, leg: OrderLeg) -> OrderResult:
         """
-        Submit a limit or market order via Polygon smart contract.
+        Submit an order via Polymarket CLOB API.
+
+        Flow: OrderArgs → create_order (sign) → post_order (submit)
 
         Args:
-            leg: The order leg with market_id, side, size, limit_price
+            leg: The order leg to submit
 
         Returns:
-            OrderResult with transaction details
+            OrderResult with order details
         """
+        await self._acquire_rate_limit()
         start_time = time.time()
-        submission_latency_ms = 0
 
         try:
+            self._ensure_client()
+
             logger.info(
-                "Submitting order to Polymarket: market=%s, side=%s, size=%f",
+                "Submitting order to Polymarket: market=%s, side=%s, size=%f, price=%s",
                 leg.market_id,
                 leg.side,
                 leg.size,
+                leg.limit_price,
             )
 
-            # Pre-approve USDC if buying
-            if leg.side.upper() == "BUY":
-                if not await self._approve_usdc_spending(leg.size * (leg.limit_price or 0.5)):
-                    return OrderResult(
-                        order_id=f"FAILED-{leg.market_id}",
-                        status="REJECTED",
-                        submission_latency_ms=int((time.time() - start_time) * 1000),
-                        error_message="USDC approval failed",
-                    )
+            # Build order args
+            # token_id is the market_id for Polymarket (condition token ID)
+            order_args = _OrderArgs(
+                token_id=leg.market_id,
+                price=leg.limit_price or 0.50,
+                size=leg.size,
+                side=leg.side.upper(),
+            )
 
-            # In production, would submit actual order via Polymarket contract
-            # For now, simulate with a unique order ID
-            order_id = f"POLY-{leg.market_id}-{int(time.time() * 1000)}"
+            # Sign order
+            signed_order = self._client.create_order(order_args)
+
+            # Determine order type
+            if leg.order_type.upper() == "MARKET":
+                order_type = _OrderType.FOK  # Fill-or-Kill for market orders
+            else:
+                order_type = _OrderType.GTC  # Good-til-Cancelled for limit
+
+            # Submit signed order
+            result = self._client.post_order(signed_order, order_type)
 
             submission_latency_ms = int((time.time() - start_time) * 1000)
+
+            # Extract order ID from response
+            if isinstance(result, dict):
+                order_id = result.get("orderID", result.get("id", ""))
+                status = result.get("status", "ACCEPTED")
+                if result.get("success", True) and order_id:
+                    order_status = "ACCEPTED"
+                else:
+                    order_status = "REJECTED"
+            else:
+                order_id = str(result) if result else ""
+                order_status = "ACCEPTED" if order_id else "REJECTED"
+
+            if not order_id:
+                order_id = f"POLY-{leg.market_id}-{int(time.time() * 1000)}"
 
             # Log order to database
             await self.db_connection.execute(
@@ -234,65 +234,45 @@ class PolymarketExecutionClient:
                     leg.side,
                     leg.size,
                     leg.limit_price,
-                    "PENDING",
+                    "PENDING" if order_status == "ACCEPTED" else "REJECTED",
                     submission_latency_ms,
                 ),
             )
             await self.db_connection.commit()
 
             logger.info(
-                "Order submitted successfully: %s (latency: %dms)",
+                "Order submitted to Polymarket: %s (latency: %dms, status: %s)",
                 order_id,
                 submission_latency_ms,
+                order_status,
             )
 
             return OrderResult(
                 order_id=order_id,
-                status="ACCEPTED",
+                status=order_status,
                 submission_latency_ms=submission_latency_ms,
             )
 
-        except ContractLogicError as e:
-            error_msg = str(e)
-            logger.error("Contract logic error submitting order: %s", error_msg)
-            return OrderResult(
-                order_id=f"FAILED-{leg.market_id}",
-                status="REJECTED",
-                submission_latency_ms=int((time.time() - start_time) * 1000),
-                error_message=error_msg,
-            )
-        except TransactionFailed as e:
-            error_msg = str(e)
-            logger.error("Transaction failed submitting order: %s", error_msg)
-            return OrderResult(
-                order_id=f"FAILED-{leg.market_id}",
-                status="REJECTED",
-                submission_latency_ms=int((time.time() - start_time) * 1000),
-                error_message=error_msg,
-            )
         except Exception as e:
-            logger.error("Error submitting order: %s", exc_info=e)
+            submission_latency_ms = int((time.time() - start_time) * 1000)
+            logger.error("Error submitting order to Polymarket: %s", e, exc_info=True)
             return OrderResult(
                 order_id=f"FAILED-{leg.market_id}",
                 status="REJECTED",
-                submission_latency_ms=int((time.time() - start_time) * 1000),
+                submission_latency_ms=submission_latency_ms,
                 error_message=str(e),
             )
 
     async def cancel_order(self, order_id: str) -> bool:
-        """
-        Cancel an order on Polymarket.
+        """Cancel an order on Polymarket."""
+        await self._acquire_rate_limit()
 
-        Args:
-            order_id: The order ID to cancel
-
-        Returns:
-            True if cancellation successful
-        """
         try:
-            logger.info("Cancelling order: %s", order_id)
+            self._ensure_client()
 
-            # Update order status in database
+            logger.info("Cancelling Polymarket order: %s", order_id)
+            result = self._client.cancel(order_id)
+
             await self.db_connection.execute(
                 "UPDATE orders SET status = ? WHERE order_id = ?",
                 ("CANCELLED", order_id),
@@ -303,42 +283,33 @@ class PolymarketExecutionClient:
             return True
 
         except Exception as e:
-            logger.error("Error cancelling order: %s", exc_info=e)
+            logger.error("Error cancelling order: %s", e, exc_info=True)
             return False
 
     async def get_order_status(self, order_id: str) -> Optional[OrderStatus]:
-        """
-        Get the status of an order.
+        """Get the status of an order on Polymarket."""
+        await self._acquire_rate_limit()
 
-        Args:
-            order_id: The order ID to check
-
-        Returns:
-            OrderStatus if found, None otherwise
-        """
         try:
-            cursor = await self.db_connection.execute(
-                """
-                SELECT status, size FROM orders
-                WHERE order_id = ? AND platform = 'polymarket'
-                """,
-                (order_id,),
-            )
-            row = await cursor.fetchone()
+            self._ensure_client()
 
-            if not row:
-                return None
+            result = self._client.get_order(order_id)
 
-            status, size = row
-
-            return OrderStatus(
-                order_id=order_id,
-                status=status,
-                filled_amount=size if status == "FILLED" else 0,
-                fill_price=None,
-                timestamp=time.time(),
-            )
+            if result:
+                return OrderStatus(
+                    order_id=order_id,
+                    status=result.get("status", "unknown"),
+                    filled_amount=float(result.get("size_matched", 0)),
+                    fill_price=float(result.get("price", 0)) if result.get("price") else None,
+                    timestamp=time.time(),
+                )
+            return None
 
         except Exception as e:
-            logger.error("Error getting order status: %s", exc_info=e)
+            logger.error("Error getting order status: %s", e, exc_info=True)
             return None
+
+    async def close(self) -> None:
+        """Clean up client resources."""
+        self._client = None
+        self._initialized = False
