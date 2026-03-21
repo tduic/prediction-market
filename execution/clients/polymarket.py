@@ -300,7 +300,9 @@ class PolymarketExecutionClient:
                     order_id=order_id,
                     status=result.get("status", "unknown"),
                     filled_amount=float(result.get("size_matched", 0)),
-                    fill_price=float(result.get("price", 0)) if result.get("price") else None,
+                    fill_price=float(result.get("price", 0))
+                    if result.get("price")
+                    else None,
                     timestamp=time.time(),
                 )
             return None

@@ -18,6 +18,7 @@ from unittest.mock import Mock, patch, MagicMock
 # Risk Management Classes (Mock Implementations)
 # ============================================================================
 
+
 class RiskSignal:
     """Represents a trading signal with risk attributes."""
 
@@ -47,7 +48,9 @@ class RiskManager:
         self.event_bus = event_bus
         self.signals_seen = {}  # Track seen signals for deduplication
 
-    def check_position_limit(self, current_position_usd: float, new_size_usd: float) -> bool:
+    def check_position_limit(
+        self, current_position_usd: float, new_size_usd: float
+    ) -> bool:
         """
         Check if new position violates size limit.
 
@@ -164,9 +167,13 @@ class RiskManager:
             dict with pass/fail for each check
         """
         return {
-            "position_limit": self.check_position_limit(current_position_usd, signal.size_usd),
+            "position_limit": self.check_position_limit(
+                current_position_usd, signal.size_usd
+            ),
             "daily_loss_limit": self.check_daily_loss_limit(cumulative_loss_usd),
-            "concentration_limit": self.check_portfolio_concentration(portfolio_exposure_pct),
+            "concentration_limit": self.check_portfolio_concentration(
+                portfolio_exposure_pct
+            ),
             "duplicate_check": self.check_duplicate_signal(signal),
             "kelly_valid": signal.size_usd <= self.config.MAX_POSITION_SIZE_USD,
             "all_pass": True,  # Will be updated if any check fails
@@ -176,6 +183,7 @@ class RiskManager:
 # ============================================================================
 # Test Cases
 # ============================================================================
+
 
 class TestPositionLimitChecks:
     """Test position size limit enforcement."""

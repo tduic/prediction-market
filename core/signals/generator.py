@@ -160,9 +160,7 @@ class SignalGenerator:
             if result.passed:
                 logger.info(f"Check {result.check_type} passed")
             else:
-                logger.warning(
-                    f"Check {result.check_type} failed: {result.detail}"
-                )
+                logger.warning(f"Check {result.check_type} failed: {result.detail}")
 
         if not checks_passed:
             logger.warning(f"Signal {signal.signal_id} rejected by risk checks")
@@ -200,9 +198,7 @@ class SignalGenerator:
             strategy=self.config.get("strategy_name", "prediction_market"),
             signal_type=violation.violation_type,
             execution_mode=(
-                ExecutionMode.PAPER
-                if self.paper_trading
-                else ExecutionMode.LIVE
+                ExecutionMode.PAPER if self.paper_trading else ExecutionMode.LIVE
             ),
         )
 
@@ -240,9 +236,7 @@ class SignalGenerator:
         )
 
         signal.legs.append(leg)
-        signal.max_total_slippage_usd = self.config.get(
-            "max_total_slippage_usd", 100.0
-        )
+        signal.max_total_slippage_usd = self.config.get("max_total_slippage_usd", 100.0)
 
         return signal
 

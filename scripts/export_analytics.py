@@ -158,9 +158,7 @@ class AnalyticsExporter:
 
         # Export trade_outcomes
         outcomes_file = output_path / "trade_outcomes.csv"
-        results["trade_outcomes"] = await self.export_trade_outcomes(
-            str(outcomes_file)
-        )
+        results["trade_outcomes"] = await self.export_trade_outcomes(str(outcomes_file))
 
         # Export PnL snapshots
         pnl_file = output_path / "pnl_snapshots.csv"

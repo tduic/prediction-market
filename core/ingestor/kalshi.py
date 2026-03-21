@@ -45,12 +45,12 @@ class KalshiClient:
     def client(self) -> httpx.AsyncClient:
         """Get or create HTTP client."""
         if self._client is None:
-            raise RuntimeError("Client not initialized. Use 'async with' context manager.")
+            raise RuntimeError(
+                "Client not initialized. Use 'async with' context manager."
+            )
         return self._client
 
-    def _sign_request(
-        self, method: str, path: str, body: str = ""
-    ) -> dict[str, str]:
+    def _sign_request(self, method: str, path: str, body: str = "") -> dict[str, str]:
         """Generate HMAC-SHA256 signature for request."""
         timestamp = str(int(time.time()))
         message = method + path + body + timestamp

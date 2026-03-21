@@ -100,16 +100,12 @@ class EventBus:
             asyncio.QueueFull: If event queue is full
         """
         if not self._running:
-            raise RuntimeError(
-                "Event bus is not running. Call start() first."
-            )
+            raise RuntimeError("Event bus is not running. Call start() first.")
 
         try:
             self._event_queue.put_nowait(event)
         except asyncio.QueueFull:
-            logger.error(
-                f"Event queue full, dropping event: {type(event).__name__}"
-            )
+            logger.error(f"Event queue full, dropping event: {type(event).__name__}")
             raise
 
     async def start(self) -> None:
@@ -159,10 +155,7 @@ class EventBus:
             try:
                 # Use wait_for to allow graceful shutdown
                 try:
-                    event = await asyncio.wait_for(
-                        self._event_queue.get(),
-                        timeout=1.0
-                    )
+                    event = await asyncio.wait_for(self._event_queue.get(), timeout=1.0)
                 except asyncio.TimeoutError:
                     continue
 
@@ -183,7 +176,7 @@ class EventBus:
                         logger.error(
                             f"Error invoking subscriber {callback.__name__} "
                             f"for {event_type.__name__}: {e}",
-                            exc_info=True
+                            exc_info=True,
                         )
 
                 self._event_queue.task_done()
@@ -191,10 +184,7 @@ class EventBus:
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.error(
-                    f"Unexpected error in event processor: {e}",
-                    exc_info=True
-                )
+                logger.error(f"Unexpected error in event processor: {e}", exc_info=True)
                 await asyncio.sleep(0.1)  # Brief delay before retry
 
     def get_subscriber_count(self, event_type: Type[Event]) -> int:
@@ -224,10 +214,7 @@ class EventBus:
             True if queue became empty, False if timeout
         """
         try:
-            await asyncio.wait_for(
-                self._event_queue.join(),
-                timeout=timeout
-            )
+            await asyncio.wait_for(self._event_queue.join(), timeout=timeout)
             return True
         except asyncio.TimeoutError:
             return False

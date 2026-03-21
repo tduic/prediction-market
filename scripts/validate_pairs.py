@@ -93,9 +93,7 @@ class PairValidator:
             True if accepted, False if rejected, None if skipped
         """
         while True:
-            response = (
-                input("\n(a)ccept, (r)eject, (s)kip, (q)uit? ").lower().strip()
-            )
+            response = input("\n(a)ccept, (r)eject, (s)kip, (q)uit? ").lower().strip()
 
             if response == "a":
                 return True

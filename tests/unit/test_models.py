@@ -14,6 +14,7 @@ from typing import List, Dict, Any
 # Model Service Classes (Mock Implementations)
 # ============================================================================
 
+
 class TrainingData:
     """Container for model training data."""
 
@@ -49,7 +50,9 @@ class FOCMModel:
             ValueError: If data is insufficient
         """
         if training_data.count < min_samples:
-            raise ValueError(f"Insufficient data: {training_data.count} < {min_samples}")
+            raise ValueError(
+                f"Insufficient data: {training_data.count} < {min_samples}"
+            )
 
         # Mock training: compute simple feature weights
         self.feature_weights = {
@@ -206,10 +209,7 @@ class ModelRegistry:
             List of model metadata
         """
         if status:
-            return [
-                m for m in self.models.values()
-                if m.get("status") == status
-            ]
+            return [m for m in self.models.values() if m.get("status") == status]
         return list(self.models.values())
 
 
@@ -280,6 +280,7 @@ class WalkForwardValidator:
 # Test Cases
 # ============================================================================
 
+
 class TestFOCMModel:
     """Test FOMC rate prediction model."""
 
@@ -300,15 +301,17 @@ class TestFOCMModel:
         model = FOCMModel()
 
         # Generate 50 training samples
-        training_data = TrainingData([
-            {
-                "inflation": 0.02 + i * 0.001,
-                "employment": 0.04,
-                "gdp_growth": 0.03,
-                "forward_guidance": 0.5,
-            }
-            for i in range(50)
-        ])
+        training_data = TrainingData(
+            [
+                {
+                    "inflation": 0.02 + i * 0.001,
+                    "employment": 0.04,
+                    "gdp_growth": 0.03,
+                    "forward_guidance": 0.5,
+                }
+                for i in range(50)
+            ]
+        )
 
         result = model.train(training_data, min_samples=30)
 
@@ -316,12 +319,14 @@ class TestFOCMModel:
         assert model.is_trained is True
 
         # Make prediction
-        prediction = model.predict({
-            "inflation": 0.03,
-            "employment": 0.04,
-            "gdp_growth": 0.03,
-            "forward_guidance": 0.6,
-        })
+        prediction = model.predict(
+            {
+                "inflation": 0.03,
+                "employment": 0.04,
+                "gdp_growth": 0.03,
+                "forward_guidance": 0.6,
+            }
+        )
 
         assert 0.0 <= prediction <= 1.0
 
@@ -329,33 +334,39 @@ class TestFOCMModel:
         """Model produces different predictions for different features."""
         model = FOCMModel()
 
-        training_data = TrainingData([
-            {
-                "inflation": 0.02 + i * 0.001,
-                "employment": 0.04,
-                "gdp_growth": 0.03,
-                "forward_guidance": 0.5,
-            }
-            for i in range(50)
-        ])
+        training_data = TrainingData(
+            [
+                {
+                    "inflation": 0.02 + i * 0.001,
+                    "employment": 0.04,
+                    "gdp_growth": 0.03,
+                    "forward_guidance": 0.5,
+                }
+                for i in range(50)
+            ]
+        )
 
         model.train(training_data, min_samples=30)
 
         # High inflation should suggest higher rate cut probability
-        pred_high_inflation = model.predict({
-            "inflation": 0.05,
-            "employment": 0.04,
-            "gdp_growth": 0.03,
-            "forward_guidance": 0.5,
-        })
+        pred_high_inflation = model.predict(
+            {
+                "inflation": 0.05,
+                "employment": 0.04,
+                "gdp_growth": 0.03,
+                "forward_guidance": 0.5,
+            }
+        )
 
         # Low inflation
-        pred_low_inflation = model.predict({
-            "inflation": 0.01,
-            "employment": 0.04,
-            "gdp_growth": 0.03,
-            "forward_guidance": 0.5,
-        })
+        pred_low_inflation = model.predict(
+            {
+                "inflation": 0.01,
+                "employment": 0.04,
+                "gdp_growth": 0.03,
+                "forward_guidance": 0.5,
+            }
+        )
 
         # Should differ
         assert abs(pred_high_inflation - pred_low_inflation) > 0
@@ -371,9 +382,9 @@ class TestFOCMModel:
         """Model trains with exactly minimum samples."""
         model = FOCMModel()
 
-        data = TrainingData([
-            {"inflation": 0.03, "employment": 0.04} for _ in range(30)
-        ])
+        data = TrainingData(
+            [{"inflation": 0.03, "employment": 0.04} for _ in range(30)]
+        )
 
         result = model.train(data, min_samples=30)
 
@@ -440,7 +451,7 @@ class TestCalibrationModel:
         assert abs(curves["mean_price"] - (0.50 + 0.70 + 0.80) / 3) < 0.01
 
         # Resolution rate = 2/3
-        assert abs(curves["resolution_rate"] - 2/3) < 0.01
+        assert abs(curves["resolution_rate"] - 2 / 3) < 0.01
 
 
 class TestModelRegistry:

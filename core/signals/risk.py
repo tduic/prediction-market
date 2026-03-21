@@ -237,9 +237,7 @@ async def run_all_checks(
 
             # Log result
             status = "PASS" if result.passed else "FAIL"
-            logger.info(
-                f"[{status}] {result.check_type}: {result.detail}"
-            )
+            logger.info(f"[{status}] {result.check_type}: {result.detail}")
 
         except Exception as e:
             logger.error(f"Error running {check_fn.__name__}: {e}")

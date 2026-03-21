@@ -12,6 +12,7 @@ from decimal import Decimal
 # Kelly Sizing Implementation (Mock)
 # ============================================================================
 
+
 class PositionSizer:
     """Compute position sizes using Kelly criterion with fractional Kelly."""
 
@@ -135,6 +136,7 @@ class PositionSizer:
 # ============================================================================
 # Test Cases
 # ============================================================================
+
 
 class TestKellySizingBasics:
     """Test basic Kelly sizing calculations."""
@@ -420,8 +422,7 @@ class TestMultiplePositionSizing:
         sizer = PositionSizer(sample_config)
 
         sizes = [
-            sizer.fractional_kelly_size(edge=e)
-            for e in [0.02, 0.05, 0.10, 0.15, 0.20]
+            sizer.fractional_kelly_size(edge=e) for e in [0.02, 0.05, 0.10, 0.15, 0.20]
         ]
 
         # All should be increasing

@@ -17,6 +17,7 @@ import math
 # Matching Classes (Mock Implementations)
 # ============================================================================
 
+
 class MarketPair:
     """Represents a matched pair of markets."""
 
@@ -82,8 +83,20 @@ class MarketMatcher:
         title_b = market_b.get("title", "").lower()
 
         # Simple heuristic: both mention same month
-        months = ["january", "february", "march", "april", "may", "june",
-                  "july", "august", "september", "october", "november", "december"]
+        months = [
+            "january",
+            "february",
+            "march",
+            "april",
+            "may",
+            "june",
+            "july",
+            "august",
+            "september",
+            "october",
+            "november",
+            "december",
+        ]
 
         for month in months:
             if month in title_a and month in title_b:
@@ -97,13 +110,17 @@ class MarketMatcher:
             return False
 
         # Simple check: both are CPI markets
-        return "cpi" in market_a.get("title", "").lower() and \
-               "cpi" in market_b.get("title", "").lower()
+        return (
+            "cpi" in market_a.get("title", "").lower()
+            and "cpi" in market_b.get("title", "").lower()
+        )
 
     def _match_unemployment(self, market_a: dict, market_b: dict) -> bool:
         """Match unemployment markets."""
-        if market_a.get("event_type") != "unemployment" or \
-           market_b.get("event_type") != "unemployment":
+        if (
+            market_a.get("event_type") != "unemployment"
+            or market_b.get("event_type") != "unemployment"
+        ):
             return False
 
         return True
@@ -293,6 +310,7 @@ class MarketPairCurator:
 # Test Cases
 # ============================================================================
 
+
 class TestRuleBasedMatching:
     """Test rule-based market matching."""
 
@@ -394,7 +412,9 @@ class TestEmbeddingSimilarityMatching:
             "title": "Will Bitcoin exceed $50,000 by December 31, 2024?",
         }
 
-        result = matcher.match_by_embedding_similarity(market_a, market_b, threshold=0.5)
+        result = matcher.match_by_embedding_similarity(
+            market_a, market_b, threshold=0.5
+        )
 
         assert result is True
 
@@ -409,7 +429,9 @@ class TestEmbeddingSimilarityMatching:
             "title": "Will the Fed cut interest rates?",
         }
 
-        result = matcher.match_by_embedding_similarity(market_a, market_b, threshold=0.5)
+        result = matcher.match_by_embedding_similarity(
+            market_a, market_b, threshold=0.5
+        )
 
         assert result is False
 
@@ -443,7 +465,9 @@ class TestEmbeddingSimilarityMatching:
         """Empty text results in zero similarity."""
         matcher = MarketMatcher()
 
-        similarity = matcher.compute_embedding_similarity("", "Will Bitcoin exceed $50,000?")
+        similarity = matcher.compute_embedding_similarity(
+            "", "Will Bitcoin exceed $50,000?"
+        )
 
         assert similarity == 0.0
 
@@ -455,7 +479,9 @@ class TestEmbeddingSimilarityMatching:
         market_b = {"title": "Bitcoin price BTC"}
 
         # Right at threshold
-        result = matcher.match_by_embedding_similarity(market_a, market_b, threshold=0.5)
+        result = matcher.match_by_embedding_similarity(
+            market_a, market_b, threshold=0.5
+        )
 
         # Should be true or false based on actual similarity
         assert isinstance(result, bool)
@@ -580,7 +606,15 @@ class TestMarketPairCurator:
         in_memory_db.execute(
             """INSERT INTO markets (id, platform, platform_id, title, yes_price, no_price, status)
                VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            ("pm_001", "polymarket", "pm_001_ext", "FOMC Test Market", 0.5, 0.5, "open"),
+            (
+                "pm_001",
+                "polymarket",
+                "pm_001_ext",
+                "FOMC Test Market",
+                0.5,
+                0.5,
+                "open",
+            ),
         )
         in_memory_db.execute(
             """INSERT INTO markets (id, platform, platform_id, title, yes_price, no_price, status)

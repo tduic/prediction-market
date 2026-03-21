@@ -90,7 +90,9 @@ class CMEFedWatchScraper:
             implied_probs = self._extract_implied_probabilities(soup)
 
             if not implied_probs:
-                logger.warning("Could not parse CME FedWatch data - page structure may have changed")
+                logger.warning(
+                    "Could not parse CME FedWatch data - page structure may have changed"
+                )
                 return None
 
             return FedWatchData(
@@ -156,7 +158,9 @@ class ClevelandFedScraper:
             nowcast_data = self._extract_nowcast(soup)
 
             if not nowcast_data:
-                logger.warning("Could not parse Cleveland Fed Nowcast - page structure may have changed")
+                logger.warning(
+                    "Could not parse Cleveland Fed Nowcast - page structure may have changed"
+                )
                 return None
 
             return NowcastData(
@@ -205,7 +209,9 @@ class MetaculusClient:
     BASE_URL = "https://www.metaculus.com"
     API_BASE = "https://www.metaculus.com/api2"
 
-    async def fetch_questions(self, category: Optional[str] = None) -> list[MetaculusQuestion]:
+    async def fetch_questions(
+        self, category: Optional[str] = None
+    ) -> list[MetaculusQuestion]:
         """
         Fetch questions from Metaculus.
 

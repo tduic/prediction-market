@@ -8,6 +8,7 @@ from typing import Optional, Dict, List, Callable
 @dataclass
 class MatchResult:
     """Result of market pair matching."""
+
     pair_type: str  # "complement", "subset", "cross_platform", etc.
     relationship: Optional[str]  # e.g., "subset", "superset"
     confidence: float  # 0.0 to 1.0
@@ -68,10 +69,8 @@ class FOCMTemplate(RuleTemplate):
                     "event_type": "FOMC",
                     "decision_level": level,
                     "normalized_title": re.sub(
-                        r"(polymarket|kalshi|metaculus)",
-                        "",
-                        title_lower
-                    ).strip()
+                        r"(polymarket|kalshi|metaculus)", "", title_lower
+                    ).strip(),
                 }
 
         return None
@@ -101,10 +100,8 @@ class CPITemplate(RuleTemplate):
                     "event_type": "CPI",
                     "threshold": threshold,
                     "normalized_title": re.sub(
-                        r"(polymarket|kalshi|metaculus)",
-                        "",
-                        title_lower
-                    ).strip()
+                        r"(polymarket|kalshi|metaculus)", "", title_lower
+                    ).strip(),
                 }
 
         return None
@@ -132,10 +129,8 @@ class ElectionTemplate(RuleTemplate):
                     "event_type": "ELECTION",
                     "race_type": match.group(2) if match.lastindex >= 2 else "election",
                     "normalized_title": re.sub(
-                        r"(polymarket|kalshi|metaculus)",
-                        "",
-                        title_lower
-                    ).strip()
+                        r"(polymarket|kalshi|metaculus)", "", title_lower
+                    ).strip(),
                 }
 
         return None
@@ -163,10 +158,8 @@ class SportsTemplate(RuleTemplate):
                     "event_type": "SPORTS",
                     "sport": match.group(1) if match.lastindex else "sports",
                     "normalized_title": re.sub(
-                        r"(polymarket|kalshi|metaculus)",
-                        "",
-                        title_lower
-                    ).strip()
+                        r"(polymarket|kalshi|metaculus)", "", title_lower
+                    ).strip(),
                 }
 
         return None
@@ -210,7 +203,7 @@ def match_by_rules(
     market_a_title: str,
     market_b_title: str,
     category: Optional[str] = None,
-    registry: Optional[TemplateRegistry] = None
+    registry: Optional[TemplateRegistry] = None,
 ) -> Optional[MatchResult]:
     """
     Match two markets using rule-based templates.
@@ -249,16 +242,13 @@ def match_by_rules(
             if _events_match(info_a, info_b):
                 # Determine pair type and relationship
                 pair_type = _infer_pair_type(
-                    market_a_title,
-                    market_b_title,
-                    info_a,
-                    info_b
+                    market_a_title, market_b_title, info_a, info_b
                 )
 
                 return MatchResult(
                     pair_type=pair_type,
                     relationship=None,
-                    confidence=0.9  # High confidence for rule matches
+                    confidence=0.9,  # High confidence for rule matches
                 )
 
     return None
@@ -286,10 +276,7 @@ def _events_match(info_a: Dict[str, str], info_b: Dict[str, str]) -> bool:
 
 
 def _infer_pair_type(
-    title_a: str,
-    title_b: str,
-    info_a: Dict[str, str],
-    info_b: Dict[str, str]
+    title_a: str, title_b: str, info_a: Dict[str, str], info_b: Dict[str, str]
 ) -> str:
     """Infer the pair type from market titles and extracted info."""
     # Check for subset/superset patterns
@@ -299,8 +286,9 @@ def _infer_pair_type(
             return "subset"
 
     # Check for yes/no complement patterns
-    if ("yes" in title_a.lower() and "no" in title_b.lower()) or \
-       ("no" in title_a.lower() and "yes" in title_b.lower()):
+    if ("yes" in title_a.lower() and "no" in title_b.lower()) or (
+        "no" in title_a.lower() and "yes" in title_b.lower()
+    ):
         return "complement"
 
     # Check for cross-platform by looking at platform names

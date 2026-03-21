@@ -70,11 +70,24 @@ async def insert_snapshot(
     """
 
     params = (
-        snapshot_type, total_capital, cash, open_positions_count,
-        open_notional, unrealized_pnl, realized_pnl_today, realized_pnl_total,
-        fees_today, fees_total, pnl_constraint_arb, pnl_event_model,
-        pnl_calibration, pnl_liquidity, pnl_latency,
-        capital_polymarket, capital_kalshi, now
+        snapshot_type,
+        total_capital,
+        cash,
+        open_positions_count,
+        open_notional,
+        unrealized_pnl,
+        realized_pnl_today,
+        realized_pnl_total,
+        fees_today,
+        fees_total,
+        pnl_constraint_arb,
+        pnl_event_model,
+        pnl_calibration,
+        pnl_liquidity,
+        pnl_latency,
+        capital_polymarket,
+        capital_kalshi,
+        now,
     )
 
     return await db.execute(sql, params)
@@ -210,11 +223,24 @@ async def insert_trade_outcome(
     """
 
     params = (
-        trade_id, signal_id, strategy, violation_id,
-        market_id_a, market_id_b, predicted_edge, predicted_pnl, actual_pnl,
-        fees_total, edge_captured_pct, signal_to_fill_ms, holding_period_ms,
-        spread_at_signal, volume_at_signal, liquidity_at_signal,
-        now, now
+        trade_id,
+        signal_id,
+        strategy,
+        violation_id,
+        market_id_a,
+        market_id_b,
+        predicted_edge,
+        predicted_pnl,
+        actual_pnl,
+        fees_total,
+        edge_captured_pct,
+        signal_to_fill_ms,
+        holding_period_ms,
+        spread_at_signal,
+        volume_at_signal,
+        liquidity_at_signal,
+        now,
+        now,
     )
 
     await db.execute(sql, params)

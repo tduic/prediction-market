@@ -89,8 +89,7 @@ class Database:
                 except aiosqlite.Error as e:
                     await self._conn.rollback()
                     logger.error(
-                        f"Migration failed: {migration_file.name}: {e}",
-                        exc_info=True
+                        f"Migration failed: {migration_file.name}: {e}", exc_info=True
                     )
                     raise
 
@@ -281,8 +280,9 @@ class Database:
                 await db.execute(...)
                 await db.execute(...)
         """
+
         class TransactionContext:
-            def __init__(self, db: 'Database'):
+            def __init__(self, db: "Database"):
                 self.db = db
 
             async def __aenter__(self):

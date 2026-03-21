@@ -10,6 +10,7 @@ from typing import Optional
 @dataclass
 class ViolationInfo:
     """Information about a constraint violation."""
+
     rule_type: str
     severity: str  # "critical" or "warning"
     description: str
@@ -17,9 +18,7 @@ class ViolationInfo:
 
 
 def check(
-    yes_price: float,
-    no_price: float,
-    tolerance: float = 0.01
+    yes_price: float, no_price: float, tolerance: float = 0.01
 ) -> Optional[ViolationInfo]:
     """
     Check complementarity constraint for binary markets.
@@ -70,7 +69,7 @@ def check(
                 f"Expected: 1.0000. Deviation: {deviation:.4f}. "
                 f"Arbitrage strategy: {direction}."
             ),
-            implied_arbitrage=arbitrage * 100
+            implied_arbitrage=arbitrage * 100,
         )
 
     return None

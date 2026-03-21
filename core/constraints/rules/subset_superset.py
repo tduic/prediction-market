@@ -10,6 +10,7 @@ from typing import Optional
 @dataclass
 class ViolationInfo:
     """Information about a constraint violation."""
+
     rule_type: str
     severity: str  # "critical" or "warning"
     description: str
@@ -17,9 +18,7 @@ class ViolationInfo:
 
 
 def check(
-    market_a_price: float,
-    market_b_price: float,
-    relationship: str
+    market_a_price: float, market_b_price: float, relationship: str
 ) -> Optional[ViolationInfo]:
     """
     Check subset/superset relationship between two markets.
@@ -55,7 +54,7 @@ def check(
                     f"superset market price ({market_b_price:.4f}). "
                     "Arbitrage: sell subset, buy superset."
                 ),
-                implied_arbitrage=spread * 100
+                implied_arbitrage=spread * 100,
             )
 
     elif relationship.lower() == "superset":
@@ -71,7 +70,7 @@ def check(
                     f"superset market price ({market_a_price:.4f}). "
                     "Arbitrage: sell subset, buy superset."
                 ),
-                implied_arbitrage=spread * 100
+                implied_arbitrage=spread * 100,
             )
     else:
         raise ValueError(

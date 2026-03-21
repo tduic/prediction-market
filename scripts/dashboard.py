@@ -23,9 +23,11 @@ import statistics
 
 import aiosqlite
 
+
 # ANSI color codes
 class Color:
     """ANSI color codes for terminal output."""
+
     GREEN = "\033[92m"
     RED = "\033[91m"
     YELLOW = "\033[93m"
@@ -47,6 +49,7 @@ class Color:
 @dataclass
 class PortfolioMetrics:
     """Portfolio-level metrics."""
+
     total_capital: float
     cash: float
     deployed: float
@@ -61,6 +64,7 @@ class PortfolioMetrics:
 @dataclass
 class StrategyMetrics:
     """Per-strategy metrics."""
+
     strategy: str
     trades: int
     wins: int
@@ -74,6 +78,7 @@ class StrategyMetrics:
 @dataclass
 class ExecutionMetrics:
     """Order execution quality metrics."""
+
     total_orders: int
     filled_orders: int
     fill_rate: float
@@ -90,6 +95,7 @@ class ExecutionMetrics:
 @dataclass
 class RiskMetrics:
     """Risk and exposure metrics."""
+
     max_loss: float
     max_drawdown: float
     largest_win: float
@@ -126,11 +132,23 @@ class Dashboard:
 
             if self.format_type == "json":
                 self._output_json(
-                    portfolio, strategies, execution, risk, recent_trades, violations, mode
+                    portfolio,
+                    strategies,
+                    execution,
+                    risk,
+                    recent_trades,
+                    violations,
+                    mode,
                 )
             else:
                 self._output_terminal(
-                    portfolio, strategies, execution, risk, recent_trades, violations, mode
+                    portfolio,
+                    strategies,
+                    execution,
+                    risk,
+                    recent_trades,
+                    violations,
+                    mode,
                 )
 
     def _output_terminal(
@@ -246,7 +264,11 @@ class Dashboard:
             print(Color.format("  No strategies executed", Color.DIM))
         else:
             for strategy in strategies:
-                win_pct = (strategy.wins / strategy.trades * 100) if strategy.trades > 0 else 0
+                win_pct = (
+                    (strategy.wins / strategy.trades * 100)
+                    if strategy.trades > 0
+                    else 0
+                )
 
                 # Color code the PnL values
                 total_pnl_str = Color.format(
@@ -266,7 +288,9 @@ class Dashboard:
             total_trades = sum(s.trades for s in strategies)
             total_wins = sum(s.wins for s in strategies)
             total_avg_pnl = (
-                sum(s.total_pnl for s in strategies) / total_trades if total_trades > 0 else 0
+                sum(s.total_pnl for s in strategies) / total_trades
+                if total_trades > 0
+                else 0
             )
             total_pnl = sum(s.total_pnl for s in strategies)
             total_fees = sum(s.fees for s in strategies)
@@ -276,10 +300,14 @@ class Dashboard:
                 if any(s.sharpe > 0 for s in strategies)
                 else 0
             )
-            avg_cap = statistics.mean(s.avg_edge_cap for s in strategies) if strategies else 0
+            avg_cap = (
+                statistics.mean(s.avg_edge_cap for s in strategies) if strategies else 0
+            )
 
             total_pnl_str = Color.format(
-                f"${total_pnl:,.2f}", Color.GREEN if total_pnl >= 0 else Color.RED, bold=True
+                f"${total_pnl:,.2f}",
+                Color.GREEN if total_pnl >= 0 else Color.RED,
+                bold=True,
             )
 
             print(Color.format("─" * 100, Color.DIM))
@@ -419,9 +447,15 @@ class Dashboard:
             ("Successfully Executed", f"{violations['executed']:,}"),
             ("Conversion Rate", f"{violations['conversion_rate']:.1f}%"),
             ("Execution Rate", f"{violations['execution_rate']:.1f}%"),
-            ("Avg Violation→Signal Time", f"{violations['avg_detect_to_signal_ms']:.0f} ms"),
+            (
+                "Avg Violation→Signal Time",
+                f"{violations['avg_detect_to_signal_ms']:.0f} ms",
+            ),
             ("Avg Signal→Fill Time", f"{violations['avg_signal_to_fill_ms']:.0f} ms"),
-            ("Total Pipeline Latency", f"{violations['total_pipeline_latency_ms']:.0f} ms"),
+            (
+                "Total Pipeline Latency",
+                f"{violations['total_pipeline_latency_ms']:.0f} ms",
+            ),
         ]
 
         for label, value in data:
@@ -514,7 +548,9 @@ class Dashboard:
             return "mock"
         return "live"
 
-    async def _get_portfolio_metrics(self, db: aiosqlite.Connection) -> PortfolioMetrics:
+    async def _get_portfolio_metrics(
+        self, db: aiosqlite.Connection
+    ) -> PortfolioMetrics:
         """Get portfolio-level metrics from pnl_snapshots."""
         cursor = await db.execute(
             """
@@ -536,7 +572,9 @@ class Dashboard:
             realized_today = row["realized_pnl_today"] or 0
             realized_total = row["realized_pnl_total"] or 0
             fees = row["fees_total"] or 0
-            net_return = (realized_total / total_capital * 100) if total_capital > 0 else 0
+            net_return = (
+                (realized_total / total_capital * 100) if total_capital > 0 else 0
+            )
 
             return PortfolioMetrics(
                 total_capital=total_capital,
@@ -563,7 +601,9 @@ class Dashboard:
             net_return_pct=0,
         )
 
-    async def _get_strategy_metrics(self, db: aiosqlite.Connection) -> List[StrategyMetrics]:
+    async def _get_strategy_metrics(
+        self, db: aiosqlite.Connection
+    ) -> List[StrategyMetrics]:
         """Get per-strategy metrics from trade_outcomes and signals."""
         cursor = await db.execute(
             """
@@ -609,10 +649,16 @@ class Dashboard:
             )
             pnl_rows = await cursor2.fetchall()
             if len(pnl_rows) > 1:
-                pnl_values = [r["actual_pnl"] for r in pnl_rows if r["actual_pnl"] is not None]
+                pnl_values = [
+                    r["actual_pnl"] for r in pnl_rows if r["actual_pnl"] is not None
+                ]
                 mean_pnl = sum(pnl_values) / len(pnl_values) if pnl_values else 0
-                variance = sum((x - mean_pnl) ** 2 for x in pnl_values) / len(pnl_values) if pnl_values else 0
-                pnl_std = variance ** 0.5
+                variance = (
+                    sum((x - mean_pnl) ** 2 for x in pnl_values) / len(pnl_values)
+                    if pnl_values
+                    else 0
+                )
+                pnl_std = variance**0.5
             else:
                 pnl_std = 0
             sharpe = (avg_pnl / pnl_std) if pnl_std > 0 else 0
@@ -635,7 +681,9 @@ class Dashboard:
 
         return metrics
 
-    async def _get_execution_metrics(self, db: aiosqlite.Connection) -> ExecutionMetrics:
+    async def _get_execution_metrics(
+        self, db: aiosqlite.Connection
+    ) -> ExecutionMetrics:
         """Get execution quality metrics from orders table."""
         # Overall metrics
         cursor = await db.execute(
@@ -775,7 +823,9 @@ class Dashboard:
             max_concentration_pct=max_concentration,
         )
 
-    async def _get_recent_trades(self, db: aiosqlite.Connection, limit: int = 10) -> List[Dict]:
+    async def _get_recent_trades(
+        self, db: aiosqlite.Connection, limit: int = 10
+    ) -> List[Dict]:
         """Get last N closed trades with market info."""
         cursor = await db.execute(
             """
@@ -857,8 +907,12 @@ class Dashboard:
         row = await cursor.fetchone()
         executed = row["executed"] or 0
 
-        conversion_rate = (signals_created / total_violations * 100) if total_violations > 0 else 0
-        execution_rate = (executed / signals_created * 100) if signals_created > 0 else 0
+        conversion_rate = (
+            (signals_created / total_violations * 100) if total_violations > 0 else 0
+        )
+        execution_rate = (
+            (executed / signals_created * 100) if signals_created > 0 else 0
+        )
 
         # Pipeline latencies
         cursor = await db.execute(
@@ -893,7 +947,9 @@ class Dashboard:
             (self.days,),
         )
         rejection_rows = await cursor.fetchall()
-        rejection_reasons = {row["rejection_reason"]: row["count"] for row in rejection_rows}
+        rejection_reasons = {
+            row["rejection_reason"]: row["count"] for row in rejection_rows
+        }
 
         return {
             "total": total_violations,

@@ -20,6 +20,7 @@ import json
 # Signal Flow Classes (Mock Implementations)
 # ============================================================================
 
+
 class MarketUpdatedEvent:
     """Event emitted when market prices are updated."""
 
@@ -144,12 +145,14 @@ class RedisQueueMock:
 
     async def push(self, signal: TradeSignal) -> bool:
         """Push signal to queue."""
-        self.queue.append({
-            "signal_id": signal.signal_id,
-            "violation_id": signal.violation_id,
-            "size_usd": signal.size_usd,
-            "created_at": signal.created_at.isoformat(),
-        })
+        self.queue.append(
+            {
+                "signal_id": signal.signal_id,
+                "violation_id": signal.violation_id,
+                "size_usd": signal.size_usd,
+                "created_at": signal.created_at.isoformat(),
+            }
+        )
         return True
 
     async def peek(self) -> dict:
@@ -198,10 +201,13 @@ class SignalRouter:
         if self.config and self.config.PAPER_TRADING:
             # Log but don't queue
             if self.event_bus:
-                self.event_bus.emit("signal_paper_traded", {
-                    "signal_id": signal.signal_id,
-                    "size_usd": signal.size_usd,
-                })
+                self.event_bus.emit(
+                    "signal_paper_traded",
+                    {
+                        "signal_id": signal.signal_id,
+                        "size_usd": signal.size_usd,
+                    },
+                )
 
             # Update database
             if self.db:
@@ -229,10 +235,13 @@ class SignalRouter:
             self.db.commit()
 
         if self.event_bus:
-            self.event_bus.emit("signal_queued", {
-                "signal_id": signal.signal_id,
-                "size_usd": signal.size_usd,
-            })
+            self.event_bus.emit(
+                "signal_queued",
+                {
+                    "signal_id": signal.signal_id,
+                    "size_usd": signal.size_usd,
+                },
+            )
 
         return {
             "success": True,
@@ -259,7 +268,8 @@ class RiskFilter:
             dict with pass/fail for each risk check
         """
         checks = {
-            "position_size_ok": signal.size_usd <= (self.config.MAX_POSITION_SIZE_USD if self.config else 10000),
+            "position_size_ok": signal.size_usd
+            <= (self.config.MAX_POSITION_SIZE_USD if self.config else 10000),
             "edge_positive": signal.expected_edge >= 0,
             "ttl_valid": signal.ttl_s > 0 and signal.ttl_s <= 3600,
             "all_pass": True,
@@ -276,11 +286,14 @@ class RiskFilter:
 # Test Cases
 # ============================================================================
 
+
 class TestViolationToSignalFlow:
     """Test full flow from violation detection to signal creation."""
 
     @pytest.mark.asyncio
-    async def test_violation_to_signal_to_queue(self, in_memory_db, event_bus, sample_config):
+    async def test_violation_to_signal_to_queue(
+        self, in_memory_db, event_bus, sample_config
+    ):
         """Complete flow: violation -> signal -> queued."""
         generator = SignalGenerator(in_memory_db, event_bus, sample_config)
         router = SignalRouter(in_memory_db, event_bus, sample_config)
@@ -290,13 +303,35 @@ class TestViolationToSignalFlow:
             """INSERT INTO markets (id, platform, platform_id, title, description,
                category, event_type, yes_price, no_price, status)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            ("market_001", "polymarket", "pm_001", "Test Market A", "Test", "category", "event", 0.5, 0.5, "open"),
+            (
+                "market_001",
+                "polymarket",
+                "pm_001",
+                "Test Market A",
+                "Test",
+                "category",
+                "event",
+                0.5,
+                0.5,
+                "open",
+            ),
         )
         in_memory_db.execute(
             """INSERT INTO markets (id, platform, platform_id, title, description,
                category, event_type, yes_price, no_price, status)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            ("market_002", "kalshi", "k_001", "Test Market B", "Test", "category", "event", 0.5, 0.5, "open"),
+            (
+                "market_002",
+                "kalshi",
+                "k_001",
+                "Test Market B",
+                "Test",
+                "category",
+                "event",
+                0.5,
+                0.5,
+                "open",
+            ),
         )
 
         # Create market pair
@@ -347,7 +382,9 @@ class TestViolationToSignalFlow:
         assert router.queue.queue[0]["signal_id"] == "sig_v_001"
 
     @pytest.mark.asyncio
-    async def test_paper_trading_logs_only(self, in_memory_db, event_bus, sample_config):
+    async def test_paper_trading_logs_only(
+        self, in_memory_db, event_bus, sample_config
+    ):
         """With PAPER_TRADING=true, signal is logged but not queued."""
         generator = SignalGenerator(in_memory_db, event_bus, sample_config)
         router = SignalRouter(in_memory_db, event_bus, sample_config)
@@ -357,20 +394,49 @@ class TestViolationToSignalFlow:
             """INSERT INTO markets (id, platform, platform_id, title, description,
                category, event_type, yes_price, no_price, status)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            ("market_003", "polymarket", "pm_002", "Test Market C", "Test", "category", "event", 0.5, 0.5, "open"),
+            (
+                "market_003",
+                "polymarket",
+                "pm_002",
+                "Test Market C",
+                "Test",
+                "category",
+                "event",
+                0.5,
+                0.5,
+                "open",
+            ),
         )
         in_memory_db.execute(
             """INSERT INTO markets (id, platform, platform_id, title, description,
                category, event_type, yes_price, no_price, status)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            ("market_004", "kalshi", "k_002", "Test Market D", "Test", "category", "event", 0.5, 0.5, "open"),
+            (
+                "market_004",
+                "kalshi",
+                "k_002",
+                "Test Market D",
+                "Test",
+                "category",
+                "event",
+                0.5,
+                0.5,
+                "open",
+            ),
         )
 
         # Create market pair
         in_memory_db.execute(
             """INSERT INTO market_pairs (id, market_a_id, market_b_id, pair_type, status, verified)
                VALUES (?, ?, ?, ?, ?, ?)""",
-            ("pair_002", "market_003", "market_004", "cross_platform_identical", "active", 1),
+            (
+                "pair_002",
+                "market_003",
+                "market_004",
+                "cross_platform_identical",
+                "active",
+                1,
+            ),
         )
 
         # Create violation record
@@ -378,7 +444,16 @@ class TestViolationToSignalFlow:
             """INSERT INTO violations (id, pair_id, violation_type, price_a, price_b,
                raw_spread, net_spread, severity)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            ("v_002", "pair_002", "cross_platform_identical", 0.5, 0.49, 0.01, 0.01, "medium"),
+            (
+                "v_002",
+                "pair_002",
+                "cross_platform_identical",
+                0.5,
+                0.49,
+                0.01,
+                0.01,
+                "medium",
+            ),
         )
         in_memory_db.commit()
 
@@ -408,7 +483,9 @@ class TestViolationToSignalFlow:
         assert len(events) == 1
 
     @pytest.mark.asyncio
-    async def test_expired_signal_rejected(self, in_memory_db, event_bus, sample_config):
+    async def test_expired_signal_rejected(
+        self, in_memory_db, event_bus, sample_config
+    ):
         """Expired signal is rejected."""
         router = SignalRouter(in_memory_db, event_bus, sample_config)
 
@@ -490,7 +567,9 @@ class TestSignalMultipleCycles:
     """Test multiple signals in sequence."""
 
     @pytest.mark.asyncio
-    async def test_multiple_signals_queued(self, in_memory_db, event_bus, sample_config):
+    async def test_multiple_signals_queued(
+        self, in_memory_db, event_bus, sample_config
+    ):
         """Multiple signals are all queued."""
         generator = SignalGenerator(in_memory_db, event_bus, sample_config)
         router = SignalRouter(in_memory_db, event_bus, sample_config)
@@ -506,20 +585,49 @@ class TestSignalMultipleCycles:
                 """INSERT INTO markets (id, platform, platform_id, title, description,
                    category, event_type, yes_price, no_price, status)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (f"market_multi_{i}_a", "polymarket", f"pm_multi_{i}_a", f"Multi Test {i} A", "Test", "category", "event", 0.5, 0.5, "open"),
+                (
+                    f"market_multi_{i}_a",
+                    "polymarket",
+                    f"pm_multi_{i}_a",
+                    f"Multi Test {i} A",
+                    "Test",
+                    "category",
+                    "event",
+                    0.5,
+                    0.5,
+                    "open",
+                ),
             )
             in_memory_db.execute(
                 """INSERT INTO markets (id, platform, platform_id, title, description,
                    category, event_type, yes_price, no_price, status)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (f"market_multi_{i}_b", "kalshi", f"k_multi_{i}_b", f"Multi Test {i} B", "Test", "category", "event", 0.5, 0.5, "open"),
+                (
+                    f"market_multi_{i}_b",
+                    "kalshi",
+                    f"k_multi_{i}_b",
+                    f"Multi Test {i} B",
+                    "Test",
+                    "category",
+                    "event",
+                    0.5,
+                    0.5,
+                    "open",
+                ),
             )
 
             # Create market pair
             in_memory_db.execute(
                 """INSERT INTO market_pairs (id, market_a_id, market_b_id, pair_type, status, verified)
                    VALUES (?, ?, ?, ?, ?, ?)""",
-                (f"pair_{i:03d}", f"market_multi_{i}_a", f"market_multi_{i}_b", "test", "active", 1),
+                (
+                    f"pair_{i:03d}",
+                    f"market_multi_{i}_a",
+                    f"market_multi_{i}_b",
+                    "test",
+                    "active",
+                    1,
+                ),
             )
 
             # Create violation record
@@ -527,7 +635,16 @@ class TestSignalMultipleCycles:
                 """INSERT INTO violations (id, pair_id, violation_type, price_a, price_b,
                    raw_spread, net_spread, severity)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                (f"v_{i:03d}", f"pair_{i:03d}", "test", 0.5, 0.48, 0.02, 0.02, "medium"),
+                (
+                    f"v_{i:03d}",
+                    f"pair_{i:03d}",
+                    "test",
+                    0.5,
+                    0.48,
+                    0.02,
+                    0.02,
+                    "medium",
+                ),
             )
             in_memory_db.commit()
 
@@ -552,20 +669,44 @@ class TestSignalMultipleCycles:
     @pytest.mark.asyncio
     async def test_signal_timestamps_recorded(self, in_memory_db, sample_config):
         """Signal timestamps are accurately recorded."""
-        generator = SignalGenerator(event_bus=None, db=in_memory_db, config=sample_config)
+        generator = SignalGenerator(
+            event_bus=None, db=in_memory_db, config=sample_config
+        )
 
         # Create parent market records
         in_memory_db.execute(
             """INSERT INTO markets (id, platform, platform_id, title, description,
                category, event_type, yes_price, no_price, status)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            ("market_time_a", "polymarket", "pm_time_a", "Time Test A", "Test", "category", "event", 0.5, 0.5, "open"),
+            (
+                "market_time_a",
+                "polymarket",
+                "pm_time_a",
+                "Time Test A",
+                "Test",
+                "category",
+                "event",
+                0.5,
+                0.5,
+                "open",
+            ),
         )
         in_memory_db.execute(
             """INSERT INTO markets (id, platform, platform_id, title, description,
                category, event_type, yes_price, no_price, status)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            ("market_time_b", "kalshi", "k_time_b", "Time Test B", "Test", "category", "event", 0.5, 0.5, "open"),
+            (
+                "market_time_b",
+                "kalshi",
+                "k_time_b",
+                "Time Test B",
+                "Test",
+                "category",
+                "event",
+                0.5,
+                0.5,
+                "open",
+            ),
         )
 
         # Create market pair
@@ -605,7 +746,9 @@ class TestSignalMultipleCycles:
         assert row is not None
 
     @pytest.mark.asyncio
-    async def test_mixed_paper_and_live_signals(self, in_memory_db, event_bus, sample_config):
+    async def test_mixed_paper_and_live_signals(
+        self, in_memory_db, event_bus, sample_config
+    ):
         """Mix of paper trading and live signals."""
         generator = SignalGenerator(in_memory_db, event_bus, sample_config)
         router = SignalRouter(in_memory_db, event_bus, sample_config)
@@ -615,13 +758,35 @@ class TestSignalMultipleCycles:
             """INSERT INTO markets (id, platform, platform_id, title, description,
                category, event_type, yes_price, no_price, status)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            ("market_mix_001_a", "polymarket", "pm_mix_001_a", "Mix Test 001 A", "Test", "category", "event", 0.5, 0.5, "open"),
+            (
+                "market_mix_001_a",
+                "polymarket",
+                "pm_mix_001_a",
+                "Mix Test 001 A",
+                "Test",
+                "category",
+                "event",
+                0.5,
+                0.5,
+                "open",
+            ),
         )
         in_memory_db.execute(
             """INSERT INTO markets (id, platform, platform_id, title, description,
                category, event_type, yes_price, no_price, status)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            ("market_mix_001_b", "kalshi", "k_mix_001_b", "Mix Test 001 B", "Test", "category", "event", 0.5, 0.5, "open"),
+            (
+                "market_mix_001_b",
+                "kalshi",
+                "k_mix_001_b",
+                "Mix Test 001 B",
+                "Test",
+                "category",
+                "event",
+                0.5,
+                0.5,
+                "open",
+            ),
         )
         in_memory_db.execute(
             """INSERT INTO market_pairs (id, market_a_id, market_b_id, pair_type, status, verified)
@@ -652,13 +817,35 @@ class TestSignalMultipleCycles:
             """INSERT INTO markets (id, platform, platform_id, title, description,
                category, event_type, yes_price, no_price, status)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            ("market_mix_002_a", "polymarket", "pm_mix_002_a", "Mix Test 002 A", "Test", "category", "event", 0.5, 0.5, "open"),
+            (
+                "market_mix_002_a",
+                "polymarket",
+                "pm_mix_002_a",
+                "Mix Test 002 A",
+                "Test",
+                "category",
+                "event",
+                0.5,
+                0.5,
+                "open",
+            ),
         )
         in_memory_db.execute(
             """INSERT INTO markets (id, platform, platform_id, title, description,
                category, event_type, yes_price, no_price, status)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            ("market_mix_002_b", "kalshi", "k_mix_002_b", "Mix Test 002 B", "Test", "category", "event", 0.5, 0.5, "open"),
+            (
+                "market_mix_002_b",
+                "kalshi",
+                "k_mix_002_b",
+                "Mix Test 002 B",
+                "Test",
+                "category",
+                "event",
+                0.5,
+                0.5,
+                "open",
+            ),
         )
         in_memory_db.execute(
             """INSERT INTO market_pairs (id, market_a_id, market_b_id, pair_type, status, verified)

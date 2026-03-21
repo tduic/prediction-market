@@ -18,6 +18,7 @@ import asyncio
 # Ingestor Classes (Mock Implementations)
 # ============================================================================
 
+
 class PolymocketAPIClient:
     """Mock Polymarket API client."""
 
@@ -197,9 +198,12 @@ class MarketIngestor:
 
             # Emit event
             if self.event_bus:
-                self.event_bus.emit("ingestor_rate_limited", {
-                    "backoff_seconds": self.backoff_seconds,
-                })
+                self.event_bus.emit(
+                    "ingestor_rate_limited",
+                    {
+                        "backoff_seconds": self.backoff_seconds,
+                    },
+                )
 
             raise
 
@@ -229,6 +233,7 @@ class MarketIngestor:
 # Test Cases
 # ============================================================================
 
+
 class TestIngestorDataFlow:
     """Test ingestor data insertion flow."""
 
@@ -245,9 +250,7 @@ class TestIngestorDataFlow:
         assert result["markets_updated"] == 0
 
         # Verify in database
-        markets = in_memory_db.execute(
-            "SELECT * FROM markets"
-        ).fetchall()
+        markets = in_memory_db.execute("SELECT * FROM markets").fetchall()
 
         assert len(markets) == 2
         assert markets[0]["title"] == "Will the Fed cut rates in December 2024?"
@@ -289,9 +292,7 @@ class TestIngestorDataFlow:
 
         await ingestor.run_ingest_cycle()
 
-        runs = in_memory_db.execute(
-            "SELECT * FROM ingestor_runs"
-        ).fetchall()
+        runs = in_memory_db.execute("SELECT * FROM ingestor_runs").fetchall()
 
         assert len(runs) == 1
         assert runs[0]["status"] == "completed"
@@ -319,7 +320,7 @@ class TestIngestorDataFlow:
                         "platform_id": "0x1234",
                         "title": "Will the Fed cut rates in December 2024?",
                         "yes_price": 0.75,  # Updated
-                        "no_price": 0.25,   # Updated
+                        "no_price": 0.25,  # Updated
                         "status": "open",
                     },
                 ],
@@ -349,15 +350,15 @@ class TestIngestorRateLimiting:
     async def test_rate_limit_backoff_on_429(self, in_memory_db, event_bus):
         """Rate limit (429) triggers backoff."""
         api_client = PolymocketAPIClient(rate_limit_remaining=0)
-        ingestor = MarketIngestor(in_memory_db, api_client=api_client, event_bus=event_bus)
+        ingestor = MarketIngestor(
+            in_memory_db, api_client=api_client, event_bus=event_bus
+        )
 
         with pytest.raises(RateLimitError):
             await ingestor.run_ingest_cycle()
 
         # Verify run logged as rate_limited
-        runs = in_memory_db.execute(
-            "SELECT status FROM ingestor_runs"
-        ).fetchall()
+        runs = in_memory_db.execute("SELECT status FROM ingestor_runs").fetchall()
 
         assert len(runs) == 1
         assert runs[0]["status"] == "rate_limited"
@@ -366,7 +367,9 @@ class TestIngestorRateLimiting:
     async def test_rate_limit_emits_event(self, in_memory_db, event_bus):
         """Rate limit triggers event emission."""
         api_client = PolymocketAPIClient(rate_limit_remaining=0)
-        ingestor = MarketIngestor(in_memory_db, api_client=api_client, event_bus=event_bus)
+        ingestor = MarketIngestor(
+            in_memory_db, api_client=api_client, event_bus=event_bus
+        )
 
         with pytest.raises(RateLimitError):
             await ingestor.run_ingest_cycle()

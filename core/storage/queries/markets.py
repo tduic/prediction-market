@@ -70,9 +70,21 @@ async def upsert_market(
     """
 
     params = (
-        market_id, platform, platform_id, title, description, category,
-        event_type, resolution_source, resolution_criteria,
-        close_time, resolve_time, status, now, now, now
+        market_id,
+        platform,
+        platform_id,
+        title,
+        description,
+        category,
+        event_type,
+        resolution_source,
+        resolution_criteria,
+        close_time,
+        resolve_time,
+        status,
+        now,
+        now,
+        now,
     )
 
     await db.execute(sql, params)
@@ -175,8 +187,15 @@ async def insert_price(
     """
 
     params = (
-        market_id, yes_price, no_price, spread,
-        volume_24h, open_interest, liquidity, poll_latency_ms, now
+        market_id,
+        yes_price,
+        no_price,
+        spread,
+        volume_24h,
+        open_interest,
+        liquidity,
+        poll_latency_ms,
+        now,
     )
 
     return await db.execute(sql, params)
@@ -244,8 +263,14 @@ async def insert_ingestor_run(
     """
 
     params = (
-        platform, markets_fetched, markets_new, markets_updated,
-        errors, error_detail, duration_ms, now
+        platform,
+        markets_fetched,
+        markets_new,
+        markets_updated,
+        errors,
+        error_detail,
+        duration_ms,
+        now,
     )
 
     return await db.execute(sql, params)
@@ -307,7 +332,7 @@ async def get_market_count(
         sql = "SELECT COUNT(*) as count FROM markets"
         result = await db.fetch_one(sql)
 
-    return result['count'] if result else 0
+    return result["count"] if result else 0
 
 
 async def get_markets_needing_update(

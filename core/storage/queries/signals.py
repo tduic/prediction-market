@@ -72,11 +72,26 @@ async def insert_signal(
     """
 
     params = (
-        signal_id, strategy, signal_type, market_id_a, market_id_b,
-        model_edge, kelly_fraction, position_size_a, position_size_b,
-        total_capital_at_risk, violation_id, target_price_a, target_price_b,
-        model_fair_value, risk_check_passed, daily_loss_limit_remaining,
-        portfolio_exposure_pct, status, now, now
+        signal_id,
+        strategy,
+        signal_type,
+        market_id_a,
+        market_id_b,
+        model_edge,
+        kelly_fraction,
+        position_size_a,
+        position_size_b,
+        total_capital_at_risk,
+        violation_id,
+        target_price_a,
+        target_price_b,
+        model_fair_value,
+        risk_check_passed,
+        daily_loss_limit_remaining,
+        portfolio_exposure_pct,
+        status,
+        now,
+        now,
     )
 
     await db.execute(sql, params)
@@ -145,9 +160,7 @@ async def get_recent_signals(
     Returns:
         List of signal records
     """
-    where_clauses = [
-        "datetime(fired_at) > datetime('now', '-' || ? || ' minutes')"
-    ]
+    where_clauses = ["datetime(fired_at) > datetime('now', '-' || ? || ' minutes')"]
     params = [minutes]
 
     if strategy:
@@ -254,8 +267,14 @@ async def insert_risk_check(
     """
 
     params = (
-        signal_id, violation_id, check_type, passed, check_value,
-        threshold, detail, now
+        signal_id,
+        violation_id,
+        check_type,
+        passed,
+        check_value,
+        threshold,
+        detail,
+        now,
     )
 
     return await db.execute(sql, params)
@@ -343,7 +362,7 @@ async def get_signal_count(
     sql = f"SELECT COUNT(*) as count FROM signals WHERE {where_sql}"
     result = await db.fetch_one(sql, tuple(params) if params else ())
 
-    return result['count'] if result else 0
+    return result["count"] if result else 0
 
 
 async def get_signal_statistics(

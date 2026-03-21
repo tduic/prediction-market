@@ -19,8 +19,10 @@ import asyncio
 # Execution Classes (Mock Implementations)
 # ============================================================================
 
+
 class OrderStatus(Enum):
     """Order status enumeration."""
+
     PENDING = "pending"
     SUBMITTED = "submitted"
     PARTIALLY_FILLED = "partially_filled"
@@ -226,7 +228,11 @@ class ExecutionService:
         Returns:
             dict with cancellation result
         """
-        if order.status not in [OrderStatus.PENDING, OrderStatus.SUBMITTED, OrderStatus.PARTIALLY_FILLED]:
+        if order.status not in [
+            OrderStatus.PENDING,
+            OrderStatus.SUBMITTED,
+            OrderStatus.PARTIALLY_FILLED,
+        ]:
             return {"success": False, "reason": "cannot_cancel"}
 
         # Get appropriate client
@@ -320,6 +326,7 @@ class PlatformClientMock:
 # Test Cases
 # ============================================================================
 
+
 class TestOrderSubmissionAndFills:
     """Test order submission and fill tracking."""
 
@@ -329,12 +336,26 @@ class TestOrderSubmissionAndFills:
         in_memory_db.execute(
             """INSERT INTO markets (id, platform, platform_id, title, yes_price, no_price)
                VALUES (?, ?, ?, ?, ?, ?)""",
-            (f"m1{prefix}", "polymarket", f"pm1{prefix}", f"Market 1{prefix}", 0.50, 0.50),
+            (
+                f"m1{prefix}",
+                "polymarket",
+                f"pm1{prefix}",
+                f"Market 1{prefix}",
+                0.50,
+                0.50,
+            ),
         )
         in_memory_db.execute(
             """INSERT INTO markets (id, platform, platform_id, title, yes_price, no_price)
                VALUES (?, ?, ?, ?, ?, ?)""",
-            (f"m2{prefix}", "polymarket", f"pm2{prefix}", f"Market 2{prefix}", 0.49, 0.49),
+            (
+                f"m2{prefix}",
+                "polymarket",
+                f"pm2{prefix}",
+                f"Market 2{prefix}",
+                0.49,
+                0.49,
+            ),
         )
         # Create market pair
         in_memory_db.execute(
@@ -527,7 +548,9 @@ class TestOrderSubmissionAndFills:
 
         # Manually mark as filled in mock
         client.orders[platform_order_id]["status"] = "filled"
-        client.orders[platform_order_id]["submitted_at"] = datetime.utcnow() - timedelta(seconds=5)
+        client.orders[platform_order_id][
+            "submitted_at"
+        ] = datetime.utcnow() - timedelta(seconds=5)
 
         fill_result = await execution.wait_for_fill(order, timeout_s=10)
 
@@ -552,12 +575,26 @@ class TestConcurrentExecution:
         in_memory_db.execute(
             """INSERT INTO markets (id, platform, platform_id, title, yes_price, no_price)
                VALUES (?, ?, ?, ?, ?, ?)""",
-            (f"m1{prefix}", "polymarket", f"pm1{prefix}", f"Market 1{prefix}", 0.50, 0.50),
+            (
+                f"m1{prefix}",
+                "polymarket",
+                f"pm1{prefix}",
+                f"Market 1{prefix}",
+                0.50,
+                0.50,
+            ),
         )
         in_memory_db.execute(
             """INSERT INTO markets (id, platform, platform_id, title, yes_price, no_price)
                VALUES (?, ?, ?, ?, ?, ?)""",
-            (f"m2{prefix}", "polymarket", f"pm2{prefix}", f"Market 2{prefix}", 0.49, 0.49),
+            (
+                f"m2{prefix}",
+                "polymarket",
+                f"pm2{prefix}",
+                f"Market 2{prefix}",
+                0.49,
+                0.49,
+            ),
         )
         # Create market pair
         in_memory_db.execute(
@@ -705,12 +742,26 @@ class TestExecutionErrorHandling:
         in_memory_db.execute(
             """INSERT INTO markets (id, platform, platform_id, title, yes_price, no_price)
                VALUES (?, ?, ?, ?, ?, ?)""",
-            (f"m1{prefix}", "polymarket", f"pm1{prefix}", f"Market 1{prefix}", 0.50, 0.50),
+            (
+                f"m1{prefix}",
+                "polymarket",
+                f"pm1{prefix}",
+                f"Market 1{prefix}",
+                0.50,
+                0.50,
+            ),
         )
         in_memory_db.execute(
             """INSERT INTO markets (id, platform, platform_id, title, yes_price, no_price)
                VALUES (?, ?, ?, ?, ?, ?)""",
-            (f"m2{prefix}", "polymarket", f"pm2{prefix}", f"Market 2{prefix}", 0.49, 0.49),
+            (
+                f"m2{prefix}",
+                "polymarket",
+                f"pm2{prefix}",
+                f"Market 2{prefix}",
+                0.49,
+                0.49,
+            ),
         )
         # Create market pair
         in_memory_db.execute(

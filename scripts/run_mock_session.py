@@ -270,7 +270,9 @@ async def create_market_pairs(db: aiosqlite.Connection, market_ids: List[str]) -
     # Group by category to create realistic pairs
     markets_by_cat: Dict[str, List[str]] = {}
     for market_id in market_ids:
-        cursor = await db.execute("SELECT category FROM markets WHERE id = ?", (market_id,))
+        cursor = await db.execute(
+            "SELECT category FROM markets WHERE id = ?", (market_id,)
+        )
         row = await cursor.fetchone()
         if row:
             cat = row[0]
@@ -317,7 +319,9 @@ async def add_price_snapshots(db: aiosqlite.Connection) -> None:
     logger.info("Adding price snapshots for pair history")
 
     # Get all market pairs
-    cursor = await db.execute("SELECT id, market_id_a, market_id_b FROM market_pairs LIMIT 10")
+    cursor = await db.execute(
+        "SELECT id, market_id_a, market_id_b FROM market_pairs LIMIT 10"
+    )
     pairs = await cursor.fetchall()
 
     for pair_id, market_a, market_b in pairs:
@@ -366,12 +370,14 @@ async def generate_violations(
     logger.info(f"Generating {num_violations} mock violations")
 
     # Get all market pairs
-    cursor = await db.execute("SELECT id, market_id_a, market_id_b FROM market_pairs LIMIT 20")
+    cursor = await db.execute(
+        "SELECT id, market_id_a, market_id_b FROM market_pairs LIMIT 20"
+    )
     pairs = await cursor.fetchall()
 
     violation_ids = []
 
-    for idx, (pair_id, market_a, market_b) in enumerate(pairs[: num_violations]):
+    for idx, (pair_id, market_a, market_b) in enumerate(pairs[:num_violations]):
         # Get current prices
         cursor_a = await db.execute(
             "SELECT yes_price FROM market_prices WHERE market_id = ? ORDER BY polled_at DESC LIMIT 1",
@@ -441,7 +447,9 @@ async def generate_violations(
 # ============================================================================
 
 
-async def generate_signals(db: aiosqlite.Connection, violation_ids: List[str]) -> List[str]:
+async def generate_signals(
+    db: aiosqlite.Connection, violation_ids: List[str]
+) -> List[str]:
     """Generate trading signals for violations with Kelly sizing and risk checks."""
     logger.info(f"Generating trading signals for {len(violation_ids)} violations")
 
@@ -849,7 +857,9 @@ async def close_positions(db: aiosqlite.Connection) -> None:
         strategy,
     ) in positions:
         # Get signal edge for realistic P&L
-        cursor = await db.execute("SELECT model_edge FROM signals WHERE id = ?", (signal_id,))
+        cursor = await db.execute(
+            "SELECT model_edge FROM signals WHERE id = ?", (signal_id,)
+        )
         sig = await cursor.fetchone()
         edge = sig[0] if sig else 0.03
 
@@ -888,7 +898,11 @@ async def close_positions(db: aiosqlite.Connection) -> None:
 
         # Write trade_outcomes record for analytics
         trade_id = f"trade_{pos_id[:8]}"
-        edge_captured = (realized_pnl / (edge * entry_size * entry_price)) * 100 if edge > 0 and entry_size > 0 and entry_price > 0 else 0.0
+        edge_captured = (
+            (realized_pnl / (edge * entry_size * entry_price)) * 100
+            if edge > 0 and entry_size > 0 and entry_price > 0
+            else 0.0
+        )
         await db.execute(
             """
             INSERT INTO trade_outcomes (
@@ -1004,7 +1018,9 @@ async def generate_report(db: aiosqlite.Connection, verbose: bool = False) -> No
     # Violation detection phase
     print("\nVIOLATION DETECTION PHASE")
     print("-" * 80)
-    cursor = await db.execute("SELECT COUNT(*) FROM violations WHERE status = 'detected'")
+    cursor = await db.execute(
+        "SELECT COUNT(*) FROM violations WHERE status = 'detected'"
+    )
     violation_count = (await cursor.fetchone())[0]
     cursor = await db.execute(
         "SELECT AVG(net_spread), MIN(net_spread), MAX(net_spread) FROM violations"

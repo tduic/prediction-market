@@ -52,9 +52,19 @@ async def insert_order(
     """
 
     params = (
-        order_id, signal_id, platform, platform_order_id, market_id,
-        side, order_type, requested_price, requested_size,
-        'pending', 0, now, now
+        order_id,
+        signal_id,
+        platform,
+        platform_order_id,
+        market_id,
+        side,
+        order_type,
+        requested_price,
+        requested_size,
+        "pending",
+        0,
+        now,
+        now,
     )
 
     await db.execute(sql, params)
@@ -292,8 +302,16 @@ async def insert_position(
     """
 
     params = (
-        position_id, signal_id, market_id, strategy, side,
-        entry_price, entry_size, 'open', now, now
+        position_id,
+        signal_id,
+        market_id,
+        strategy,
+        side,
+        entry_price,
+        entry_size,
+        "open",
+        now,
+        now,
     )
 
     await db.execute(sql, params)
@@ -386,8 +404,14 @@ async def close_position(
     """
 
     params = (
-        exit_price, exit_size, realized_pnl, fees_paid,
-        resolution_outcome, now, now, position_id
+        exit_price,
+        exit_size,
+        realized_pnl,
+        fees_paid,
+        resolution_outcome,
+        now,
+        now,
+        position_id,
     )
 
     await db.execute(sql, params)
@@ -467,4 +491,4 @@ async def get_position_count(
         sql = "SELECT COUNT(*) as count FROM positions"
         result = await db.fetch_one(sql)
 
-    return result['count'] if result else 0
+    return result["count"] if result else 0

@@ -58,7 +58,9 @@ class SignalHandler:
             signal = TradingSignal(**payload)
 
             # Check TTL - ensure expires_at is in the future
-            expires_at = datetime.fromisoformat(signal.expires_at_utc.replace("Z", "+00:00"))
+            expires_at = datetime.fromisoformat(
+                signal.expires_at_utc.replace("Z", "+00:00")
+            )
             now = datetime.utcnow().replace(tzinfo=expires_at.tzinfo)
 
             if expires_at <= now:
@@ -123,7 +125,9 @@ class SignalHandler:
         try:
             # Validate signal schema
             if not await self.validate_signal(payload):
-                await self._log_signal_intent(signal_id, "REJECTED", "Signal validation failed")
+                await self._log_signal_intent(
+                    signal_id, "REJECTED", "Signal validation failed"
+                )
                 return
 
             signal = TradingSignal(**payload)
@@ -156,10 +160,14 @@ class SignalHandler:
             )
 
         except ValidationError as e:
-            await self._log_signal_intent(signal_id, "REJECTED", f"Validation error: {str(e)}")
+            await self._log_signal_intent(
+                signal_id, "REJECTED", f"Validation error: {str(e)}"
+            )
             raise
         except Exception as e:
-            await self._log_signal_intent(signal_id, "ERROR", f"Processing error: {str(e)}")
+            await self._log_signal_intent(
+                signal_id, "ERROR", f"Processing error: {str(e)}"
+            )
             logger.error("Error processing signal %s: %s", signal_id, exc_info=e)
 
     async def _log_signal_intent(

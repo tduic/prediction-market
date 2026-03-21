@@ -61,7 +61,9 @@ class MockConfig:
 
         return cls(
             fill_probability=float(os.getenv("MOCK_FILL_PROBABILITY", "0.95")),
-            partial_fill_probability=float(os.getenv("MOCK_PARTIAL_FILL_PROBABILITY", "0.05")),
+            partial_fill_probability=float(
+                os.getenv("MOCK_PARTIAL_FILL_PROBABILITY", "0.05")
+            ),
             partial_fill_fraction=float(os.getenv("MOCK_PARTIAL_FILL_FRACTION", "0.6")),
             min_latency_ms=int(os.getenv("MOCK_MIN_LATENCY_MS", "50")),
             max_latency_ms=int(os.getenv("MOCK_MAX_LATENCY_MS", "300")),
@@ -101,7 +103,9 @@ class MockOrderBook:
     liquidity: float = 10000.0
     last_updated: float = field(default_factory=time.time)
 
-    def simulate_fill_price(self, side: str, limit_price: Optional[float], max_slippage: float) -> float:
+    def simulate_fill_price(
+        self, side: str, limit_price: Optional[float], max_slippage: float
+    ) -> float:
         """
         Simulate a realistic fill price given side and limit.
 
@@ -205,10 +209,14 @@ class MockExecutionClient:
                 if self.config.verbose:
                     logger.info(
                         "[MOCK] Seeded order book for %s: yes=%.3f no=%.3f",
-                        market_id, yes_price, no_price,
+                        market_id,
+                        yes_price,
+                        no_price,
                     )
         except Exception as e:
-            logger.debug("[MOCK] Could not seed order book from DB for %s: %s", market_id, e)
+            logger.debug(
+                "[MOCK] Could not seed order book from DB for %s: %s", market_id, e
+            )
 
     async def submit_order(self, leg: OrderLeg) -> MockOrderResult:
         """
@@ -226,7 +234,9 @@ class MockExecutionClient:
         order_id = f"MOCK-{self.platform_label}-{uuid.uuid4().hex[:12]}"
 
         # Simulate submission latency
-        latency_ms = random.randint(self.config.min_latency_ms, self.config.max_latency_ms)
+        latency_ms = random.randint(
+            self.config.min_latency_ms, self.config.max_latency_ms
+        )
         await asyncio.sleep(latency_ms / 1000.0)
 
         submission_latency_ms = int((time.time() - start_time) * 1000)
@@ -234,8 +244,12 @@ class MockExecutionClient:
         if self.config.verbose:
             logger.info(
                 "[MOCK] Order submitted: %s | market=%s side=%s size=%.2f price=%s | latency=%dms",
-                order_id, leg.market_id, leg.side, leg.size,
-                leg.limit_price, submission_latency_ms,
+                order_id,
+                leg.market_id,
+                leg.side,
+                leg.size,
+                leg.limit_price,
+                submission_latency_ms,
             )
 
         # Seed order book from DB if we haven't yet
@@ -248,12 +262,14 @@ class MockExecutionClient:
         if roll > self.config.fill_probability:
             # ORDER REJECTED — simulates insufficient liquidity, price moved, etc.
             self.total_rejected += 1
-            reason = random.choice([
-                "Insufficient liquidity at requested price",
-                "Market moved beyond limit price",
-                "Order book too thin for requested size",
-                "Simulated platform rejection",
-            ])
+            reason = random.choice(
+                [
+                    "Insufficient liquidity at requested price",
+                    "Market moved beyond limit price",
+                    "Order book too thin for requested size",
+                    "Simulated platform rejection",
+                ]
+            )
 
             result = MockOrderResult(
                 order_id=order_id,
@@ -318,8 +334,13 @@ class MockExecutionClient:
         if self.config.verbose:
             logger.info(
                 "[MOCK] Order %s: %s | filled=%.2f @ %.4f | slip=%.4f fee=%.4f | fill_latency=%dms",
-                status, order_id, filled_size, filled_price,
-                slippage, fee_paid, fill_latency_ms,
+                status,
+                order_id,
+                filled_size,
+                filled_price,
+                slippage,
+                fee_paid,
+                fill_latency_ms,
             )
 
         return result
@@ -369,7 +390,12 @@ class MockExecutionClient:
             )
             row = await cursor.fetchone()
             if row:
-                return {"order_id": order_id, "status": row[0], "fill_price": row[1], "fill_size": row[2]}
+                return {
+                    "order_id": order_id,
+                    "status": row[0],
+                    "fill_price": row[1],
+                    "fill_size": row[2],
+                }
             return None
         except Exception:
             return None
@@ -426,7 +452,9 @@ class MockExecutionClient:
         except Exception as e:
             logger.error("[MOCK] Failed to write order to DB: %s", e)
 
-    async def _write_fill_event(self, leg: OrderLeg, result: MockOrderResult, status: str) -> None:
+    async def _write_fill_event(
+        self, leg: OrderLeg, result: MockOrderResult, status: str
+    ) -> None:
         """Write a fill event to order_events."""
         now = int(time.time())
         try:
@@ -457,7 +485,10 @@ class MockExecutionClient:
             "total_partial": self.total_partial,
             "total_rejected": self.total_rejected,
             "fill_rate_pct": round(
-                (self.total_filled + self.total_partial) / max(1, self.total_submitted) * 100, 1
+                (self.total_filled + self.total_partial)
+                / max(1, self.total_submitted)
+                * 100,
+                1,
             ),
         }
 

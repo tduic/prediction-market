@@ -65,9 +65,7 @@ class ModelRegistry:
         # Check if version already exists
         for v in self.versions[model_name]:
             if v.version == version and v.status != ModelStatus.RETIRED:
-                logger.warning(
-                    f"Version {version} of {model_name} already exists"
-                )
+                logger.warning(f"Version {version} of {model_name} already exists")
                 return v
 
         model_version = ModelVersion(
@@ -236,7 +234,9 @@ class ModelRegistry:
                     {
                         "version": v.version,
                         "status": v.status.value,
-                        "deployed_at": v.deployed_at.isoformat() if v.deployed_at else None,
+                        "deployed_at": v.deployed_at.isoformat()
+                        if v.deployed_at
+                        else None,
                         "metrics": v.metrics,
                     }
                     for v in versions

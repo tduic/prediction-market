@@ -7,6 +7,7 @@ from typing import Dict
 @dataclass
 class FeeConfig:
     """Configuration for platform-specific fees."""
+
     polymarket: float = 0.02
     kalshi: float = 0.02
     manifold: float = 0.01
@@ -35,11 +36,7 @@ class FeeEstimator:
         }
 
     def estimate_fee(
-        self,
-        platform: str,
-        side: str,
-        price: float,
-        size: float
+        self, platform: str, side: str, price: float, size: float
     ) -> float:
         """
         Estimate fee for a single trade.
@@ -82,7 +79,7 @@ class FeeEstimator:
         platform_b: str,
         side_b: str,
         price_b: float,
-        size: float
+        size: float,
     ) -> float:
         """
         Estimate total fee cost for a two-leg arbitrage.
@@ -112,7 +109,7 @@ class FeeEstimator:
         platform_b: str,
         side_b: str,
         price_b: float,
-        size: float
+        size: float,
     ) -> float:
         """
         Calculate net spread after accounting for fees.
@@ -131,8 +128,6 @@ class FeeEstimator:
             Net spread (raw_spread - total_fees)
         """
         total_fees = self.estimate_spread_cost(
-            platform_a, side_a, price_a,
-            platform_b, side_b, price_b,
-            size
+            platform_a, side_a, price_a, platform_b, side_b, price_b, size
         )
         return raw_spread - total_fees

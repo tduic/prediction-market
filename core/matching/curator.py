@@ -12,6 +12,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class MarketPair:
     """Market pair record."""
+
     pair_id: str
     market_id_a: str
     market_id_b: str
@@ -46,7 +47,7 @@ class MarketPairCurator:
         relationship: Optional[str] = None,
         match_method: str = "rules",
         similarity_score: Optional[float] = None,
-        created_by: Optional[str] = None
+        created_by: Optional[str] = None,
     ) -> str:
         """
         Add a new market pair.
@@ -73,9 +74,7 @@ class MarketPairCurator:
         # Check if pair already exists (in either direction)
         existing = await self.get_pair(market_id_a, market_id_b)
         if existing:
-            raise ValueError(
-                f"Pair already exists: {existing.pair_id}"
-            )
+            raise ValueError(f"Pair already exists: {existing.pair_id}")
 
         try:
             pair_id = await self.db.insert_market_pair(
@@ -87,7 +86,7 @@ class MarketPairCurator:
                 similarity_score=similarity_score,
                 is_active=True,
                 created_by=created_by,
-                created_at=datetime.utcnow()
+                created_at=datetime.utcnow(),
             )
 
             logger.info(
@@ -103,9 +102,7 @@ class MarketPairCurator:
             raise
 
     async def get_pair(
-        self,
-        market_id_a: str,
-        market_id_b: str
+        self, market_id_a: str, market_id_b: str
     ) -> Optional[MarketPair]:
         """
         Get pair for two markets (works in either direction).
@@ -147,8 +144,7 @@ class MarketPairCurator:
             return None
 
     async def get_active_pairs(
-        self,
-        pair_type: Optional[str] = None
+        self, pair_type: Optional[str] = None
     ) -> List[MarketPair]:
         """
         Get all active market pairs.
@@ -203,11 +199,7 @@ class MarketPairCurator:
             logger.error(f"Error getting pairs of type {pair_type}: {e}")
             return []
 
-    async def verify_pair(
-        self,
-        pair_id: str,
-        verified_by: str
-    ) -> bool:
+    async def verify_pair(self, pair_id: str, verified_by: str) -> bool:
         """
         Mark a pair as verified (human-reviewed and confirmed).
 
@@ -220,9 +212,7 @@ class MarketPairCurator:
         """
         try:
             await self.db.verify_market_pair(
-                pair_id=pair_id,
-                verified_by=verified_by,
-                verified_at=datetime.utcnow()
+                pair_id=pair_id, verified_by=verified_by, verified_at=datetime.utcnow()
             )
 
             logger.info(f"Verified market pair {pair_id} by {verified_by}")
@@ -275,7 +265,7 @@ class MarketPairCurator:
         pair_id: str,
         pair_type: Optional[str] = None,
         relationship: Optional[str] = None,
-        similarity_score: Optional[float] = None
+        similarity_score: Optional[float] = None,
     ) -> bool:
         """
         Update a market pair.
@@ -313,8 +303,7 @@ class MarketPairCurator:
             return False
 
     async def get_unverified_pairs(
-        self,
-        pair_type: Optional[str] = None
+        self, pair_type: Optional[str] = None
     ) -> List[MarketPair]:
         """
         Get all unverified pairs (for human review).
@@ -334,8 +323,7 @@ class MarketPairCurator:
             return []
 
     async def get_verified_pairs(
-        self,
-        pair_type: Optional[str] = None
+        self, pair_type: Optional[str] = None
     ) -> List[MarketPair]:
         """
         Get all verified pairs.

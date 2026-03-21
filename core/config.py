@@ -12,20 +12,34 @@ from pathlib import Path
 @dataclass
 class PlatformCredentials:
     """Platform-specific API credentials."""
-    polymarket_private_key: str = field(default_factory=lambda: os.getenv("POLYMARKET_PRIVATE_KEY", ""))
-    polymarket_wallet_address: str = field(default_factory=lambda: os.getenv("POLYMARKET_WALLET_ADDRESS", ""))
+
+    polymarket_private_key: str = field(
+        default_factory=lambda: os.getenv("POLYMARKET_PRIVATE_KEY", "")
+    )
+    polymarket_wallet_address: str = field(
+        default_factory=lambda: os.getenv("POLYMARKET_WALLET_ADDRESS", "")
+    )
     kalshi_api_key: str = field(default_factory=lambda: os.getenv("KALSHI_API_KEY", ""))
-    kalshi_rsa_key_path: str = field(default_factory=lambda: os.getenv("KALSHI_RSA_KEY_PATH", ""))
-    kalshi_environment: str = field(default_factory=lambda: os.getenv("KALSHI_ENVIRONMENT", "prod"))
-    kalshi_api_base: str = field(default_factory=lambda: os.getenv(
-        "KALSHI_API_BASE", "https://api.elections.kalshi.com/trade-api/v2"
-    ))
+    kalshi_rsa_key_path: str = field(
+        default_factory=lambda: os.getenv("KALSHI_RSA_KEY_PATH", "")
+    )
+    kalshi_environment: str = field(
+        default_factory=lambda: os.getenv("KALSHI_ENVIRONMENT", "prod")
+    )
+    kalshi_api_base: str = field(
+        default_factory=lambda: os.getenv(
+            "KALSHI_API_BASE", "https://api.elections.kalshi.com/trade-api/v2"
+        )
+    )
 
 
 @dataclass
 class DatabaseConfig:
     """Database connection settings."""
-    database_path: str = field(default_factory=lambda: os.getenv("DATABASE_PATH", "./data/pmtrader.db"))
+
+    database_path: str = field(
+        default_factory=lambda: os.getenv("DATABASE_PATH", "./data/pmtrader.db")
+    )
 
     def __post_init__(self):
         """Ensure database directory exists."""
@@ -35,8 +49,13 @@ class DatabaseConfig:
 @dataclass
 class RedisConfig:
     """Redis connection settings."""
-    redis_url: str = field(default_factory=lambda: os.getenv("REDIS_URL", "redis://localhost:6379/0"))
-    signal_queue_name: str = field(default_factory=lambda: os.getenv("SIGNAL_QUEUE_NAME", "signals"))
+
+    redis_url: str = field(
+        default_factory=lambda: os.getenv("REDIS_URL", "redis://localhost:6379/0")
+    )
+    signal_queue_name: str = field(
+        default_factory=lambda: os.getenv("SIGNAL_QUEUE_NAME", "signals")
+    )
     signal_queue_timeout_s: int = field(
         default_factory=lambda: int(os.getenv("SIGNAL_QUEUE_TIMEOUT_S", "5"))
     )
@@ -45,6 +64,7 @@ class RedisConfig:
 @dataclass
 class IngestorConfig:
     """Market data ingestor settings."""
+
     poll_interval_polymarket_s: int = field(
         default_factory=lambda: int(os.getenv("POLL_INTERVAL_POLYMARKET_S", "30"))
     )
@@ -62,11 +82,16 @@ class IngestorConfig:
 @dataclass
 class ConstraintEngineConfig:
     """Constraint engine and fee settings."""
+
     min_net_spread_single_platform: float = field(
-        default_factory=lambda: float(os.getenv("MIN_NET_SPREAD_SINGLE_PLATFORM", "0.02"))
+        default_factory=lambda: float(
+            os.getenv("MIN_NET_SPREAD_SINGLE_PLATFORM", "0.02")
+        )
     )
     min_net_spread_cross_platform: float = field(
-        default_factory=lambda: float(os.getenv("MIN_NET_SPREAD_CROSS_PLATFORM", "0.03"))
+        default_factory=lambda: float(
+            os.getenv("MIN_NET_SPREAD_CROSS_PLATFORM", "0.03")
+        )
     )
     fee_rate_polymarket: float = field(
         default_factory=lambda: float(os.getenv("FEE_RATE_POLYMARKET", "0.02"))
@@ -79,6 +104,7 @@ class ConstraintEngineConfig:
 @dataclass
 class RiskControlConfig:
     """Risk management settings."""
+
     max_position_size_usd: float = field(
         default_factory=lambda: float(os.getenv("MAX_POSITION_SIZE_USD", "500"))
     )
@@ -99,6 +125,7 @@ class RiskControlConfig:
 @dataclass
 class ModelServiceConfig:
     """Model training and deployment settings."""
+
     model_refit_cron: str = field(
         default_factory=lambda: os.getenv("MODEL_REFIT_CRON", "0 2 * * *")
     )
@@ -113,6 +140,7 @@ class ModelServiceConfig:
 @dataclass
 class MatchingConfig:
     """Market matching and verification settings."""
+
     embedding_model: str = field(
         default_factory=lambda: os.getenv("EMBEDDING_MODEL", "all-MiniLM-L6-v2")
     )
@@ -120,13 +148,15 @@ class MatchingConfig:
         default_factory=lambda: float(os.getenv("SIMILARITY_THRESHOLD", "0.85"))
     )
     auto_trade_verified_only: bool = field(
-        default_factory=lambda: os.getenv("AUTO_TRADE_VERIFIED_ONLY", "true").lower() == "true"
+        default_factory=lambda: os.getenv("AUTO_TRADE_VERIFIED_ONLY", "true").lower()
+        == "true"
     )
 
 
 @dataclass
 class ExecutionConfig:
     """Order execution and settlement settings."""
+
     max_order_retries: int = field(
         default_factory=lambda: int(os.getenv("MAX_ORDER_RETRIES", "3"))
     )
@@ -147,9 +177,8 @@ class ExecutionConfig:
 @dataclass
 class ObservabilityConfig:
     """Logging and monitoring settings."""
-    log_level: str = field(
-        default_factory=lambda: os.getenv("LOG_LEVEL", "INFO")
-    )
+
+    log_level: str = field(default_factory=lambda: os.getenv("LOG_LEVEL", "INFO"))
     pnl_snapshot_interval_s: int = field(
         default_factory=lambda: int(os.getenv("PNL_SNAPSHOT_INTERVAL_S", "3600"))
     )
@@ -162,11 +191,15 @@ class ObservabilityConfig:
 class Config:
     """Main configuration class combining all sub-configurations."""
 
-    platform_credentials: PlatformCredentials = field(default_factory=PlatformCredentials)
+    platform_credentials: PlatformCredentials = field(
+        default_factory=PlatformCredentials
+    )
     database: DatabaseConfig = field(default_factory=DatabaseConfig)
     redis: RedisConfig = field(default_factory=RedisConfig)
     ingestor: IngestorConfig = field(default_factory=IngestorConfig)
-    constraint_engine: ConstraintEngineConfig = field(default_factory=ConstraintEngineConfig)
+    constraint_engine: ConstraintEngineConfig = field(
+        default_factory=ConstraintEngineConfig
+    )
     risk_controls: RiskControlConfig = field(default_factory=RiskControlConfig)
     model_service: ModelServiceConfig = field(default_factory=ModelServiceConfig)
     matching: MatchingConfig = field(default_factory=MatchingConfig)
@@ -186,13 +219,18 @@ class Config:
             )
 
         # Credentials validation
-        if not self.observability.paper_trading and self.execution.execution_mode != "mock":
-            if not all([
-                self.platform_credentials.polymarket_private_key,
-                self.platform_credentials.polymarket_wallet_address,
-                self.platform_credentials.kalshi_api_key,
-                self.platform_credentials.kalshi_rsa_key_path,
-            ]):
+        if (
+            not self.observability.paper_trading
+            and self.execution.execution_mode != "mock"
+        ):
+            if not all(
+                [
+                    self.platform_credentials.polymarket_private_key,
+                    self.platform_credentials.polymarket_wallet_address,
+                    self.platform_credentials.kalshi_api_key,
+                    self.platform_credentials.kalshi_rsa_key_path,
+                ]
+            ):
                 raise ValueError(
                     "All platform credentials required when PAPER_TRADING=false"
                 )
@@ -210,13 +248,16 @@ class Config:
             )
 
         # Spread validation
-        if self.constraint_engine.min_net_spread_single_platform <= self.constraint_engine.fee_rate_polymarket:
+        if (
+            self.constraint_engine.min_net_spread_single_platform
+            <= self.constraint_engine.fee_rate_polymarket
+        ):
             raise ValueError(
                 "MIN_NET_SPREAD_SINGLE_PLATFORM must be > FEE_RATE_POLYMARKET"
             )
         if self.constraint_engine.min_net_spread_cross_platform <= max(
             self.constraint_engine.fee_rate_polymarket,
-            self.constraint_engine.fee_rate_kalshi
+            self.constraint_engine.fee_rate_kalshi,
         ):
             raise ValueError(
                 "MIN_NET_SPREAD_CROSS_PLATFORM must be > max(FEE_RATE_POLYMARKET, FEE_RATE_KALSHI)"

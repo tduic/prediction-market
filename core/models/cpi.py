@@ -149,11 +149,11 @@ class CPIModel(BaseModel):
         likelihood_std = self.calibration_factor
 
         # Bayesian update: compute posterior
-        posterior_precision = (1 / (prior_std ** 2)) + (1 / (likelihood_std ** 2))
+        posterior_precision = (1 / (prior_std**2)) + (1 / (likelihood_std**2))
         posterior_std = 1 / np.sqrt(posterior_precision)
 
-        posterior_mean = posterior_std ** 2 * (
-            (prior_mean / (prior_std ** 2)) + (likelihood_mean / (likelihood_std ** 2))
+        posterior_mean = posterior_std**2 * (
+            (prior_mean / (prior_std**2)) + (likelihood_mean / (likelihood_std**2))
         )
 
         # Probability that actual > consensus

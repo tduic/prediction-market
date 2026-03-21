@@ -187,7 +187,9 @@ class TradeLifecycleManager:
             entry_size = pos_dict["entry_size"]
             entry_fees = pos_dict["fees_paid"]
             opened_at = pos_dict["opened_at"]
-            violation_id = None  # Not stored in positions, would need to come from orders
+            violation_id = (
+                None  # Not stored in positions, would need to come from orders
+            )
 
             # Compute realized P&L
             if side == "BUY":
@@ -406,9 +408,7 @@ class TradeLifecycleManager:
             row = await cursor.fetchone()
             fees_today = row[0] if row[0] else 0.0
 
-            cursor = await self.db.execute(
-                "SELECT SUM(fees_paid) FROM positions"
-            )
+            cursor = await self.db.execute("SELECT SUM(fees_paid) FROM positions")
             row = await cursor.fetchone()
             fees_total = row[0] if row[0] else 0.0
 
@@ -718,7 +718,9 @@ class StrategyScorecard:
 
     # Private helper methods
 
-    def _compute_sharpe_ratio(self, pnl_values: List[float], risk_free_rate: float = 0.01) -> float:
+    def _compute_sharpe_ratio(
+        self, pnl_values: List[float], risk_free_rate: float = 0.01
+    ) -> float:
         """
         Compute annualized Sharpe ratio from daily P&L values.
 

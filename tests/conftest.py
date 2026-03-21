@@ -17,9 +17,11 @@ import pytest_asyncio
 # Configuration and Data Models
 # ============================================================================
 
+
 @dataclass
 class Config:
     """Test configuration object with sensible defaults."""
+
     PAPER_TRADING: bool = True
     MAX_POSITION_SIZE_USD: float = 10000.0
     MAX_DAILY_LOSS_USD: float = 5000.0
@@ -37,6 +39,7 @@ class Config:
 @dataclass
 class Market:
     """Market data model."""
+
     id: str
     platform: str
     platform_id: str
@@ -52,6 +55,7 @@ class Market:
 @dataclass
 class Violation:
     """Constraint violation data model."""
+
     violation_id: str
     pair_id: str
     violation_type: str
@@ -103,6 +107,7 @@ class EventBus:
 # ============================================================================
 # Database Fixtures
 # ============================================================================
+
 
 @pytest.fixture
 def in_memory_db() -> Generator[sqlite3.Connection, None, None]:
@@ -268,6 +273,7 @@ def in_memory_db() -> Generator[sqlite3.Connection, None, None]:
 # Configuration Fixtures
 # ============================================================================
 
+
 @pytest.fixture
 def sample_config() -> Config:
     """
@@ -291,6 +297,7 @@ def sample_config() -> Config:
 # Event Bus Fixtures
 # ============================================================================
 
+
 @pytest.fixture
 def event_bus() -> EventBus:
     """
@@ -305,6 +312,7 @@ def event_bus() -> EventBus:
 # ============================================================================
 # Market Data Fixtures
 # ============================================================================
+
 
 @pytest.fixture
 def sample_markets() -> Dict[str, List[Market]]:
@@ -375,6 +383,7 @@ def sample_violations() -> List[Violation]:
 # ============================================================================
 # Async Fixtures
 # ============================================================================
+
 
 @pytest_asyncio.fixture
 async def async_event_bus() -> EventBus:

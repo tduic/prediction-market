@@ -10,6 +10,7 @@ from typing import Optional
 @dataclass
 class ViolationInfo:
     """Information about a constraint violation."""
+
     rule_type: str
     severity: str  # "critical" or "warning"
     description: str
@@ -19,6 +20,7 @@ class ViolationInfo:
 @dataclass
 class FeeConfig:
     """Fee configuration for net spread calculation."""
+
     polymarket: float = 0.02
     kalshi: float = 0.02
     manifold: float = 0.01
@@ -46,7 +48,7 @@ def check(
     platform_a: str,
     platform_b: str,
     min_net_spread_threshold: float = 0.03,
-    fee_config: Optional[FeeConfig] = None
+    fee_config: Optional[FeeConfig] = None,
 ) -> Optional[ViolationInfo]:
     """
     Check cross-platform spread constraint for identical events.
@@ -106,7 +108,7 @@ def check(
                 f"Net spread: {net_spread:.4f}. "
                 f"Threshold: {min_net_spread_threshold:.4f}."
             ),
-            implied_arbitrage=net_spread * 100
+            implied_arbitrage=net_spread * 100,
         )
 
     return None

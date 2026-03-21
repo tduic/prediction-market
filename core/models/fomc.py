@@ -111,9 +111,7 @@ class FOMCModel(BaseModel):
         self.regressor.fit(X, y)
 
         # Validate with cross-validation
-        cv_scores = cross_val_score(
-            self.regressor, X, y, cv=5, scoring="r2"
-        )
+        cv_scores = cross_val_score(self.regressor, X, y, cv=5, scoring="r2")
 
         logger.info(
             f"FOMC model trained. CV R²: {cv_scores.mean():.4f} (+/- {cv_scores.std():.4f})"

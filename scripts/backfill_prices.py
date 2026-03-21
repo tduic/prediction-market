@@ -98,16 +98,18 @@ class PriceBackfiller:
                         history = hist_response.json()
 
                         for entry in history:
-                            prices.append({
-                                "market_id": market_id,
-                                "platform": "polymarket",
-                                "timestamp_utc": datetime.fromtimestamp(
-                                    entry.get("timestamp", 0)
-                                ).isoformat(),
-                                "mid_price": entry.get("mid_price"),
-                                "bid": entry.get("bid"),
-                                "ask": entry.get("ask"),
-                            })
+                            prices.append(
+                                {
+                                    "market_id": market_id,
+                                    "platform": "polymarket",
+                                    "timestamp_utc": datetime.fromtimestamp(
+                                        entry.get("timestamp", 0)
+                                    ).isoformat(),
+                                    "mid_price": entry.get("mid_price"),
+                                    "bid": entry.get("bid"),
+                                    "ask": entry.get("ask"),
+                                }
+                            )
 
                 except Exception as e:
                     logger.warning(
@@ -178,16 +180,18 @@ class PriceBackfiller:
                         history = hist_response.json()
 
                         for entry in history:
-                            prices.append({
-                                "market_id": market_id,
-                                "platform": "kalshi",
-                                "timestamp_utc": datetime.fromtimestamp(
-                                    entry.get("timestamp_ms", 0) / 1000
-                                ).isoformat(),
-                                "mid_price": entry.get("mid_price"),
-                                "bid": entry.get("bid"),
-                                "ask": entry.get("ask"),
-                            })
+                            prices.append(
+                                {
+                                    "market_id": market_id,
+                                    "platform": "kalshi",
+                                    "timestamp_utc": datetime.fromtimestamp(
+                                        entry.get("timestamp_ms", 0) / 1000
+                                    ).isoformat(),
+                                    "mid_price": entry.get("mid_price"),
+                                    "bid": entry.get("bid"),
+                                    "ask": entry.get("ask"),
+                                }
+                            )
 
                 except Exception as e:
                     logger.warning(

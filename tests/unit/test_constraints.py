@@ -17,6 +17,7 @@ from datetime import datetime
 # Constraint Detection Classes (Mock Implementations)
 # ============================================================================
 
+
 class ConstraintViolation:
     """Represents a detected constraint violation."""
 
@@ -79,7 +80,9 @@ class ConstraintEngine:
         sum_yes = sum(m["yes_price"] for m in markets)
         return sum_yes > 1.0
 
-    def check_complementarity(self, yes_price: float, no_price: float, threshold: float = 0.02) -> bool:
+    def check_complementarity(
+        self, yes_price: float, no_price: float, threshold: float = 0.02
+    ) -> bool:
         """
         Check complementarity constraint.
 
@@ -144,20 +147,24 @@ class ConstraintEngine:
     def emit_violation_event(self, violation: ConstraintViolation) -> None:
         """Emit violation event to event bus."""
         if self.event_bus:
-            self.event_bus.emit("constraint_violation_detected", {
-                "violation_type": violation.violation_type,
-                "market_a_id": violation.market_a_id,
-                "market_b_id": violation.market_b_id,
-                "spread": violation.spread,
-                "is_violation": violation.is_violation,
-                "details": violation.details,
-                "timestamp": datetime.utcnow().isoformat(),
-            })
+            self.event_bus.emit(
+                "constraint_violation_detected",
+                {
+                    "violation_type": violation.violation_type,
+                    "market_a_id": violation.market_a_id,
+                    "market_b_id": violation.market_b_id,
+                    "spread": violation.spread,
+                    "is_violation": violation.is_violation,
+                    "details": violation.details,
+                    "timestamp": datetime.utcnow().isoformat(),
+                },
+            )
 
 
 # ============================================================================
 # Test Cases
 # ============================================================================
+
 
 class TestSubsetSupersetConstraints:
     """Test subset/superset relationship detection."""
@@ -373,7 +380,9 @@ class TestCrossPlatformConstraints:
         assert result["is_violation"] is False
         assert result["profitable"] is False
 
-    def test_cross_platform_fee_subtraction_produces_correct_net_spread(self, sample_config):
+    def test_cross_platform_fee_subtraction_produces_correct_net_spread(
+        self, sample_config
+    ):
         """Verify fee calculation and net spread computation."""
         engine = ConstraintEngine(sample_config)
 
@@ -480,10 +489,15 @@ class TestConstraintEngineIntegration:
         assert engine.check_subset_superset(0.75, 0.70) is True
 
         # Mutual Exclusivity
-        assert engine.check_mutual_exclusivity([
-            {"yes_price": 0.55},
-            {"yes_price": 0.50},
-        ]) is True
+        assert (
+            engine.check_mutual_exclusivity(
+                [
+                    {"yes_price": 0.55},
+                    {"yes_price": 0.50},
+                ]
+            )
+            is True
+        )
 
         # Complementarity
         assert engine.check_complementarity(0.85, 0.10) is True

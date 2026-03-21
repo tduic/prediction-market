@@ -30,8 +30,15 @@ class JSONFormatter(logging.Formatter):
             log_entry["exception"] = self.formatException(record.exc_info)
 
         # Include extra fields passed via logger.info("msg", extra={...})
-        for key in ("signal_id", "order_id", "platform", "strategy",
-                     "market_id", "latency_ms", "error_code"):
+        for key in (
+            "signal_id",
+            "order_id",
+            "platform",
+            "strategy",
+            "market_id",
+            "latency_ms",
+            "error_code",
+        ):
             if hasattr(record, key):
                 log_entry[key] = getattr(record, key)
 

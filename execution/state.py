@@ -173,10 +173,7 @@ class PositionStateManager:
         Returns:
             List of positions for that market
         """
-        return [
-            pos for pos in self.positions.values()
-            if pos.market_id == market_id
-        ]
+        return [pos for pos in self.positions.values() if pos.market_id == market_id]
 
     def get_position(self, position_id: str) -> Optional[Position]:
         """

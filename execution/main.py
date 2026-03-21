@@ -65,7 +65,9 @@ class ExecutionService:
         logger.info("Opening SQLite database at %s", self.db_path)
         self.db_connection = await aiosqlite.connect(self.db_path)
 
-        self.signal_handler = SignalHandler(self.db_connection, self.redis_client, execution_mode=self.execution_mode)
+        self.signal_handler = SignalHandler(
+            self.db_connection, self.redis_client, execution_mode=self.execution_mode
+        )
         self.position_manager = PositionStateManager(self.db_connection)
 
         logger.info("Execution service running in %s mode", self.execution_mode)
@@ -144,10 +146,12 @@ class ExecutionService:
         """Attempt to reconnect to Redis with exponential backoff."""
         max_attempts = 10
         for attempt in range(max_attempts):
-            backoff = min(2 ** attempt, 30)
+            backoff = min(2**attempt, 30)
             logger.info(
                 "Redis reconnection attempt %d/%d (backoff: %ds)",
-                attempt + 1, max_attempts, backoff,
+                attempt + 1,
+                max_attempts,
+                backoff,
             )
             try:
                 if self.redis_client:
@@ -193,7 +197,11 @@ class ExecutionService:
             except asyncio.CancelledError:
                 logger.info("Signal consumer cancelled")
                 break
-            except (redis.ConnectionError, redis.TimeoutError, ConnectionResetError) as e:
+            except (
+                redis.ConnectionError,
+                redis.TimeoutError,
+                ConnectionResetError,
+            ) as e:
                 logger.warning("Redis connection lost: %s. Attempting reconnect...", e)
                 if not await self._reconnect_redis():
                     logger.error("Giving up on Redis reconnection, shutting down")
@@ -228,6 +236,7 @@ async def main() -> None:
     """Main entry point."""
     import os
     from core.logging_config import configure_from_env
+
     configure_from_env()
 
     redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")

@@ -56,11 +56,18 @@ async def insert_violation(
     """
 
     params = (
-        violation_id, pair_id, violation_type,
-        price_a_at_detect, price_b_at_detect,
-        raw_spread, net_spread,
-        fee_estimate_a, fee_estimate_b,
-        status, now, now
+        violation_id,
+        pair_id,
+        violation_type,
+        price_a_at_detect,
+        price_b_at_detect,
+        raw_spread,
+        net_spread,
+        fee_estimate_a,
+        fee_estimate_b,
+        status,
+        now,
+        now,
     )
 
     await db.execute(sql, params)
@@ -135,7 +142,7 @@ async def close_violation(
         logger.warning(f"Violation {violation_id} not found")
         return
 
-    detected_dt = datetime.fromisoformat(result['detected_at'])
+    detected_dt = datetime.fromisoformat(result["detected_at"])
     closed_dt = datetime.fromisoformat(closed_at)
     duration_ms = int((closed_dt - detected_dt).total_seconds() * 1000)
 
@@ -246,7 +253,7 @@ async def get_violation_count(
         sql = "SELECT COUNT(*) as count FROM violations"
         result = await db.fetch_one(sql)
 
-    return result['count'] if result else 0
+    return result["count"] if result else 0
 
 
 async def insert_pair_spread_history(
@@ -283,8 +290,13 @@ async def insert_pair_spread_history(
     """
 
     params = (
-        pair_id, price_a, price_b, raw_spread, net_spread,
-        constraint_satisfied, now
+        pair_id,
+        price_a,
+        price_b,
+        raw_spread,
+        net_spread,
+        constraint_satisfied,
+        now,
     )
 
     return await db.execute(sql, params)

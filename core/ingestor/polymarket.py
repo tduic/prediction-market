@@ -110,7 +110,9 @@ class PolymarketClient:
     def client(self) -> httpx.AsyncClient:
         """Get or create HTTP client."""
         if self._client is None:
-            raise RuntimeError("Client not initialized. Use 'async with' context manager.")
+            raise RuntimeError(
+                "Client not initialized. Use 'async with' context manager."
+            )
         return self._client
 
     def _sign_request(self, method: str, path: str, body: str = "") -> dict:
@@ -128,9 +130,7 @@ class PolymarketClient:
             "POLY-API-KEY": self.api_key,
         }
 
-    async def poll_markets(
-        self, limit: int = 100, offset: int = 0
-    ) -> list[MarketData]:
+    async def poll_markets(self, limit: int = 100, offset: int = 0) -> list[MarketData]:
         """
         Poll all markets from Polymarket API.
 

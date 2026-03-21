@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class ConstraintConfig:
     """Configuration for constraint engine."""
+
     min_net_spread_single_platform: float = 0.02  # 2%
     min_net_spread_cross_platform: float = 0.03  # 3%
     complementarity_tolerance: float = 0.01  # 1%
@@ -32,6 +33,7 @@ class ConstraintConfig:
 @dataclass
 class MarketPair:
     """A pair of related markets."""
+
     pair_id: str
     market_id_a: str
     market_id_b: str
@@ -47,6 +49,7 @@ class MarketPair:
 @dataclass
 class MarketData:
     """Current market data."""
+
     market_id: str
     platform: str
     title: str
@@ -57,6 +60,7 @@ class MarketData:
 @dataclass
 class ViolationEvent:
     """Event emitted when constraint violation detected."""
+
     violation_id: str
     pair_id: str
     market_id_a: str
@@ -72,6 +76,7 @@ class ViolationEvent:
 @dataclass
 class SpreadHistoryEntry:
     """Entry in pair spread history."""
+
     pair_id: str
     market_a_price: float
     market_b_price: float
@@ -101,9 +106,7 @@ class ConstraintEngine:
         self.event_bus = event_bus
         self.db = db
         self.config = config or ConstraintConfig()
-        self.fee_estimator = FeeEstimator(
-            self.config.fee_config or FeeConfig()
-        )
+        self.fee_estimator = FeeEstimator(self.config.fee_config or FeeConfig())
 
         # Track known violations to avoid duplicate events
         self._active_violations: Dict[str, datetime] = {}
@@ -183,9 +186,7 @@ class ConstraintEngine:
             checker = self._rule_checkers.get(pair.pair_type)
 
             if not checker:
-                logger.warning(
-                    f"No checker found for pair type '{pair.pair_type}'"
-                )
+                logger.warning(f"No checker found for pair type '{pair.pair_type}'")
                 return
 
             violation_info = await checker(market_a, market_b, pair)
@@ -193,53 +194,39 @@ class ConstraintEngine:
                 violations.append(violation_info)
 
             # Record spread history
-            await self._record_spread_history(
-                pair, market_a, market_b, violations
-            )
+            await self._record_spread_history(pair, market_a, market_b, violations)
 
             # Emit violation events
             for violation_info in violations:
                 await self._emit_violation_event(pair, violation_info)
 
         except Exception as e:
-            logger.error(
-                f"Error evaluating pair {pair.pair_id}: {e}",
-                exc_info=True
-            )
+            logger.error(f"Error evaluating pair {pair.pair_id}: {e}", exc_info=True)
 
     async def _check_subset_superset(
-        self,
-        market_a: MarketData,
-        market_b: MarketData,
-        pair: MarketPair
+        self, market_a: MarketData, market_b: MarketData, pair: MarketPair
     ) -> Optional[Any]:
         """Check subset/superset constraint."""
         violation_info = subset_superset.check(
             market_a.current_price,
             market_b.current_price,
-            pair.relationship or "subset"
+            pair.relationship or "subset",
         )
         return violation_info
 
     async def _check_complementarity(
-        self,
-        market_a: MarketData,
-        market_b: MarketData,
-        pair: MarketPair
+        self, market_a: MarketData, market_b: MarketData, pair: MarketPair
     ) -> Optional[Any]:
         """Check complementarity constraint for binary markets."""
         violation_info = complementarity.check(
             market_a.current_price,
             market_b.current_price,
-            tolerance=self.config.complementarity_tolerance
+            tolerance=self.config.complementarity_tolerance,
         )
         return violation_info
 
     async def _check_mutual_exclusivity(
-        self,
-        market_a: MarketData,
-        market_b: MarketData,
-        pair: MarketPair
+        self, market_a: MarketData, market_b: MarketData, pair: MarketPair
     ) -> Optional[Any]:
         """
         Check mutual exclusivity constraint.
@@ -253,10 +240,7 @@ class ConstraintEngine:
         return violation_info
 
     async def _check_cross_platform(
-        self,
-        market_a: MarketData,
-        market_b: MarketData,
-        pair: MarketPair
+        self, market_a: MarketData, market_b: MarketData, pair: MarketPair
     ) -> Optional[Any]:
         """Check cross-platform spread constraint."""
         violation_info = cross_platform.check(
@@ -265,7 +249,7 @@ class ConstraintEngine:
             market_a.platform,
             market_b.platform,
             min_net_spread_threshold=self.config.min_net_spread_cross_platform,
-            fee_config=self.config.fee_config
+            fee_config=self.config.fee_config,
         )
         return violation_info
 
@@ -274,7 +258,7 @@ class ConstraintEngine:
         pair: MarketPair,
         market_a: MarketData,
         market_b: MarketData,
-        violations: List[Any]
+        violations: List[Any],
     ) -> None:
         """
         Record spread history to database.
@@ -309,7 +293,7 @@ class ConstraintEngine:
                 raw_spread=raw_spread,
                 net_spread=net_spread,
                 rule_violations=violation_types,
-                recorded_at=datetime.utcnow()
+                recorded_at=datetime.utcnow(),
             )
 
             await self.db.insert_pair_spread_history(history_entry)
@@ -317,13 +301,11 @@ class ConstraintEngine:
         except Exception as e:
             logger.error(
                 f"Error recording spread history for pair {pair.pair_id}: {e}",
-                exc_info=True
+                exc_info=True,
             )
 
     async def _emit_violation_event(
-        self,
-        pair: MarketPair,
-        violation_info: Any
+        self, pair: MarketPair, violation_info: Any
     ) -> None:
         """
         Emit violation event and record in database.
@@ -356,7 +338,7 @@ class ConstraintEngine:
                 description=violation_info.description,
                 implied_arbitrage=violation_info.implied_arbitrage,
                 detected_at=now,
-                is_new=is_new
+                is_new=is_new,
             )
 
             # Emit event
@@ -370,7 +352,7 @@ class ConstraintEngine:
                 description=violation_info.description,
                 implied_arbitrage=violation_info.implied_arbitrage,
                 detected_at=now,
-                is_new=is_new
+                is_new=is_new,
             )
 
             self.event_bus.publish("ConstraintViolationDetected", violation_event)
@@ -384,7 +366,7 @@ class ConstraintEngine:
         except Exception as e:
             logger.error(
                 f"Error emitting violation event for pair {pair.pair_id}: {e}",
-                exc_info=True
+                exc_info=True,
             )
 
     async def _cleanup_stale_violations(self) -> None:
@@ -393,7 +375,8 @@ class ConstraintEngine:
         max_age = self.config.max_violation_age_seconds
 
         stale_ids = [
-            vid for vid, detected_at in self._active_violations.items()
+            vid
+            for vid, detected_at in self._active_violations.items()
             if (now - detected_at).total_seconds() > max_age
         ]
 

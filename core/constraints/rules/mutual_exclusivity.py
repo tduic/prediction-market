@@ -10,6 +10,7 @@ from typing import Optional, List
 @dataclass
 class ViolationInfo:
     """Information about a constraint violation."""
+
     rule_type: str
     severity: str  # "critical" or "warning"
     description: str
@@ -38,9 +39,7 @@ def check(prices: List[float]) -> Optional[ViolationInfo]:
 
     for i, price in enumerate(prices):
         if not 0.0 <= price <= 1.0:
-            raise ValueError(
-                f"prices[{i}] must be in [0, 1], got {price}"
-            )
+            raise ValueError(f"prices[{i}] must be in [0, 1], got {price}")
 
     total_probability = sum(prices)
 
@@ -57,7 +56,7 @@ def check(prices: List[float]) -> Optional[ViolationInfo]:
                 f"exceeds 100%. Excess: {excess:.4f}. "
                 "Arbitrage: sell each outcome proportionally."
             ),
-            implied_arbitrage=excess * 100
+            implied_arbitrage=excess * 100,
         )
 
     return None

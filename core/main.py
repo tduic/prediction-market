@@ -164,6 +164,7 @@ class CoreService:
 async def main() -> None:
     """Main entry point."""
     from core.logging_config import configure_from_env
+
     configure_from_env()
 
     db_path = os.getenv("DB_PATH", "prediction_market.db")

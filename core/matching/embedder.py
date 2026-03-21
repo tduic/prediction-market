@@ -103,9 +103,9 @@ class MarketEmbedder:
                 return None
 
             # Cosine similarity
-            similarity = float(np.dot(emb_a, emb_b) / (
-                np.linalg.norm(emb_a) * np.linalg.norm(emb_b)
-            ))
+            similarity = float(
+                np.dot(emb_a, emb_b) / (np.linalg.norm(emb_a) * np.linalg.norm(emb_b))
+            )
 
             return similarity
 
@@ -114,10 +114,7 @@ class MarketEmbedder:
             return None
 
     def find_matches(
-        self,
-        new_market_title: str,
-        existing_titles: List[str],
-        threshold: float = 0.75
+        self, new_market_title: str, existing_titles: List[str], threshold: float = 0.75
     ) -> List[Tuple[int, float]]:
         """
         Find matches for a new market among existing markets.
@@ -138,9 +135,7 @@ class MarketEmbedder:
             raise ValueError(f"Threshold must be in [0, 1], got {threshold}")
 
         if not self._available:
-            logger.warning(
-                "Embedder not available, returning empty matches"
-            )
+            logger.warning("Embedder not available, returning empty matches")
             return []
 
         if not existing_titles:
@@ -161,15 +156,11 @@ class MarketEmbedder:
             return matches
 
         except Exception as e:
-            logger.error(
-                f"Error finding matches for '{new_market_title}': {e}"
-            )
+            logger.error(f"Error finding matches for '{new_market_title}': {e}")
             return []
 
     def batch_embed(
-        self,
-        texts: List[str],
-        show_progress: bool = False
+        self, texts: List[str], show_progress: bool = False
     ) -> Optional[np.ndarray]:
         """
         Generate embeddings for multiple texts at once.
@@ -192,9 +183,7 @@ class MarketEmbedder:
 
         try:
             embeddings = self._model.encode(
-                texts,
-                convert_to_numpy=True,
-                show_progress_bar=show_progress
+                texts, convert_to_numpy=True, show_progress_bar=show_progress
             )
             return embeddings
 
@@ -202,11 +191,7 @@ class MarketEmbedder:
             logger.error(f"Error batch embedding: {e}")
             return None
 
-    def batch_similarity(
-        self,
-        text_a: str,
-        texts_b: List[str]
-    ) -> Optional[np.ndarray]:
+    def batch_similarity(self, text_a: str, texts_b: List[str]) -> Optional[np.ndarray]:
         """
         Calculate similarity between one text and multiple texts.
 

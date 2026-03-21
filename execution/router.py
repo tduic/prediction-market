@@ -44,7 +44,9 @@ class OrderResult:
 class OrderRouter:
     """Routes orders to platform-specific clients and manages execution."""
 
-    def __init__(self, db_connection: aiosqlite.Connection, execution_mode: str = "live") -> None:
+    def __init__(
+        self, db_connection: aiosqlite.Connection, execution_mode: str = "live"
+    ) -> None:
         """
         Initialize the order router.
 
@@ -140,7 +142,7 @@ class OrderRouter:
                 )
 
                 if attempt < MAX_ORDER_RETRIES - 1:
-                    backoff = RETRY_BACKOFF_BASE_S * (2 ** attempt)
+                    backoff = RETRY_BACKOFF_BASE_S * (2**attempt)
                     logger.info("Retrying in %d seconds", backoff)
                     await asyncio.sleep(backoff)
                 else:
@@ -211,7 +213,9 @@ class OrderRouter:
                     )
 
         except Exception as e:
-            logger.error("Error routing orders for signal %s: %s", signal_id, exc_info=e)
+            logger.error(
+                "Error routing orders for signal %s: %s", signal_id, exc_info=e
+            )
 
     async def _execute_simultaneous(
         self,
@@ -230,10 +234,7 @@ class OrderRouter:
         """
         logger.info("Executing %d legs simultaneously", len(legs))
 
-        tasks = [
-            self.route_order(leg, idx, signal_id)
-            for idx, leg in enumerate(legs)
-        ]
+        tasks = [self.route_order(leg, idx, signal_id) for idx, leg in enumerate(legs)]
 
         results = await asyncio.gather(*tasks, return_exceptions=False)
         return results
@@ -292,7 +293,9 @@ class OrderRouter:
         cancel_tasks = []
         for result in results:
             if result.platform == "polymarket":
-                cancel_tasks.append(self.polymarket_client.cancel_order(result.order_id))
+                cancel_tasks.append(
+                    self.polymarket_client.cancel_order(result.order_id)
+                )
             else:
                 cancel_tasks.append(self.kalshi_client.cancel_order(result.order_id))
 
