@@ -43,6 +43,7 @@ Async pollers for Polymarket (CLOB API) and Kalshi (REST API) that fetch market 
 
 ### Constraint Engine (`core/constraints/`)
 Evaluates four mathematical constraint rules across market pairs to detect arbitrage:
+
 - **Subset/Superset** – If event A implies event B, then P(A) ≤ P(B)
 - **Mutual Exclusivity** – If A and B cannot both occur, then P(A) + P(B) ≤ 1
 - **Complementarity** – If A and B are exhaustive complements, then P(A) + P(B) = 1
@@ -55,28 +56,33 @@ Pairs related markets across platforms using rule-based title matching and seman
 
 ### Signal Generation (`core/signals/`)
 Converts violations into actionable trading signals with:
+
 - **Kelly criterion sizing** – Fractional Kelly (default 0.25×) for position sizing based on estimated edge
 - **Risk validation** – Daily loss limits, max position size, portfolio exposure caps, max drawdown checks
 - All risk checks are logged to `risk_check_log` for auditability
 
 ### Prediction Models (`core/models/`)
 Event-specific probability models with a registry pattern:
+
 - **FOMC model** – Fed rate decision probabilities from futures data
 - **CPI model** – Inflation print probabilities from economic indicators
 - **Calibration model** – Historical calibration bias detection
 
 ### Execution (`execution/`)
 Order routing with platform-specific clients:
-- **Polymarket client** – USDC-based trading via web3.py (EIP-712 signatures)
-- **Kalshi client** – REST API with HMAC-SHA256 authentication
+
+- **Polymarket client** – CLOB API via `py-clob-client` with two-stage authentication (credential derivation → signed order submission)
+- **Kalshi client** – REST API with RSA-PSS (SHA-256) authentication, matching the production Kalshi API
 - **Mock client** – Simulates realistic fills with configurable latency, slippage, partial fills, and rejection rates
 - **Order router** – Routes signal legs to the correct platform, handles retries with exponential backoff
 - **Position state manager** – In-memory position tracking with periodic database flush
+- **Rate limiting** – Token bucket rate limiters on both platform clients (10 req/s Kalshi, 5 req/s Polymarket)
 
 The execution mode is controlled by `EXECUTION_MODE=mock|live` in the environment.
 
 ### Analytics (`core/analytics.py`, `scripts/dashboard.py`)
 Post-trade analysis covering:
+
 - Trade lifecycle tracking (fill → position → outcome)
 - Per-strategy performance: Sharpe ratio, win rate, average PnL, edge capture
 - Execution quality: fill rates, latency distributions, slippage by platform
@@ -85,6 +91,13 @@ Post-trade analysis covering:
 
 ### Event System (`core/events/`)
 Async pub/sub event bus connecting all components. 13 event types (MarketUpdated, ViolationDetected, SignalFired, OrderFilled, etc.) with error isolation between subscribers.
+
+### Infrastructure
+
+- **Structured logging** (`core/logging_config.py`) – JSON format for production (`LOG_FORMAT=json`), human-readable for development
+- **Redis reconnection** – Execution service auto-reconnects with exponential backoff (up to 10 attempts) on connection loss
+- **WAL checkpointing** – Scheduled database maintenance to keep WAL file size bounded
+- **CI/CD** – GitHub Actions workflow runs tests and linting on Python 3.14
 
 ## Database
 
@@ -103,50 +116,45 @@ Schema is in `core/storage/migrations/001_initial.sql`. Query modules in `core/s
 ## Quick Start
 
 ### Prerequisites
-- Python 3.11+
+
+- Python 3.14
 - Redis (for live two-service mode; not needed for mock sessions)
 
 ### Setup
 ```bash
-# Clone and install
-git clone https://github.com/yourusername/prediction-market.git
+git clone https://github.com/tyjodu/prediction-market.git
 cd prediction-market
+python -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
 
 # Configure
 cp config/settings.example.env .env
-# Edit .env with your settings (EXECUTION_MODE=mock for testing)
-
-# Initialize database
-sqlite3 data/pmtrader.db < core/storage/migrations/001_initial.sql
+# Edit .env with your API credentials (EXECUTION_MODE=mock for testing)
 ```
 
 ### Run a Mock Session
-The mock session harness runs the complete trading lifecycle in-process without Redis:
 ```bash
-python scripts/run_mock_session.py --num-markets 20 --num-violations 15 --verbose
+python scripts/run_mock_session.py --db-path prediction_market.db --num-markets 20 --num-violations 15 --verbose
 ```
-This seeds markets, generates violations across all 5 strategies, executes through the mock router, records positions and PnL, and prints a formatted report.
 
 ### View Analytics Dashboard
 ```bash
-python scripts/dashboard.py --db-path data/pmtrader.db --days 7
-python scripts/dashboard.py --format json  # Machine-readable output
+python scripts/dashboard.py --days 7
+python scripts/dashboard.py --format json
 ```
 
 ### Run Tests
 ```bash
-pip install -r requirements-test.txt
 pytest tests/ -v
+python -m black --check core/ execution/ scripts/ tests/
+python -m ruff check core/ execution/ scripts/ tests/
 ```
 
 ### Run Live Services
 ```bash
-# Terminal 1: Core service
-python -m core.main
-
-# Terminal 2: Execution service
-python -m execution.main
+docker compose up -d   # Start Redis
+python -m core.main    # Terminal 1
+python -m execution.main  # Terminal 2
 ```
 
 ## Configuration
@@ -156,12 +164,16 @@ All settings are loaded from environment variables. See `config/settings.example
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `EXECUTION_MODE` | `mock` | `mock` for simulated trading, `live` for real execution |
-| `DATABASE_PATH` | `./data/pmtrader.db` | SQLite database location |
-| `REDIS_URL` | `redis://localhost:6379/0` | Redis connection for signal queue |
+| `DB_PATH` | `prediction_market.db` | SQLite database location |
+| `REDIS_URL` | `redis://localhost:6379` | Redis connection for signal queue |
+| `KALSHI_API_KEY` | | Kalshi API key UUID |
+| `KALSHI_RSA_KEY_PATH` | | Path to Kalshi RSA private key PEM file |
+| `POLYMARKET_PRIVATE_KEY` | | Ethereum hex private key for Polymarket |
+| `POLYMARKET_WALLET_ADDRESS` | | Proxy wallet address |
 | `KELLY_FRACTION` | `0.25` | Fractional Kelly multiplier for position sizing |
-| `MAX_POSITION_USD` | `100` | Maximum position size per trade |
-| `DAILY_LOSS_LIMIT_USD` | `50` | Daily loss circuit breaker |
-| `MIN_SPREAD_THRESHOLD` | `0.03` | Minimum spread to trigger a violation |
+| `MAX_POSITION_SIZE_USD` | `500` | Maximum position size per trade |
+| `MAX_DAILY_LOSS_USD` | `200` | Daily loss circuit breaker |
+| `LOG_FORMAT` | `text` | `json` for structured production logging |
 
 ## Project Structure
 
@@ -170,6 +182,7 @@ prediction-market/
 ├── core/
 │   ├── config.py              # Configuration management
 │   ├── analytics.py           # Post-trade analytics engine
+│   ├── logging_config.py      # Structured logging (JSON/text)
 │   ├── main.py                # Core service entry point
 │   ├── constraints/           # Constraint engine (4 rules + fees)
 │   ├── events/                # Async event bus
@@ -197,6 +210,7 @@ prediction-market/
 │   └── integration/           # Integration tests (execution, ingestor, signal flow)
 ├── config/
 │   └── settings.example.env   # Example environment configuration
+├── .github/workflows/ci.yml   # GitHub Actions CI (tests + lint)
 └── ROADMAP.md                 # Planned features and improvements
 ```
 
