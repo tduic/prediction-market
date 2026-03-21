@@ -1,6 +1,9 @@
 """
 Configuration management for the prediction market trading system.
 Loads all settings from environment variables with sensible defaults.
+
+This is the single source of truth for all configuration. Both the
+core service and execution service use get_config() to read settings.
 """
 
 from dataclasses import dataclass, field
@@ -37,13 +40,16 @@ class PlatformCredentials:
 class DatabaseConfig:
     """Database connection settings."""
 
-    database_path: str = field(
-        default_factory=lambda: os.getenv("DATABASE_PATH", "./data/pmtrader.db")
+    db_path: str = field(
+        default_factory=lambda: os.getenv("DB_PATH", "prediction_market.db")
+    )
+    migrations_dir: str = field(
+        default_factory=lambda: os.getenv("MIGRATIONS_DIR", "core/storage/migrations")
     )
 
     def __post_init__(self):
         """Ensure database directory exists."""
-        Path(self.database_path).parent.mkdir(parents=True, exist_ok=True)
+        Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
 
 
 @dataclass
@@ -51,10 +57,10 @@ class RedisConfig:
     """Redis connection settings."""
 
     redis_url: str = field(
-        default_factory=lambda: os.getenv("REDIS_URL", "redis://localhost:6379/0")
+        default_factory=lambda: os.getenv("REDIS_URL", "redis://localhost:6379")
     )
     signal_queue_name: str = field(
-        default_factory=lambda: os.getenv("SIGNAL_QUEUE_NAME", "signals")
+        default_factory=lambda: os.getenv("SIGNAL_QUEUE_NAME", "trading_signals")
     )
     signal_queue_timeout_s: int = field(
         default_factory=lambda: int(os.getenv("SIGNAL_QUEUE_TIMEOUT_S", "5"))
@@ -157,6 +163,9 @@ class MatchingConfig:
 class ExecutionConfig:
     """Order execution and settlement settings."""
 
+    execution_mode: str = field(
+        default_factory=lambda: os.getenv("EXECUTION_MODE", "mock")
+    )
     max_order_retries: int = field(
         default_factory=lambda: int(os.getenv("MAX_ORDER_RETRIES", "3"))
     )
@@ -166,12 +175,6 @@ class ExecutionConfig:
     partial_fill_cancel_window_s: int = field(
         default_factory=lambda: int(os.getenv("PARTIAL_FILL_CANCEL_WINDOW_S", "5"))
     )
-    polygon_rpc_url: str = field(
-        default_factory=lambda: os.getenv("POLYGON_RPC_URL", "https://polygon-rpc.com")
-    )
-    execution_mode: str = field(
-        default_factory=lambda: os.getenv("EXECUTION_MODE", "live")
-    )
 
 
 @dataclass
@@ -179,11 +182,9 @@ class ObservabilityConfig:
     """Logging and monitoring settings."""
 
     log_level: str = field(default_factory=lambda: os.getenv("LOG_LEVEL", "INFO"))
+    log_format: str = field(default_factory=lambda: os.getenv("LOG_FORMAT", "text"))
     pnl_snapshot_interval_s: int = field(
         default_factory=lambda: int(os.getenv("PNL_SNAPSHOT_INTERVAL_S", "3600"))
-    )
-    paper_trading: bool = field(
-        default_factory=lambda: os.getenv("PAPER_TRADING", "true").lower() == "true"
     )
 
 
@@ -213,16 +214,14 @@ class Config:
     def _validate(self):
         """Validate all configuration constraints."""
         # Execution mode validation
-        if self.execution.execution_mode not in ("live", "mock"):
+        if self.execution.execution_mode not in ("live", "mock", "paper"):
             raise ValueError(
-                f"EXECUTION_MODE must be 'live' or 'mock', got {self.execution.execution_mode}"
+                f"EXECUTION_MODE must be 'live', 'mock', or 'paper', "
+                f"got {self.execution.execution_mode}"
             )
 
-        # Credentials validation
-        if (
-            not self.observability.paper_trading
-            and self.execution.execution_mode != "mock"
-        ):
+        # Credentials validation — only required for live mode
+        if self.execution.execution_mode == "live":
             if not all(
                 [
                     self.platform_credentials.polymarket_private_key,
@@ -232,19 +231,21 @@ class Config:
                 ]
             ):
                 raise ValueError(
-                    "All platform credentials required when PAPER_TRADING=false"
+                    "All platform credentials required when EXECUTION_MODE=live"
                 )
 
         # Kelly fraction validation
         if not (0 < self.risk_controls.kelly_fraction <= 0.5):
             raise ValueError(
-                f"KELLY_FRACTION must be > 0 and <= 0.5, got {self.risk_controls.kelly_fraction}"
+                f"KELLY_FRACTION must be > 0 and <= 0.5, "
+                f"got {self.risk_controls.kelly_fraction}"
             )
 
         # Position size validation
         if self.risk_controls.max_position_size_usd <= 0:
             raise ValueError(
-                f"MAX_POSITION_SIZE_USD must be > 0, got {self.risk_controls.max_position_size_usd}"
+                f"MAX_POSITION_SIZE_USD must be > 0, "
+                f"got {self.risk_controls.max_position_size_usd}"
             )
 
         # Spread validation
@@ -260,15 +261,9 @@ class Config:
             self.constraint_engine.fee_rate_kalshi,
         ):
             raise ValueError(
-                "MIN_NET_SPREAD_CROSS_PLATFORM must be > max(FEE_RATE_POLYMARKET, FEE_RATE_KALSHI)"
+                "MIN_NET_SPREAD_CROSS_PLATFORM must be > "
+                "max(FEE_RATE_POLYMARKET, FEE_RATE_KALSHI)"
             )
-
-        # Kalshi environment validation
-        if self.platform_credentials.kalshi_environment == "demo":
-            if not self.observability.paper_trading:
-                raise ValueError(
-                    "PAPER_TRADING must be true when KALSHI_ENVIRONMENT=demo"
-                )
 
 
 def load_config() -> Config:

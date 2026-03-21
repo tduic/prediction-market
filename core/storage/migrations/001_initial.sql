@@ -373,3 +373,16 @@ CREATE INDEX IF NOT EXISTS idx_system_events_type ON system_events(event_type);
 CREATE INDEX IF NOT EXISTS idx_system_events_severity ON system_events(severity);
 CREATE INDEX IF NOT EXISTS idx_system_events_component ON system_events(component);
 CREATE INDEX IF NOT EXISTS idx_system_events_occurred_at ON system_events(occurred_at);
+
+-- Signal events: tracks signal lifecycle (validation, execution, rejection)
+CREATE TABLE IF NOT EXISTS signal_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    signal_id TEXT NOT NULL,
+    status TEXT NOT NULL,
+    details TEXT,
+    timestamp_utc TEXT NOT NULL,
+    FOREIGN KEY (signal_id) REFERENCES signals(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_signal_events_signal_id ON signal_events(signal_id);
+CREATE INDEX IF NOT EXISTS idx_signal_events_status ON signal_events(status);

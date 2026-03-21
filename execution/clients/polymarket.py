@@ -1,30 +1,30 @@
 """
 Polymarket CLOB execution client using py-clob-client.
 
-Submits orders via Polymarket's CLOB API with two-stage authentication:
-1. Derive API credentials from private key
-2. Create and post signed orders
-
-Reference: https://github.com/Polymarket/py-clob-client
+Submits orders via Polymarket's CLOB API, polls for fill status,
+and writes complete order data to DB via BaseExecutionClient.
 """
 
+import asyncio
 import logging
 import os
 import time
-from dataclasses import dataclass
-
 
 import aiosqlite
 
+from execution.clients.base import BaseExecutionClient, OrderResult
 from execution.models import OrderLeg
 
 logger = logging.getLogger(__name__)
 
-# Lazy imports for py_clob_client to avoid import errors when in mock mode
+# Lazy imports for py_clob_client
 _ClobClient = None
 _ApiCreds = None
 _OrderArgs = None
 _OrderType = None
+
+# Polymarket is fee-free for makers, takers pay ~1-2%
+POLYMARKET_FEE_RATE = 0.02
 
 
 def _ensure_clob_imports():
@@ -40,29 +40,7 @@ def _ensure_clob_imports():
         _OrderType = OrderType
 
 
-@dataclass
-class OrderStatus:
-    """Status of an order on Polymarket."""
-
-    order_id: str
-    status: str
-    filled_amount: float
-    fill_price: float | None
-    timestamp: float
-
-
-@dataclass
-class OrderResult:
-    """Result of order submission."""
-
-    order_id: str
-    status: str  # "ACCEPTED", "REJECTED", "PENDING"
-    submission_latency_ms: int
-    fill_latency_ms: int | None = None
-    error_message: str | None = None
-
-
-class PolymarketExecutionClient:
+class PolymarketExecutionClient(BaseExecutionClient):
     """Handles order submission to Polymarket via CLOB API."""
 
     def __init__(
@@ -72,16 +50,8 @@ class PolymarketExecutionClient:
         funder: str | None = None,
         chain_id: int = 137,
     ) -> None:
-        """
-        Initialize the Polymarket execution client.
+        super().__init__(db_connection, platform_label="polymarket")
 
-        Args:
-            db_connection: SQLite connection for tracking
-            private_key: Ethereum hex private key (0x...)
-            funder: Proxy wallet address (optional)
-            chain_id: Polygon chain ID (default: 137)
-        """
-        self.db_connection = db_connection
         self.private_key = private_key or os.getenv("POLYMARKET_PRIVATE_KEY", "")
         self.funder = funder or os.getenv("POLYMARKET_WALLET_ADDRESS", "")
         self.chain_id = chain_id
@@ -99,8 +69,6 @@ class PolymarketExecutionClient:
 
     async def _acquire_rate_limit(self) -> None:
         """Wait until a rate limit token is available."""
-        import asyncio
-
         while True:
             now = time.monotonic()
             elapsed = now - self._rate_limit_last_refill
@@ -117,12 +85,7 @@ class PolymarketExecutionClient:
             await asyncio.sleep(0.1)
 
     def _ensure_client(self) -> None:
-        """
-        Initialize the CLOB client with two-stage auth.
-
-        Stage 1: Create L1 client and derive API credentials
-        Stage 2: Create L2 client with credentials for authenticated trading
-        """
+        """Initialize the CLOB client with two-stage auth."""
         if self._initialized:
             return
 
@@ -133,16 +96,13 @@ class PolymarketExecutionClient:
 
         logger.info("Initializing Polymarket CLOB client")
 
-        # Stage 1: derive API credentials
         l1_client = _ClobClient(
             host=self.host,
             key=self.private_key,
             chain_id=self.chain_id,
         )
         creds = l1_client.create_or_derive_api_creds()
-        logger.info("Polymarket API credentials derived successfully")
 
-        # Stage 2: authenticated client
         self._client = _ClobClient(
             host=self.host,
             key=self.private_key,
@@ -156,17 +116,7 @@ class PolymarketExecutionClient:
         logger.info("Polymarket CLOB client initialized")
 
     async def submit_order(self, leg: OrderLeg) -> OrderResult:
-        """
-        Submit an order via Polymarket CLOB API.
-
-        Flow: OrderArgs → create_order (sign) → post_order (submit)
-
-        Args:
-            leg: The order leg to submit
-
-        Returns:
-            OrderResult with order details
-        """
+        """Submit order to Polymarket, poll for fill. Returns unified OrderResult."""
         await self._acquire_rate_limit()
         start_time = time.time()
 
@@ -174,15 +124,13 @@ class PolymarketExecutionClient:
             self._ensure_client()
 
             logger.info(
-                "Submitting order to Polymarket: market=%s, side=%s, size=%f, price=%s",
+                "Submitting to Polymarket: market=%s side=%s size=%f price=%s",
                 leg.market_id,
                 leg.side,
                 leg.size,
                 leg.limit_price,
             )
 
-            # Build order args
-            # token_id is the market_id for Polymarket (condition token ID)
             order_args = _OrderArgs(
                 token_id=leg.market_id,
                 price=leg.limit_price or 0.50,
@@ -190,128 +138,168 @@ class PolymarketExecutionClient:
                 side=leg.side.upper(),
             )
 
-            # Sign order
             signed_order = self._client.create_order(order_args)
 
-            # Determine order type
             if leg.order_type.upper() == "MARKET":
-                order_type = _OrderType.FOK  # Fill-or-Kill for market orders
+                order_type = _OrderType.FOK
             else:
-                order_type = _OrderType.GTC  # Good-til-Cancelled for limit
+                order_type = _OrderType.GTC
 
-            # Submit signed order
-            result = self._client.post_order(signed_order, order_type)
+            api_result = self._client.post_order(signed_order, order_type)
 
             submission_latency_ms = int((time.time() - start_time) * 1000)
 
-            # Extract order ID from response
-            if isinstance(result, dict):
-                order_id = result.get("orderID", result.get("id", ""))
-                _status = result.get("status", "ACCEPTED")
-                if result.get("success", True) and order_id:
-                    order_status = "ACCEPTED"
-                else:
-                    order_status = "REJECTED"
+            # Extract order ID
+            if isinstance(api_result, dict):
+                order_id = api_result.get("orderID", api_result.get("id", ""))
+                if not api_result.get("success", True) or not order_id:
+                    error_msg = api_result.get("errorMsg", "Order rejected")
+                    result = OrderResult(
+                        order_id=order_id or f"FAILED-{leg.market_id}",
+                        platform="polymarket",
+                        status="failed",
+                        submission_latency_ms=submission_latency_ms,
+                        error_message=error_msg,
+                    )
+                    await self.write_order(leg, result)
+                    return result
             else:
-                order_id = str(result) if result else ""
-                order_status = "ACCEPTED" if order_id else "REJECTED"
+                order_id = str(api_result) if api_result else ""
 
             if not order_id:
-                order_id = f"POLY-{leg.market_id}-{int(time.time() * 1000)}"
+                order_id = f"POLY-{int(time.time() * 1000)}"
 
-            # Log order to database
-            await self.db_connection.execute(
-                """
-                INSERT INTO orders
-                (order_id, platform, market_id, side, size, limit_price, status,
-                 submission_latency_ms, created_at_utc)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
-                """,
-                (
-                    order_id,
-                    "polymarket",
-                    leg.market_id,
-                    leg.side,
-                    leg.size,
-                    leg.limit_price,
-                    "PENDING" if order_status == "ACCEPTED" else "REJECTED",
-                    submission_latency_ms,
-                ),
-            )
-            await self.db_connection.commit()
-
-            logger.info(
-                "Order submitted to Polymarket: %s (latency: %dms, status: %s)",
-                order_id,
-                submission_latency_ms,
-                order_status,
-            )
-
-            return OrderResult(
+            # Write initial pending order
+            pending_result = OrderResult(
                 order_id=order_id,
-                status=order_status,
+                platform="polymarket",
+                status="pending",
                 submission_latency_ms=submission_latency_ms,
             )
+            await self.write_order(leg, pending_result)
+
+            # Poll for fill
+            fill_result = await self._poll_for_fill(
+                order_id, leg, start_time, submission_latency_ms
+            )
+            return fill_result
 
         except Exception as e:
             submission_latency_ms = int((time.time() - start_time) * 1000)
-            logger.error("Error submitting order to Polymarket: %s", e, exc_info=True)
-            return OrderResult(
+            logger.error("Error submitting to Polymarket: %s", e, exc_info=True)
+            result = OrderResult(
                 order_id=f"FAILED-{leg.market_id}",
-                status="REJECTED",
+                platform="polymarket",
+                status="failed",
                 submission_latency_ms=submission_latency_ms,
                 error_message=str(e),
             )
+            await self.write_order(leg, result)
+            return result
+
+    async def _poll_for_fill(
+        self,
+        order_id: str,
+        leg: OrderLeg,
+        order_start_time: float,
+        submission_latency_ms: int,
+        max_polls: int = 30,
+        poll_interval_s: float = 1.0,
+    ) -> OrderResult:
+        """Poll Polymarket API until order fills, cancels, or times out."""
+        for _ in range(max_polls):
+            await asyncio.sleep(poll_interval_s)
+            await self._acquire_rate_limit()
+
+            try:
+                self._ensure_client()
+                order_data = self._client.get_order(order_id)
+
+                if not order_data:
+                    continue
+
+                status = order_data.get("status", "").lower()
+                size_matched = float(order_data.get("size_matched", 0))
+
+                if status == "matched" or (status == "trading" and size_matched > 0):
+                    fill_latency_ms = int((time.time() - order_start_time) * 1000)
+
+                    filled_price = float(
+                        order_data.get("price", leg.limit_price or 0.50)
+                    )
+                    filled_size = size_matched if size_matched > 0 else leg.size
+
+                    slippage = abs(filled_price - (leg.limit_price or filled_price))
+                    fee_paid = round(
+                        filled_size * filled_price * POLYMARKET_FEE_RATE, 4
+                    )
+
+                    is_partial = filled_size < leg.size * 0.99
+                    result = OrderResult(
+                        order_id=order_id,
+                        platform="polymarket",
+                        status="partially_filled" if is_partial else "filled",
+                        submission_latency_ms=submission_latency_ms,
+                        fill_latency_ms=fill_latency_ms,
+                        filled_price=round(filled_price, 4),
+                        filled_size=round(filled_size, 2),
+                        fee_paid=fee_paid,
+                        slippage=round(slippage, 4),
+                    )
+                    await self.update_order_fill(result)
+                    await self.write_fill_event(result)
+                    return result
+
+                if status in ("canceled", "cancelled"):
+                    result = OrderResult(
+                        order_id=order_id,
+                        platform="polymarket",
+                        status="failed",
+                        submission_latency_ms=submission_latency_ms,
+                        error_message="Order cancelled",
+                    )
+                    await self.update_order_fill(result)
+                    return result
+
+            except Exception as e:
+                logger.warning("Poll error for order %s: %s", order_id, e)
+
+        logger.warning("Fill poll timeout for order %s", order_id)
+        return OrderResult(
+            order_id=order_id,
+            platform="polymarket",
+            status="pending",
+            submission_latency_ms=submission_latency_ms,
+            error_message="Fill poll timeout",
+        )
 
     async def cancel_order(self, order_id: str) -> bool:
         """Cancel an order on Polymarket."""
         await self._acquire_rate_limit()
-
         try:
             self._ensure_client()
-
-            logger.info("Cancelling Polymarket order: %s", order_id)
-            _result = self._client.cancel(order_id)
-
-            await self.db_connection.execute(
-                "UPDATE orders SET status = ? WHERE order_id = ?",
-                ("CANCELLED", order_id),
+            self._client.cancel(order_id)
+            await self.db.execute(
+                "UPDATE orders SET status = 'cancelled', cancelled_at = ? WHERE id = ?",
+                (int(time.time()), order_id),
             )
-            await self.db_connection.commit()
-
-            logger.info("Order cancelled: %s", order_id)
+            await self.db.commit()
             return True
-
         except Exception as e:
             logger.error("Error cancelling order: %s", e, exc_info=True)
             return False
 
-    async def get_order_status(self, order_id: str) -> OrderStatus | None:
-        """Get the status of an order on Polymarket."""
+    async def get_order_status(self, order_id: str) -> dict | None:
+        """Get order status from Polymarket."""
         await self._acquire_rate_limit()
-
         try:
             self._ensure_client()
-
-            result = self._client.get_order(order_id)
-
-            if result:
-                return OrderStatus(
-                    order_id=order_id,
-                    status=result.get("status", "unknown"),
-                    filled_amount=float(result.get("size_matched", 0)),
-                    fill_price=(
-                        float(result.get("price", 0)) if result.get("price") else None
-                    ),
-                    timestamp=time.time(),
-                )
-            return None
-
+            return self._client.get_order(order_id)
         except Exception as e:
             logger.error("Error getting order status: %s", e, exc_info=True)
             return None
 
     async def close(self) -> None:
-        """Clean up client resources."""
+        """Clean up."""
         self._client = None
         self._initialized = False

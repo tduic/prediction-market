@@ -71,6 +71,18 @@ class OrderRouter:
                 config=mock_config,
                 platform_label="mock_kalshi",
             )
+        elif execution_mode == "paper":
+            logger.info("Initializing router in PAPER trading mode")
+            from execution.clients.paper import PaperExecutionClient
+
+            self.polymarket_client = PaperExecutionClient(
+                db_connection=db_connection,
+                platform_label="paper_polymarket",
+            )
+            self.kalshi_client = PaperExecutionClient(
+                db_connection=db_connection,
+                platform_label="paper_kalshi",
+            )
         else:
             logger.info("Initializing router in LIVE execution mode")
             from execution.clients.polymarket import PolymarketExecutionClient
@@ -78,11 +90,9 @@ class OrderRouter:
 
             self.polymarket_client = PolymarketExecutionClient(
                 db_connection=db_connection,
-                # Credentials loaded from env vars inside the client
             )
             self.kalshi_client = KalshiExecutionClient(
                 db_connection=db_connection,
-                # Credentials loaded from env vars inside the client
             )
 
     async def route_order(

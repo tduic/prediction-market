@@ -3,6 +3,9 @@ Entry point for the execution service (separate process).
 
 Connects to Redis queue for signal consumption, validates signals,
 dispatches to order router, and writes results to shared database.
+
+All configuration is loaded from environment variables via get_config().
+Both services share the same DB path and execution mode from config.
 """
 
 import asyncio
@@ -11,11 +14,12 @@ import logging
 import signal as signal_module
 import sys
 
-
 import aiosqlite
 import redis.asyncio as redis
 from pydantic import ValidationError
 
+from core.config import get_config
+from core.storage.db import Database
 from execution.handler import SignalHandler
 from execution.state import PositionStateManager
 
@@ -25,31 +29,12 @@ logger = logging.getLogger(__name__)
 class ExecutionService:
     """Main execution service that consumes signals from Redis queue."""
 
-    def __init__(
-        self,
-        redis_url: str,
-        signal_queue_name: str,
-        db_path: str,
-        max_retries: int = 3,
-        execution_mode: str = "live",
-    ) -> None:
-        """
-        Initialize the execution service.
-
-        Args:
-            redis_url: Redis connection URL
-            signal_queue_name: Name of the Redis queue for signals
-            db_path: Path to the shared SQLite database
-            max_retries: Maximum retries for queue operations
-            execution_mode: Execution mode - "live" or "mock" (default: "live")
-        """
-        self.redis_url = redis_url
-        self.signal_queue_name = signal_queue_name
-        self.db_path = db_path
-        self.max_retries = max_retries
-        self.execution_mode = execution_mode
+    def __init__(self) -> None:
+        """Initialize the execution service from global config."""
+        self.config = get_config()
 
         self.redis_client: redis.Redis | None = None
+        self.db: Database | None = None
         self.db_connection: aiosqlite.Connection | None = None
         self.signal_handler: SignalHandler | None = None
         self.position_manager: PositionStateManager | None = None
@@ -58,20 +43,34 @@ class ExecutionService:
         self.running = True
 
     async def connect(self) -> None:
-        """Connect to Redis and SQLite database."""
-        logger.info("Connecting to Redis at %s", self.redis_url)
-        self.redis_client = await redis.from_url(self.redis_url)
+        """Connect to Redis and SQLite database, run migrations."""
+        cfg = self.config
 
-        logger.info("Opening SQLite database at %s", self.db_path)
-        self.db_connection = await aiosqlite.connect(self.db_path)
+        # Connect to Redis
+        logger.info("Connecting to Redis at %s", cfg.redis.redis_url)
+        self.redis_client = await redis.from_url(cfg.redis.redis_url)
+
+        # Initialize database with migrations (same path + migrations as core)
+        logger.info("Initializing database at %s", cfg.database.db_path)
+        self.db = Database(
+            cfg.database.db_path,
+            migrations_dir=cfg.database.migrations_dir,
+        )
+        await self.db.init()
+        self.db_connection = self.db._conn
 
         self.signal_handler = SignalHandler(
-            self.db_connection, self.redis_client, execution_mode=self.execution_mode
+            self.db_connection,
+            self.redis_client,
+            execution_mode=cfg.execution.execution_mode,
         )
         self.position_manager = PositionStateManager(self.db_connection)
 
-        logger.info("Execution service running in %s mode", self.execution_mode)
-        logger.info("Execution service connected successfully")
+        logger.info(
+            "Execution service connected — mode=%s db=%s",
+            cfg.execution.execution_mode,
+            cfg.database.db_path,
+        )
 
     async def disconnect(self) -> None:
         """Disconnect from Redis and database."""
@@ -79,25 +78,16 @@ class ExecutionService:
             await self.redis_client.close()
             logger.info("Redis connection closed")
 
-        if self.db_connection:
-            await self.db_connection.close()
+        if self.db:
+            await self.db.close()
             logger.info("Database connection closed")
 
     async def check_duplicate_signal(self, signal_id: str) -> bool:
-        """
-        Check if signal has already been processed (idempotency).
-
-        Args:
-            signal_id: The signal ID to check
-
-        Returns:
-            True if signal has been processed, False otherwise
-        """
+        """Check if signal has already been processed (idempotency)."""
         if signal_id in self.processed_signal_ids:
             logger.warning("Duplicate signal detected: %s", signal_id)
             return True
 
-        # Check database for previous processing
         if self.db_connection:
             cursor = await self.db_connection.execute(
                 "SELECT COUNT(*) FROM order_events WHERE signal_id = ?",
@@ -111,28 +101,20 @@ class ExecutionService:
         return False
 
     async def process_signal(self, payload: dict) -> None:
-        """
-        Process a single signal from the queue.
-
-        Args:
-            payload: The signal payload
-        """
+        """Process a single signal from the queue."""
         try:
             signal_id = payload.get("signal_id")
 
-            # Check for duplicates (idempotency)
             if signal_id and await self.check_duplicate_signal(signal_id):
                 logger.info("Skipping duplicate signal: %s", signal_id)
                 return
 
-            # Process the signal
             if not self.signal_handler:
                 logger.error("Signal handler not initialized")
                 return
 
             await self.signal_handler.process_signal(payload)
 
-            # Track processed signal
             if signal_id:
                 self.processed_signal_ids.add(signal_id)
                 logger.info("Signal processed successfully: %s", signal_id)
@@ -156,7 +138,7 @@ class ExecutionService:
             try:
                 if self.redis_client:
                     await self.redis_client.close()
-                self.redis_client = await redis.from_url(self.redis_url)
+                self.redis_client = await redis.from_url(self.config.redis.redis_url)
                 await self.redis_client.ping()
                 logger.info("Redis reconnected successfully")
                 return True
@@ -173,14 +155,12 @@ class ExecutionService:
             logger.error("Redis client not initialized")
             return
 
-        logger.info("Starting signal consumer on queue: %s", self.signal_queue_name)
+        queue_name = self.config.redis.signal_queue_name
+        logger.info("Starting signal consumer on queue: %s", queue_name)
 
         while self.running:
             try:
-                # BRPOP blocks with 1-second timeout to allow graceful shutdown
-                result = await self.redis_client.brpop(
-                    self.signal_queue_name, timeout=1
-                )
+                result = await self.redis_client.brpop(queue_name, timeout=1)
 
                 if result is None:
                     continue
@@ -217,7 +197,6 @@ class ExecutionService:
 
     async def run(self) -> None:
         """Main entry point for the execution service."""
-        # Register signal handlers
         signal_module.signal(signal_module.SIGINT, self._shutdown_handler)
         signal_module.signal(signal_module.SIGTERM, self._shutdown_handler)
 
@@ -234,23 +213,13 @@ class ExecutionService:
 
 async def main() -> None:
     """Main entry point."""
-    import os
+    from dotenv import load_dotenv
     from core.logging_config import configure_from_env
 
+    load_dotenv()
     configure_from_env()
 
-    redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
-    signal_queue_name = os.getenv("SIGNAL_QUEUE_NAME", "trading_signals")
-    db_path = os.getenv("DB_PATH", "prediction_market.db")
-    execution_mode = os.getenv("EXECUTION_MODE", "mock")
-
-    service = ExecutionService(
-        redis_url=redis_url,
-        signal_queue_name=signal_queue_name,
-        db_path=db_path,
-        execution_mode=execution_mode,
-    )
-
+    service = ExecutionService()
     await service.run()
 
 

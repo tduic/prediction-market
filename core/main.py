@@ -3,15 +3,16 @@ Core service entry point.
 
 Initializes all components: database, event bus, ingestor, constraint engine,
 signal generator, and schedulers. Runs the main event loop.
+
+All configuration is loaded from environment variables via get_config().
 """
 
 import asyncio
 import logging
-import os
 import signal as signal_module
 import sys
 
-
+from core.config import get_config
 from core.events.bus import EventBus
 from core.constraints.engine import ConstraintEngine
 from core.signals.generator import SignalGenerator
@@ -24,20 +25,9 @@ logger = logging.getLogger(__name__)
 class CoreService:
     """Main core service orchestrator."""
 
-    def __init__(
-        self,
-        db_path: str = "prediction_market.db",
-        migrations_dir: str = "core/storage/migrations",
-    ) -> None:
-        """
-        Initialize the core service.
-
-        Args:
-            db_path: Path to SQLite database
-            migrations_dir: Path to SQL migration files
-        """
-        self.db_path = db_path
-        self.migrations_dir = migrations_dir
+    def __init__(self) -> None:
+        """Initialize the core service from global config."""
+        self.config = get_config()
 
         self.db: Database | None = None
         self.event_bus: EventBus | None = None
@@ -49,33 +39,34 @@ class CoreService:
 
     async def initialize(self) -> None:
         """Initialize all service components."""
+        cfg = self.config
         logger.info("Initializing core service")
+        logger.info("  Execution mode: %s", cfg.execution.execution_mode)
+        logger.info("  Database: %s", cfg.database.db_path)
 
-        # Initialize database
-        logger.info("Initializing database at %s", self.db_path)
-        self.db = Database(self.db_path, migrations_dir=self.migrations_dir)
+        # Initialize database with migrations
+        self.db = Database(
+            cfg.database.db_path,
+            migrations_dir=cfg.database.migrations_dir,
+        )
         await self.db.init()
 
         # Initialize event bus
-        logger.info("Initializing event bus")
         self.event_bus = EventBus()
 
         # Initialize constraint engine
-        logger.info("Initializing constraint engine")
         self.constraint_engine = ConstraintEngine(
             event_bus=self.event_bus,
             db=self.db,
         )
 
         # Initialize signal generator
-        logger.info("Initializing signal generator")
         self.signal_generator = SignalGenerator(
             event_bus=self.event_bus,
             db=self.db,
         )
 
         # Initialize ingestor scheduler
-        logger.info("Initializing ingestor scheduler")
         self.scheduler = IngestorScheduler()
 
         logger.info("Core service initialization complete")
@@ -133,7 +124,6 @@ class CoreService:
 
     async def run(self) -> None:
         """Run the core service."""
-        # Register signal handlers
         signal_module.signal(signal_module.SIGINT, self._shutdown_handler)
         signal_module.signal(signal_module.SIGTERM, self._shutdown_handler)
 
@@ -144,7 +134,6 @@ class CoreService:
                 await self.scheduler.start()
                 logger.info("Scheduler started")
 
-            # Main loop
             logger.info("Core service running, waiting for shutdown signal")
             while self.running:
                 await asyncio.sleep(1)
@@ -158,18 +147,13 @@ class CoreService:
 
 async def main() -> None:
     """Main entry point."""
+    from dotenv import load_dotenv
     from core.logging_config import configure_from_env
 
+    load_dotenv()
     configure_from_env()
 
-    db_path = os.getenv("DB_PATH", "prediction_market.db")
-    migrations_dir = os.getenv("MIGRATIONS_DIR", "core/storage/migrations")
-
-    service = CoreService(
-        db_path=db_path,
-        migrations_dir=migrations_dir,
-    )
-
+    service = CoreService()
     await service.run()
 
 
