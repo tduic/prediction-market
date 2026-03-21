@@ -10,7 +10,6 @@ import logging
 import os
 import signal as signal_module
 import sys
-from pathlib import Path
 
 
 from core.events.bus import EventBus
@@ -18,8 +17,6 @@ from core.constraints.engine import ConstraintEngine
 from core.signals.generator import SignalGenerator
 from core.storage.db import Database
 from core.ingestor.scheduler import IngestorScheduler
-from core.ingestor.polymarket import PolymarketClient
-from core.ingestor.kalshi import KalshiClient
 
 logger = logging.getLogger(__name__)
 

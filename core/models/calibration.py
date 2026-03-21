@@ -189,7 +189,8 @@ class CalibrationModel(BaseModel):
             )
         except ValueError:
             # Fallback if insufficient data
-            curve = lambda x: x
+            def curve(x):
+                return x
 
         # Identify systematic biases
         biases = self._detect_biases(bin_means, bin_outcomes)

@@ -2,8 +2,8 @@
 Database queries for PnL tracking and trade analysis.
 """
 
-from typing import Optional, List, Any
-from datetime import datetime, timedelta
+from typing import Any
+from datetime import datetime, timezone
 import logging
 
 from ..db import Database

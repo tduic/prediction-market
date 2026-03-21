@@ -6,8 +6,7 @@ Tests model training, prediction, calibration, and lifecycle management.
 
 import pytest
 from datetime import datetime, timedelta, timezone
-from unittest.mock import Mock, patch, MagicMock
-from typing import List, Any
+from typing import Any
 
 # ============================================================================
 # Model Service Classes (Mock Implementations)

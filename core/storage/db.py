@@ -6,7 +6,7 @@ Implements single-writer pattern with concurrent read support via WAL mode.
 import asyncio
 import logging
 from pathlib import Path
-from typing import Any, List
+from typing import Any
 
 import aiosqlite
 

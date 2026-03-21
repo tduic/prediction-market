@@ -3,7 +3,7 @@ Database queries for market data operations.
 All functions are async and take a Database instance as first argument.
 """
 
-from typing import Optional, List, Any
+from typing import Any
 from datetime import datetime, timezone
 import logging
 

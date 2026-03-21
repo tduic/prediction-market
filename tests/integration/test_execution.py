@@ -9,7 +9,6 @@ Tests order execution pipeline:
 """
 
 import pytest
-from unittest.mock import Mock, patch, MagicMock, AsyncMock
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 import asyncio
@@ -367,11 +366,11 @@ class TestOrderSubmissionAndFills:
     @pytest.mark.asyncio
     async def test_expired_signal_discarded(self, in_memory_db, sample_config):
         """Order for expired signal is rejected."""
-        execution = ExecutionService(in_memory_db)
+        execution = ExecutionService(in_memory_db)  # noqa: F841
         self._setup_db_dependencies(in_memory_db, "_expired")
 
         # Create expired order
-        order = Order(
+        order = Order(  # noqa: F841
             order_id="order_expired",
             signal_id="sig_expired",
             platform="polymarket",

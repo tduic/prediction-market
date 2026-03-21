@@ -15,10 +15,8 @@ Usage:
 
 import argparse
 import asyncio
-import json
 import logging
 import os
-import sqlite3
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -32,10 +30,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 # Set mock execution mode before any imports
 os.environ["EXECUTION_MODE"] = "mock"
 
-import aiosqlite
-
-from execution.models import OrderLeg, TradingSignal
-from execution.router import OrderRouter
+import aiosqlite  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -488,13 +483,13 @@ async def generate_signals(
             "SELECT platform FROM markets WHERE id = ?", (market_a,)
         )
         market_a_data = await cursor_ma.fetchone()
-        platform_a = market_a_data[0] if market_a_data else "polymarket"
+        _platform_a = market_a_data[0] if market_a_data else "polymarket"
 
         cursor_mb = await db.execute(
             "SELECT platform FROM markets WHERE id = ?", (market_b,)
         )
         market_b_data = await cursor_mb.fetchone()
-        platform_b = market_b_data[0] if market_b_data else "kalshi"
+        _platform_b = market_b_data[0] if market_b_data else "kalshi"
 
         # Signal parameters
         strategy = strategies[viol_idx % len(strategies)]
@@ -646,7 +641,7 @@ async def execute_signals(
 
         # Simulate order executions
         orders = []
-        order_ids = []
+        _order_ids = []
 
         # Leg 1: BUY on market_a
         order_id_1 = gen_id("ord_")
@@ -1025,7 +1020,7 @@ async def generate_report(db: aiosqlite.Connection, verbose: bool = False) -> No
     avg_spread, min_spread, max_spread = row if row else (0, 0, 0)
     print(f"  Violations detected:   {violation_count}")
     if avg_spread:
-        print(f"  Spread statistics:")
+        print("  Spread statistics:")
         print(f"    - Average: {avg_spread:.4f}")
         print(f"    - Min:     {min_spread:.4f}")
         print(f"    - Max:     {max_spread:.4f}")
@@ -1043,7 +1038,7 @@ async def generate_report(db: aiosqlite.Connection, verbose: bool = False) -> No
         """)
     signals_by_strat = await cursor.fetchall()
     print(f"  Total signals generated: {signal_count}")
-    print(f"  By strategy:")
+    print("  By strategy:")
     for strat, count, avg_edge in signals_by_strat:
         print(f"    - {strat}: {count} signals (avg edge {avg_edge:.4f})")
 
@@ -1057,7 +1052,7 @@ async def generate_report(db: aiosqlite.Connection, verbose: bool = False) -> No
     )
     orders_by_status = await cursor.fetchall()
     print(f"  Total orders submitted: {order_count}")
-    print(f"  By status:")
+    print("  By status:")
     for status, count in orders_by_status:
         print(f"    - {status}: {count}")
 
@@ -1226,7 +1221,7 @@ Examples:
         format="%(asctime)s [%(levelname)-8s] %(name)s: %(message)s",
     )
 
-    logger.info(f"Starting mock trading session")
+    logger.info("Starting mock trading session")
     logger.info(f"  Database: {args.db_path}")
     logger.info(f"  Markets: {args.num_markets}")
     logger.info(f"  Violations: {args.num_violations}")
@@ -1250,7 +1245,7 @@ Examples:
 
         # Phase 4: Execution
         logger.info("\n=== PHASE 4: EXECUTION ===")
-        execution_results = await execute_signals(db, signal_ids)
+        execution_results = await execute_signals(db, signal_ids)  # noqa: F841
 
         # Phase 5: Post-trade
         logger.info("\n=== PHASE 5: POST-TRADE ===")

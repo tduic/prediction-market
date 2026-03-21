@@ -7,8 +7,7 @@ Fetches historical prices from API and writes to market_prices table.
 import argparse
 import asyncio
 import logging
-from datetime import datetime, timedelta
-from typing import List
+from datetime import datetime, timedelta, timezone
 
 import aiosqlite
 import httpx

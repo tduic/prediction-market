@@ -7,8 +7,7 @@ Tracks open positions, calculates PnL, and periodically flushes state to SQLite.
 import asyncio
 import logging
 import time
-from dataclasses import dataclass, field
-from typing import List
+from dataclasses import dataclass
 
 import aiosqlite
 

@@ -1,10 +1,9 @@
 """Main constraint engine for prediction market arbitrage detection."""
 
-import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Callable, List
+from typing import Any
 
 from core.constraints.fees import FeeEstimator, FeeConfig
 from core.constraints.rules import (

@@ -6,7 +6,6 @@ Provides pub/sub functionality with error isolation between subscribers.
 import asyncio
 import logging
 from typing import Callable, Type
-from functools import partial
 
 from .types import Event
 

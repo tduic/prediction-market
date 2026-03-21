@@ -1,7 +1,6 @@
 """Sentence embeddings for semantic market matching."""
 
 import logging
-from typing import List
 
 import numpy as np
 

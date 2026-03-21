@@ -207,7 +207,7 @@ class PolymarketExecutionClient:
             # Extract order ID from response
             if isinstance(result, dict):
                 order_id = result.get("orderID", result.get("id", ""))
-                status = result.get("status", "ACCEPTED")
+                _status = result.get("status", "ACCEPTED")
                 if result.get("success", True) and order_id:
                     order_status = "ACCEPTED"
                 else:
@@ -271,7 +271,7 @@ class PolymarketExecutionClient:
             self._ensure_client()
 
             logger.info("Cancelling Polymarket order: %s", order_id)
-            result = self._client.cancel(order_id)
+            _result = self._client.cancel(order_id)
 
             await self.db_connection.execute(
                 "UPDATE orders SET status = ? WHERE order_id = ?",

@@ -2,7 +2,7 @@
 Database queries for position and order management.
 """
 
-from typing import Optional, List, Any
+from typing import Any
 from datetime import datetime, timezone
 import logging
 

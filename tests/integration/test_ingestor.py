@@ -9,9 +9,7 @@ Tests data ingestion pipeline:
 """
 
 import pytest
-from unittest.mock import Mock, patch, MagicMock, AsyncMock
-from datetime import datetime, timedelta, timezone
-import asyncio
+from datetime import datetime, timezone
 
 # ============================================================================
 # Ingestor Classes (Mock Implementations)
@@ -417,7 +415,7 @@ class TestIngestorMultipleCycles:
         ingestor = MarketIngestor(in_memory_db, api_client=api_client)
 
         # First ingest
-        result1 = await ingestor.run_ingest_cycle()
+        result1 = await ingestor.run_ingest_cycle()  # noqa: F841
         count1 = in_memory_db.execute(
             "SELECT COUNT(*) as count FROM markets"
         ).fetchone()["count"]

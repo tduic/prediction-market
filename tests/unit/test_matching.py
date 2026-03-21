@@ -7,10 +7,7 @@ Tests market matching via:
 - Market pair curator operations
 """
 
-import pytest
-from unittest.mock import Mock, patch, MagicMock
 from datetime import datetime, timezone
-import math
 
 # ============================================================================
 # Matching Classes (Mock Implementations)
@@ -184,7 +181,7 @@ class MarketPairCurator:
         self.matcher = matcher or MarketMatcher()
         self.pairs = {}  # In-memory pair storage
 
-    def add_pair(
+    def addpair(
         self,
         pair_id: str,
         market_a_id: str,
@@ -226,7 +223,7 @@ class MarketPairCurator:
 
         return pair
 
-    def retrieve_pair(self, pair_id: str) -> MarketPair:
+    def retrievepair(self, pair_id: str) -> MarketPair:
         """
         Retrieve a market pair by ID.
 
@@ -238,7 +235,7 @@ class MarketPairCurator:
         """
         return self.pairs.get(pair_id)
 
-    def verify_pair(self, pair_id: str) -> bool:
+    def verifypair(self, pair_id: str) -> bool:
         """
         Mark a pair as verified.
 
@@ -264,7 +261,7 @@ class MarketPairCurator:
 
         return True
 
-    def deactivate_pair(self, pair_id: str) -> bool:
+    def deactivatepair(self, pair_id: str) -> bool:
         """
         Deactivate a market pair.
 
@@ -290,7 +287,7 @@ class MarketPairCurator:
 
         return True
 
-    def list_pairs(self, status: str = None) -> list:
+    def listpairs(self, status: str = None) -> list:
         """
         List all pairs, optionally filtered by status.
 
@@ -489,11 +486,11 @@ class TestEmbeddingSimilarityMatching:
 class TestMarketPairCurator:
     """Test market pair curator operations."""
 
-    def test_curator_add_and_retrieve_pair(self):
+    def test_curator_add_and_retrievepair(self):
         """Add and retrieve market pair."""
         curator = MarketPairCurator()
 
-        pair = curator.add_pair(
+        pair = curator.addpair(  # noqa: F841
             pair_id="pair_001",
             market_a_id="pm_001",
             market_b_id="ks_001",
@@ -501,73 +498,73 @@ class TestMarketPairCurator:
             similarity=0.95,
         )
 
-        retrieved = curator.retrieve_pair("pair_001")
+        retrieved = curator.retrievepair("pair_001")
 
         assert retrieved is not None
         assert retrieved.market_a_id == "pm_001"
         assert retrieved.market_b_id == "ks_001"
         assert retrieved.similarity == 0.95
 
-    def test_curator_add_multiple_pairs(self):
+    def test_curator_add_multiplepairs(self):
         """Add multiple market pairs."""
         curator = MarketPairCurator()
 
         for i in range(3):
-            curator.add_pair(
+            curator.addpair(
                 pair_id=f"pair_{i:03d}",
                 market_a_id=f"pm_{i:03d}",
                 market_b_id=f"ks_{i:03d}",
                 pair_type="fomc_match",
             )
 
-        pairs = curator.list_pairs()
+        pairs = curator.listpairs()
         assert len(pairs) == 3
 
-    def test_curator_verify_pair(self):
+    def test_curator_verifypair(self):
         """Verify a market pair."""
         curator = MarketPairCurator()
 
-        curator.add_pair(
+        curator.addpair(
             pair_id="pair_verify",
             market_a_id="pm_001",
             market_b_id="ks_001",
             pair_type="fomc_match",
         )
 
-        pair = curator.retrieve_pair("pair_verify")
+        pair = curator.retrievepair("pair_verify")
         assert pair.verified is False
 
-        result = curator.verify_pair("pair_verify")
+        result = curator.verifypair("pair_verify")
 
         assert result is True
         assert pair.verified is True
 
-    def test_curator_deactivate_pair(self):
+    def test_curator_deactivatepair(self):
         """Deactivate a market pair."""
         curator = MarketPairCurator()
 
-        curator.add_pair(
+        curator.addpair(
             pair_id="pair_deactivate",
             market_a_id="pm_001",
             market_b_id="ks_001",
             pair_type="fomc_match",
         )
 
-        pair = curator.retrieve_pair("pair_deactivate")
+        pair = curator.retrievepair("pair_deactivate")
         assert pair.status == "active"
 
-        result = curator.deactivate_pair("pair_deactivate")
+        result = curator.deactivatepair("pair_deactivate")
 
         assert result is True
         assert pair.status == "inactive"
 
-    def test_curator_list_pairs_by_status(self):
+    def test_curator_listpairs_by_status(self):
         """List pairs filtered by status."""
         curator = MarketPairCurator()
 
         # Add active pairs
         for i in range(2):
-            curator.add_pair(
+            curator.addpair(
                 pair_id=f"pair_active_{i}",
                 market_a_id=f"pm_{i}",
                 market_b_id=f"ks_{i}",
@@ -575,27 +572,27 @@ class TestMarketPairCurator:
             )
 
         # Deactivate one
-        curator.deactivate_pair("pair_active_0")
+        curator.deactivatepair("pair_active_0")
 
-        active_pairs = curator.list_pairs(status="active")
-        inactive_pairs = curator.list_pairs(status="inactive")
+        activepairs = curator.listpairs(status="active")
+        inactivepairs = curator.listpairs(status="inactive")
 
-        assert len(active_pairs) == 1
-        assert len(inactive_pairs) == 1
+        assert len(activepairs) == 1
+        assert len(inactivepairs) == 1
 
-    def test_curator_retrieve_nonexistent_pair(self):
+    def test_curator_retrieve_nonexistentpair(self):
         """Retrieve nonexistent pair returns None."""
         curator = MarketPairCurator()
 
-        pair = curator.retrieve_pair("nonexistent")
+        pair = curator.retrievepair("nonexistent")
 
         assert pair is None
 
-    def test_curator_verify_nonexistent_pair(self):
+    def test_curator_verify_nonexistentpair(self):
         """Verifying nonexistent pair returns False."""
         curator = MarketPairCurator()
 
-        result = curator.verify_pair("nonexistent")
+        result = curator.verifypair("nonexistent")
 
         assert result is False
 
@@ -624,7 +621,7 @@ class TestMarketPairCurator:
 
         curator = MarketPairCurator(db=in_memory_db)
 
-        curator.add_pair(
+        curator.addpair(
             pair_id="pair_db",
             market_a_id="pm_001",
             market_b_id="ks_001",
@@ -641,26 +638,26 @@ class TestMarketPairCurator:
         assert row is not None
         assert row["market_a_id"] == "pm_001"
 
-    def test_curator_pair_lifecycle(self):
+    def test_curatorpair_lifecycle(self):
         """Full pair lifecycle: add -> verify -> deactivate."""
         curator = MarketPairCurator()
 
         # Create pair
-        curator.add_pair(
+        curator.addpair(
             pair_id="pair_lifecycle",
             market_a_id="pm_001",
             market_b_id="ks_001",
             pair_type="fomc_match",
         )
 
-        pair = curator.retrieve_pair("pair_lifecycle")
+        pair = curator.retrievepair("pair_lifecycle")
         assert pair.verified is False
         assert pair.status == "active"
 
         # Verify
-        curator.verify_pair("pair_lifecycle")
+        curator.verifypair("pair_lifecycle")
         assert pair.verified is True
 
         # Deactivate
-        curator.deactivate_pair("pair_lifecycle")
+        curator.deactivatepair("pair_lifecycle")
         assert pair.status == "inactive"

@@ -12,8 +12,8 @@ All methods are async and work directly with aiosqlite.Connection.
 
 import logging
 import uuid
-from datetime import datetime, timedelta
-from typing import Optional, Dict, List, Any
+from datetime import datetime, timedelta, timezone
+from typing import Any
 import math
 import statistics
 

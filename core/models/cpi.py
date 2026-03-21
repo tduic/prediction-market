@@ -136,7 +136,7 @@ class CPIModel(BaseModel):
         try:
             nowcast = features.get("cleveland_nowcast", 0.0)
             consensus = features.get("consensus_forecast", 0.0)
-            previous = features.get("previous_print", 0.0)
+            _previous = features.get("previous_print", 0.0)
         except (KeyError, TypeError) as e:
             raise ValueError(f"Invalid features: {e}")
 

@@ -7,7 +7,6 @@ Shows pairs side-by-side with resolution criteria and allows manual approval/rej
 import argparse
 import asyncio
 import logging
-from typing import List
 
 import aiosqlite
 
@@ -65,7 +64,7 @@ class PairValidator:
         print(f"\nName: {pair['name']}")
         print(f"Description: {pair['description']}")
         print(f"Category: {pair['category']}")
-        print(f"\nResolution Criteria:")
+        print("\nResolution Criteria:")
         print(f"  {pair['resolution_criteria']}")
 
         print(f"\nLeg A ({pair['leg_a_platform'].upper()}):")

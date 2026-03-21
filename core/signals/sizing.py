@@ -20,7 +20,7 @@ def compute_kelly_fraction(
     where:
         b = odds (win payout / stake)
         p = probability of winning
-        q = probability of losing (1 - p)
+        _q = probability of losing (1 - p)
         f* = fraction of bankroll to bet
 
     We use fractional Kelly (quarter-Kelly) for safety.
@@ -42,7 +42,7 @@ def compute_kelly_fraction(
     # Interpret market price as probability
     # odds = p for binary outcome
     p = odds  # Probability if betting YES
-    q = 1 - p  # Probability if betting NO
+    _q = 1 - p  # Probability if betting NO
 
     # If edge > 0, we want to go long (betting YES)
     # If edge < 0, we want to go short (betting NO)

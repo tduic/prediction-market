@@ -16,9 +16,9 @@ import asyncio
 import json
 import sys
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict
 import statistics
 
 import aiosqlite
@@ -352,7 +352,7 @@ class Dashboard:
         for label, value in data:
             print(f"  {label:<30} {value:>35}")
 
-        print(f"\n  Platform Breakdown:")
+        print("\n  Platform Breakdown:")
         print(
             f"    Polymarket Fill Rate:  "
             f"{Color.format(f'{execution.polymarket_fill_rate:.1f}%', Color.GREEN if execution.polymarket_fill_rate > 85 else Color.YELLOW)}"
@@ -635,7 +635,7 @@ class Dashboard:
             total_pnl = row["total_pnl"] or 0
             total_fees = row["total_fees"] or 0
             edge_cap = row["edge_captured_pct"] or 0
-            avg_edge = row["avg_edge"] or 0
+            _avg_edge = row["avg_edge"] or 0
 
             # Calculate Sharpe ratio (SQLite lacks STDEV, compute in Python)
             cursor2 = await db.execute(

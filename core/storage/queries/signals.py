@@ -2,7 +2,7 @@
 Database queries for signal management and risk tracking.
 """
 
-from typing import Optional, List, Any
+from typing import Any
 from datetime import datetime, timezone
 import logging
 

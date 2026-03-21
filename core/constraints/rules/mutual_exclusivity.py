@@ -4,7 +4,6 @@ Enforces: P(A wins) + P(B wins) + P(C wins) ≤ 100% for exhaustive outcomes
 """
 
 from dataclasses import dataclass
-from typing import List
 
 
 @dataclass

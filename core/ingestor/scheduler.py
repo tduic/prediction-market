@@ -2,7 +2,6 @@
 
 import logging
 import os
-from datetime import datetime
 from typing import Any, Callable
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
