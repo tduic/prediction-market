@@ -208,7 +208,7 @@ async def main() -> None:
     redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
     signal_queue_name = os.getenv("SIGNAL_QUEUE_NAME", "trading_signals")
     db_path = os.getenv("DB_PATH", "prediction_market.db")
-    execution_mode = os.getenv("EXECUTION_MODE", "live")
+    execution_mode = os.getenv("EXECUTION_MODE", "mock")
 
     service = ExecutionService(
         redis_url=redis_url,

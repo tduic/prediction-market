@@ -1,371 +1,214 @@
-# Prediction Market Trading System - Foundation Layer
+# Prediction Market Trading System
 
-A production-quality async Python foundation for a multi-platform prediction market trading system. Supports real-time market data ingestion, constraint-based arbitrage detection, portfolio management, and trade analytics.
+An async Python trading system for detecting and exploiting pricing inefficiencies across prediction market platforms (Polymarket, Kalshi). Covers the full quant lifecycle: data ingestion, arbitrage detection, signal generation, risk management, order execution, and post-trade analytics.
 
-## Architecture Overview
+## Architecture
 
-### Core Components
+The system runs as two async services communicating via Redis:
 
-#### 1. Configuration Management (`core/config.py`)
-Centralized configuration system loading from environment variables with validation.
+```
+┌─────────────────────────────┐       Redis        ┌─────────────────────────────┐
+│        Core Service         │  ───signals───────► │     Execution Service       │
+│                             │                     │                             │
+│  Ingestor → Constraint      │                     │  Signal Handler → Router    │
+│  Engine → Signal Generator  │                     │  → Platform Clients         │
+│  → Risk Checks              │                     │  → Position State           │
+└──────────┬──────────────────┘                     └──────────┬──────────────────┘
+           │                                                   │
+           └──────────────── SQLite (WAL) ─────────────────────┘
+```
 
-**Key Settings:**
-- **Platform Credentials**: Polymarket, Kalshi API keys and secrets
-- **Database**: SQLite with WAL mode for concurrent read access
-- **Redis**: Optional message queue for signal distribution
-- **Ingestor**: Polling intervals for market data collection
-- **Constraint Engine**: Spread thresholds and fee rates
-- **Risk Controls**: Position sizing, daily loss limits, Kelly fraction
-- **Model Service**: ML model deployment and refit schedules
-- **Matching**: Market similarity thresholds and embedding models
-- **Execution**: Order execution parameters and retry logic
-- **Observability**: Logging levels and snapshot intervals
+**Core Service** polls market data, detects arbitrage opportunities through constraint violations, generates trading signals with Kelly-criterion sizing, and validates them against risk limits.
 
-**Validation:**
-- Credential requirements depend on `PAPER_TRADING` flag
-- Kelly fraction constrained to (0, 0.5]
-- Spread thresholds must exceed fee rates
-- Demo environments force paper trading mode
+**Execution Service** consumes signals, routes orders to the appropriate platform client, tracks fills, manages position state, and writes trade outcomes for analytics.
 
-#### 2. Event System (`core/events/`)
+Both services share a SQLite database (16 tables, WAL mode for concurrent access).
 
-Lightweight pub/sub event bus using `asyncio.Queue` with error isolation.
+## Trading Strategies
 
-**Event Types:**
-- `MarketUpdated`: Price/liquidity changes
-- `ViolationDetected`: Arbitrage opportunities
-- `SignalFired`: Trading signals from strategies
-- `SignalQueued`: Signal enters processing queue
-- `OrderSubmitted`: Order sent to platform
-- `OrderFilled`: Order received fills
-- `OrderCancelled/OrderFailed`: Order outcomes
-- `PositionUpdated/PositionClosed`: Position lifecycle
-- `RiskCheckFailed`: Risk validation failures
-- `PnLSnapshot`: Portfolio snapshots
-- `SystemEvent`: System-level events
+The system implements five strategy types (P1–P5):
 
-**Features:**
-- Multiple subscribers per event type
-- Async/sync callback support
-- Error isolation between subscribers
-- Queue-based processing for throughput
-- Graceful shutdown support
+| Strategy | Description |
+|----------|-------------|
+| **P1 – Cross-Market Arbitrage** | Exploits price discrepancies for the same event across Polymarket and Kalshi |
+| **P2 – Structured Event Modeling** | Trades against mispriced structured events (FOMC, CPI) using specialized models |
+| **P3 – Calibration Bias** | Identifies systematic over/under-pricing using calibration curves |
+| **P4 – Liquidity Timing** | Captures temporary mispricings caused by low-liquidity periods |
+| **P5 – Information Latency** | Exploits delayed price adjustments when one platform updates before another |
 
-#### 3. Storage Layer (`core/storage/`)
+## Key Components
 
-Async SQLite wrapper with connection pooling and migration runner.
+### Data Ingestion (`core/ingestor/`)
+Async pollers for Polymarket (CLOB API) and Kalshi (REST API) that fetch market metadata, prices, volume, and liquidity on configurable intervals. An external data poller handles supplementary data sources (FRED, news APIs). All data is written to the `markets` and `market_prices` tables.
 
-**Features:**
-- Single-writer pattern via `asyncio.Lock`
-- Concurrent reads via WAL mode
-- Automatic schema migrations
-- Dict-like row access
-- Transaction support
-- Vacuum and checkpoint operations
+### Constraint Engine (`core/constraints/`)
+Evaluates four mathematical constraint rules across market pairs to detect arbitrage:
+- **Subset/Superset** – If event A implies event B, then P(A) ≤ P(B)
+- **Mutual Exclusivity** – If A and B cannot both occur, then P(A) + P(B) ≤ 1
+- **Complementarity** – If A and B are exhaustive complements, then P(A) + P(B) = 1
+- **Cross-Platform** – Same event on two platforms should have the same price (net of fees)
 
-**Database Schema (16 Tables):**
+Violations that exceed fee-adjusted thresholds are emitted as trading opportunities.
 
-1. **markets** - Core market information
-   - Unique constraint on (platform, platform_id)
-   - Indexes on platform, status, category
+### Market Matching (`core/matching/`)
+Pairs related markets across platforms using rule-based title matching and semantic embedding similarity. Matched pairs feed into the constraint engine for cross-platform analysis.
 
-2. **market_prices** - Time-series price data
-   - Composite index on (market_id, polled_at)
-   - Tracks bid/ask, spread, volume, liquidity
+### Signal Generation (`core/signals/`)
+Converts violations into actionable trading signals with:
+- **Kelly criterion sizing** – Fractional Kelly (default 0.25×) for position sizing based on estimated edge
+- **Risk validation** – Daily loss limits, max position size, portfolio exposure caps, max drawdown checks
+- All risk checks are logged to `risk_check_log` for auditability
 
-3. **ingestor_runs** - Data collection metadata
-   - Tracks fetch/update/error counts per platform
+### Prediction Models (`core/models/`)
+Event-specific probability models with a registry pattern:
+- **FOMC model** – Fed rate decision probabilities from futures data
+- **CPI model** – Inflation print probabilities from economic indicators
+- **Calibration model** – Historical calibration bias detection
 
-4. **market_pairs** - Cross-platform market matching
-   - Similarity scores from semantic matching
-   - Verified status tracking
-   - Active/inactive state management
+### Execution (`execution/`)
+Order routing with platform-specific clients:
+- **Polymarket client** – USDC-based trading via web3.py (EIP-712 signatures)
+- **Kalshi client** – REST API with HMAC-SHA256 authentication
+- **Mock client** – Simulates realistic fills with configurable latency, slippage, partial fills, and rejection rates
+- **Order router** – Routes signal legs to the correct platform, handles retries with exponential backoff
+- **Position state manager** – In-memory position tracking with periodic database flush
 
-5. **pair_spread_history** - Historical spread tracking
-   - Raw and net spread evolution
-   - Constraint satisfaction flags
+The execution mode is controlled by `EXECUTION_MODE=mock|live` in the environment.
 
-6. **violations** - Detected arbitrage opportunities
-   - Detection timestamp and duration tracking
-   - Fee estimates and spread metrics
-   - Status progression (detected → closed)
+### Analytics (`core/analytics.py`, `scripts/dashboard.py`)
+Post-trade analysis covering:
+- Trade lifecycle tracking (fill → position → outcome)
+- Per-strategy performance: Sharpe ratio, win rate, average PnL, edge capture
+- Execution quality: fill rates, latency distributions, slippage by platform
+- Risk metrics: max drawdown, market concentration
+- Portfolio PnL snapshots over time
 
-7. **signals** - Trading signals
-   - Strategy, signal type, target prices
-   - Model edge and sizing parameters
-   - Risk check results
-   - Status tracking
+### Event System (`core/events/`)
+Async pub/sub event bus connecting all components. 13 event types (MarketUpdated, ViolationDetected, SignalFired, OrderFilled, etc.) with error isolation between subscribers.
 
-8. **risk_check_log** - Risk validation audit trail
-   - Per-check type results
-   - Threshold comparisons
-   - Check details and context
+## Database
 
-9. **orders** - Executed orders
-   - Platform-specific order IDs
-   - Requested vs filled parameters
-   - Slippage and fee tracking
-   - Retry and latency metrics
+SQLite with WAL mode. 16 tables organized around the trading lifecycle:
 
-10. **order_events** - Order lifecycle events
-    - Fill/cancel/reject events
-    - Partial fill tracking
+**Market data:** `markets`, `market_prices`, `ingestor_runs`
+**Pair analysis:** `market_pairs`, `pair_spread_history`
+**Trading pipeline:** `violations`, `signals`, `risk_check_log`
+**Execution:** `orders`, `order_events`, `positions`
+**Analytics:** `pnl_snapshots`, `trade_outcomes`
+**ML:** `model_predictions`, `model_versions`
+**System:** `system_events`
 
-11. **positions** - Open and closed positions
-    - Entry/exit price and size
-    - Unrealized/realized PnL
-    - Resolution outcomes
+Schema is in `core/storage/migrations/001_initial.sql`. Query modules in `core/storage/queries/` provide 50+ typed async functions covering all tables.
 
-12. **pnl_snapshots** - Portfolio snapshots
-    - Scheduled, manual, or signal-triggered
-    - Strategy-specific PnL breakdown
-    - Capital allocation across platforms
+## Quick Start
 
-13. **trade_outcomes** - Completed trade analysis
-    - Predicted vs actual edge
-    - Execution latency metrics
-    - Market conditions at execution
+### Prerequisites
+- Python 3.11+
+- Redis (for live two-service mode; not needed for mock sessions)
 
-14. **model_predictions** - ML model outputs
-    - Feature inputs and predictions
-    - Brier score for calibration
-    - Outcome recording post-resolution
-
-15. **model_versions** - Model training metadata
-    - Training samples and hyperparameters
-    - In/out-of-sample performance
-    - Deployment/retirement tracking
-
-16. **system_events** - System logging
-    - Event types, severity levels
-    - Component attribution
-
-#### 4. Query Modules (`core/storage/queries/`)
-
-Async query functions organized by domain:
-
-**markets.py**
-- `upsert_market()` - Insert/update market records
-- `get_market()` - Retrieve single market
-- `get_markets_by_platform()` - Filter by platform/status
-- `insert_price()` - Record price snapshot
-- `get_latest_prices()` - Fetch recent quotes
-- `insert_ingestor_run()` - Log data collection
-- `get_markets_needing_update()` - Find stale markets
-
-**violations.py**
-- `insert_violation()` - Create violation record
-- `get_violation()` - Retrieve violation
-- `update_violation_status()` - Update status
-- `close_violation()` - Close with duration tracking
-- `get_active_violations()` - List current opportunities
-- `get_violations_by_pair()` - Filter by market pair
-- `insert_pair_spread_history()` - Track spread evolution
-- `get_violation_statistics()` - Summary aggregations
-
-**signals.py**
-- `insert_signal()` - Create trading signal
-- `get_signal()` - Retrieve signal
-- `update_signal_status()` - Update status
-- `get_recent_signals()` - Filter by strategy/status/time
-- `get_open_signals()` - List unfilled signals
-- `insert_risk_check()` - Log risk validation
-- `get_failed_risk_checks()` - Audit trail
-- `get_signal_statistics()` - Summary metrics
-
-**positions.py**
-- `insert_order()` - Create order record
-- `get_order()` - Retrieve order
-- `update_order()` - Update with fills
-- `get_pending_orders()` - List open orders
-- `insert_order_event()` - Log order state changes
-- `insert_position()` - Open position
-- `update_position()` - Mark to market
-- `close_position()` - Close with PnL
-- `get_open_positions()` - List active positions
-- `get_positions_for_market()` - Filter by market
-
-**pnl.py**
-- `insert_snapshot()` - Record portfolio snapshot
-- `get_latest_snapshot()` - Most recent snapshot
-- `get_daily_snapshots()` - Historical snapshots
-- `insert_trade_outcome()` - Post-trade analysis
-- `get_strategy_pnl()` - Strategy performance
-- `get_overall_pnl()` - Portfolio performance
-- `get_recent_trades()` - Completed trades
-- `get_hourly_pnl_series()` - Time-series data
-
-## Usage
-
-### Installation
-
+### Setup
 ```bash
+# Clone and install
+git clone https://github.com/yourusername/prediction-market.git
+cd prediction-market
 pip install -r requirements.txt
+
+# Configure
+cp config/settings.example.env .env
+# Edit .env with your settings (EXECUTION_MODE=mock for testing)
+
+# Initialize database
+sqlite3 data/pmtrader.db < core/storage/migrations/001_initial.sql
 ```
 
-### Basic Setup
-
-```python
-import asyncio
-from core import Database, EventBus, get_config
-from core.storage import queries
-
-async def main():
-    # Load configuration
-    config = get_config()
-    
-    # Initialize database
-    db = Database(config.database.database_path)
-    await db.init()
-    
-    # Initialize event bus
-    bus = EventBus()
-    await bus.start()
-    
-    # Insert market data
-    await queries.markets.upsert_market(
-        db,
-        market_id="poly_trump_2026",
-        platform="polymarket",
-        platform_id="trump_approval",
-        title="Trump Approval > 45%",
-    )
-    
-    # Cleanup
-    await bus.stop()
-    await db.close()
-
-if __name__ == "__main__":
-    asyncio.run(main())
-```
-
-### Configuration via Environment Variables
-
+### Run a Mock Session
+The mock session harness runs the complete trading lifecycle in-process without Redis:
 ```bash
-# Platform Credentials
-export POLYMARKET_API_KEY=...
-export POLYMARKET_PRIVATE_KEY=...
-export POLYMARKET_WALLET_ADDRESS=...
-export KALSHI_API_KEY=...
-export KALSHI_API_SECRET=...
-
-# Database
-export DATABASE_PATH=./data/pmtrader.db
-
-# Risk Controls
-export MAX_POSITION_SIZE_USD=500
-export MAX_DAILY_LOSS_USD=200
-export KELLY_FRACTION=0.25
-
-# Observability
-export PAPER_TRADING=true
-export LOG_LEVEL=INFO
+python scripts/run_mock_session.py --num-markets 20 --num-violations 15 --verbose
 ```
+This seeds markets, generates violations across all 5 strategies, executes through the mock router, records positions and PnL, and prints a formatted report.
 
-## Event Flow Example
-
-```
-Market Snapshot
-    ↓
-MarketUpdated event published
-    ↓
-Constraint Engine calculates spreads
-    ↓
-Spread exceeds MIN_NET_SPREAD_CROSS_PLATFORM
-    ↓
-ViolationDetected event published
-    ↓
-Signal Strategy evaluates edge
-    ↓
-Edge exceeds MIN_EDGE_TO_SIGNAL
-    ↓
-SignalFired event published
-    ↓
-Risk checks executed
-    ↓
-OrderSubmitted event published
-    ↓
-OrderFilled event received
-    ↓
-PositionUpdated event published
-    ↓
-PnLSnapshot recorded
-```
-
-## Performance Characteristics
-
-- **Database**: WAL mode enables concurrent reads while maintaining single-writer semantics
-- **Event Processing**: Async callbacks with error isolation prevent cascade failures
-- **Query Execution**: Parameterized queries prevent SQL injection
-- **Memory**: Row factories only created when needed; lazy evaluation of results
-
-## Testing
-
+### View Analytics Dashboard
 ```bash
-# Run with example data
-python example_usage.py
+python scripts/dashboard.py --db-path data/pmtrader.db --days 7
+python scripts/dashboard.py --format json  # Machine-readable output
+```
 
-# Run tests
+### Run Tests
+```bash
+pip install -r requirements-test.txt
 pytest tests/ -v
-
-# Type checking
-mypy core/ --strict
-
-# Code quality
-ruff check core/
-black --check core/
 ```
 
-## File Structure
+### Run Live Services
+```bash
+# Terminal 1: Core service
+python -m core.main
+
+# Terminal 2: Execution service
+python -m execution.main
+```
+
+## Configuration
+
+All settings are loaded from environment variables. See `config/settings.example.env` for the full list. Key settings:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `EXECUTION_MODE` | `mock` | `mock` for simulated trading, `live` for real execution |
+| `DATABASE_PATH` | `./data/pmtrader.db` | SQLite database location |
+| `REDIS_URL` | `redis://localhost:6379/0` | Redis connection for signal queue |
+| `KELLY_FRACTION` | `0.25` | Fractional Kelly multiplier for position sizing |
+| `MAX_POSITION_USD` | `100` | Maximum position size per trade |
+| `DAILY_LOSS_LIMIT_USD` | `50` | Daily loss circuit breaker |
+| `MIN_SPREAD_THRESHOLD` | `0.03` | Minimum spread to trigger a violation |
+
+## Project Structure
 
 ```
 prediction-market/
 ├── core/
-│   ├── __init__.py
 │   ├── config.py              # Configuration management
-│   ├── events/
-│   │   ├── __init__.py
-│   │   ├── types.py          # Event dataclasses
-│   │   └── bus.py            # Event bus implementation
-│   └── storage/
-│       ├── __init__.py
-│       ├── db.py             # Database wrapper
-│       ├── migrations/
-│       │   ├── 001_initial.sql
-│       │   └── 002_add_model_versions.sql
-│       └── queries/
-│           ├── __init__.py
-│           ├── markets.py
-│           ├── violations.py
-│           ├── signals.py
-│           ├── positions.py
-│           └── pnl.py
-├── data/                      # SQLite database (created on init)
-├── example_usage.py          # Complete usage example
-├── requirements.txt
-└── README.md
+│   ├── analytics.py           # Post-trade analytics engine
+│   ├── main.py                # Core service entry point
+│   ├── constraints/           # Constraint engine (4 rules + fees)
+│   ├── events/                # Async event bus
+│   ├── ingestor/              # Market data pollers
+│   ├── matching/              # Market pair discovery
+│   ├── models/                # Prediction models (FOMC, CPI, calibration)
+│   ├── signals/               # Signal generation, risk, sizing
+│   └── storage/               # Database, migrations, query modules
+├── execution/
+│   ├── main.py                # Execution service entry point
+│   ├── handler.py             # Signal processing
+│   ├── router.py              # Order routing with retry logic
+│   ├── state.py               # In-memory position management
+│   ├── models.py              # Shared Pydantic models
+│   └── clients/               # Platform clients (polymarket, kalshi, mock)
+├── scripts/
+│   ├── run_mock_session.py    # Full lifecycle mock harness
+│   ├── dashboard.py           # Analytics dashboard CLI
+│   ├── export_analytics.py    # CSV export utility
+│   ├── backfill_prices.py     # Historical price backfill
+│   ├── seed_pairs.py          # Market pair seeding
+│   └── validate_pairs.py      # Pair validation
+├── tests/
+│   ├── unit/                  # Unit tests (constraints, matching, models, risk, sizing)
+│   └── integration/           # Integration tests (execution, ingestor, signal flow)
+├── config/
+│   └── settings.example.env   # Example environment configuration
+└── ROADMAP.md                 # Planned features and improvements
 ```
 
-## Design Decisions
+## Testing
 
-1. **SQLite over PostgreSQL**: Simpler deployment, ACID guarantees, WAL mode provides concurrency
-2. **Event Bus Pattern**: Decouples strategies from execution; supports testing and monitoring
-3. **Async/await**: Handles I/O-bound operations efficiently; scales to 10k+ concurrent positions
-4. **Single-Writer Pattern**: Prevents race conditions while allowing concurrent reads
-5. **Dataclass Events**: Type-safe, immutable event records with zero serialization overhead
-6. **Environment-based Config**: Supports dev/test/prod separation without code changes
-
-## Future Enhancements
-
-- [ ] Redis-backed event queue for distributed processing
-- [ ] Connection pooling for concurrent database access
-- [ ] Event persistence for crash recovery
-- [ ] Distributed tracing for transaction tracking
-- [ ] Metrics export to Prometheus
-- [ ] Webhook support for external integrations
-- [ ] Event filtering and aggregation
-- [ ] Automatic backup and archival policies
+144 tests across unit and integration suites:
+```bash
+pytest tests/ -v                    # All tests
+pytest tests/unit/ -v               # Unit tests only
+pytest tests/integration/ -v        # Integration tests only
+```
 
 ## License
 
-Proprietary - Prediction Market Trading System Foundation
+MIT
