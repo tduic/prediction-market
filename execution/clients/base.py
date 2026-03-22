@@ -68,6 +68,7 @@ class BaseExecutionClient:
         leg: OrderLeg,
         result: OrderResult,
         signal_id: str | None = None,
+        strategy: str | None = None,
     ) -> None:
         """
         Write an order record to the orders table.
@@ -87,7 +88,7 @@ class BaseExecutionClient:
                     status, failure_reason,
                     retry_count, submitted_at,
                     filled_at, submission_latency_ms, fill_latency_ms,
-                    updated_at
+                    strategy, updated_at
                 ) VALUES (
                     ?, ?, ?, ?,
                     ?, ?, ?,
@@ -96,7 +97,7 @@ class BaseExecutionClient:
                     ?, ?,
                     0, ?,
                     ?, ?, ?,
-                    ?
+                    ?, ?
                 )
                 """,
                 (
@@ -119,6 +120,7 @@ class BaseExecutionClient:
                     now if result.filled_price else None,
                     result.submission_latency_ms,
                     result.fill_latency_ms,
+                    strategy,
                     now,
                 ),
             )

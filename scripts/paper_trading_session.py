@@ -1240,8 +1240,12 @@ class ArbitrageEngine:
             limit_price=sell_price,
             order_type="LIMIT",
         )
-        buy_result = await buy_client.submit_order(buy_leg, signal_id=signal_id)
-        sell_result = await sell_client.submit_order(sell_leg, signal_id=signal_id)
+        buy_result = await buy_client.submit_order(
+            buy_leg, signal_id=signal_id, strategy=strategy
+        )
+        sell_result = await sell_client.submit_order(
+            sell_leg, signal_id=signal_id, strategy=strategy
+        )
 
         if buy_result.filled_price and sell_result.filled_price:
             actual_spread = sell_result.filled_price - buy_result.filled_price
@@ -1544,8 +1548,12 @@ async def detect_violations_and_trade(
             order_type="LIMIT",
         )
 
-        buy_result = await buy_client.submit_order(buy_leg, signal_id=signal_id)
-        sell_result = await sell_client.submit_order(sell_leg, signal_id=signal_id)
+        buy_result = await buy_client.submit_order(
+            buy_leg, signal_id=signal_id, strategy=strategy
+        )
+        sell_result = await sell_client.submit_order(
+            sell_leg, signal_id=signal_id, strategy=strategy
+        )
 
         # Record position and trade outcome
         if buy_result.filled_price and sell_result.filled_price:
@@ -1833,7 +1841,9 @@ async def detect_single_platform_opportunities(
             limit_price=price,
             order_type="LIMIT",
         )
-        result = await paper_client.submit_order(leg, signal_id=signal_id)
+        result = await paper_client.submit_order(
+            leg, signal_id=signal_id, strategy=strategy
+        )
 
         if result.filled_price:
             # Simulate close at edge-adjusted price

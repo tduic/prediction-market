@@ -399,7 +399,9 @@ class MockExecutionClient:
         except Exception:
             return None
 
-    async def _write_order_to_db(self, leg: OrderLeg, result: MockOrderResult) -> None:
+    async def _write_order_to_db(
+        self, leg: OrderLeg, result: MockOrderResult, strategy: str | None = None
+    ) -> None:
         """Write the mock order to the orders table."""
         now = int(time.time())
         try:
@@ -413,7 +415,7 @@ class MockExecutionClient:
                     status, failure_reason,
                     retry_count, submitted_at,
                     filled_at, submission_latency_ms, fill_latency_ms,
-                    updated_at
+                    strategy, updated_at
                 ) VALUES (
                     ?, NULL, ?, ?,
                     ?, ?, ?,
@@ -422,7 +424,7 @@ class MockExecutionClient:
                     ?, ?,
                     0, ?,
                     ?, ?, ?,
-                    ?
+                    ?, ?
                 )
                 """,
                 (
@@ -444,6 +446,7 @@ class MockExecutionClient:
                     now if result.filled_price else None,
                     result.submission_latency_ms,
                     result.fill_latency_ms,
+                    strategy,
                     now,
                 ),
             )

@@ -164,6 +164,12 @@ class AnalyticsExporter:
         pnl_file = output_path / "pnl_snapshots.csv"
         results["pnl_snapshots"] = await self.export_pnl_snapshots(str(pnl_file))
 
+        # Export per-strategy PnL snapshots
+        strategy_pnl_file = output_path / "strategy_pnl_snapshots.csv"
+        results["strategy_pnl_snapshots"] = await self.export_table_to_csv(
+            "strategy_pnl_snapshots", str(strategy_pnl_file)
+        )
+
         # Export violations summary
         violations_file = output_path / "violations_summary.csv"
         results["violations_summary"] = await self.export_violations_summary(

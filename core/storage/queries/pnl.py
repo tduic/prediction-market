@@ -427,3 +427,96 @@ async def get_hourly_pnl_series(
     """
 
     return await db.fetch_all(sql, (hours,))
+
+
+# ── Normalized strategy PnL snapshots ─────────────────────────────────
+
+
+async def insert_strategy_pnl_snapshots(
+    db: Database,
+    snapshot_id: int,
+    strategy_pnls: list[dict[str, Any]],
+) -> None:
+    """
+    Insert per-strategy PnL rows for a given snapshot.
+
+    Args:
+        db: Database instance
+        snapshot_id: The parent pnl_snapshots.id
+        strategy_pnls: List of dicts with keys:
+            strategy, realized_pnl, unrealized_pnl, fees, trade_count, win_count
+    """
+    sql = """
+    INSERT INTO strategy_pnl_snapshots
+        (snapshot_id, strategy, realized_pnl, unrealized_pnl, fees, trade_count, win_count)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+    """
+    for sp in strategy_pnls:
+        await db.execute(
+            sql,
+            (
+                snapshot_id,
+                sp["strategy"],
+                sp.get("realized_pnl", 0),
+                sp.get("unrealized_pnl", 0),
+                sp.get("fees", 0),
+                sp.get("trade_count", 0),
+                sp.get("win_count", 0),
+            ),
+        )
+
+
+async def get_strategy_pnl_snapshots(
+    db: Database,
+    snapshot_id: int | None = None,
+    strategy: str | None = None,
+    days: int = 7,
+    limit: int = 500,
+) -> list[dict[str, Any]]:
+    """
+    Get per-strategy PnL snapshot rows.
+
+    Can filter by snapshot_id (single snapshot) or by strategy over time.
+
+    Args:
+        db: Database instance
+        snapshot_id: Optional specific snapshot ID
+        strategy: Optional strategy filter
+        days: Look back this many days (used with strategy filter)
+        limit: Maximum results
+
+    Returns:
+        List of strategy_pnl_snapshots rows joined with snapshot timestamp
+    """
+    if snapshot_id is not None:
+        sql = """
+        SELECT sp.*, ps.snapshotted_at
+        FROM strategy_pnl_snapshots sp
+        JOIN pnl_snapshots ps ON ps.id = sp.snapshot_id
+        WHERE sp.snapshot_id = ?
+        ORDER BY sp.strategy
+        """
+        return await db.fetch_all(sql, (snapshot_id,))
+
+    if strategy is not None:
+        sql = """
+        SELECT sp.*, ps.snapshotted_at
+        FROM strategy_pnl_snapshots sp
+        JOIN pnl_snapshots ps ON ps.id = sp.snapshot_id
+        WHERE sp.strategy = ?
+        AND datetime(ps.snapshotted_at) > datetime('now', '-' || ? || ' days')
+        ORDER BY ps.snapshotted_at DESC
+        LIMIT ?
+        """
+        return await db.fetch_all(sql, (strategy, days, limit))
+
+    # All strategies, recent snapshots
+    sql = """
+    SELECT sp.*, ps.snapshotted_at
+    FROM strategy_pnl_snapshots sp
+    JOIN pnl_snapshots ps ON ps.id = sp.snapshot_id
+    WHERE datetime(ps.snapshotted_at) > datetime('now', '-' || ? || ' days')
+    ORDER BY ps.snapshotted_at DESC, sp.strategy
+    LIMIT ?
+    """
+    return await db.fetch_all(sql, (days, limit))

@@ -74,7 +74,10 @@ class PaperExecutionClient(BaseExecutionClient):
             return None
 
     async def submit_order(
-        self, leg: OrderLeg, signal_id: str | None = None
+        self,
+        leg: OrderLeg,
+        signal_id: str | None = None,
+        strategy: str | None = None,
     ) -> OrderResult:
         """
         Simulate order submission using real market prices.
@@ -113,7 +116,9 @@ class PaperExecutionClient(BaseExecutionClient):
                     submission_latency_ms=submission_latency_ms,
                     error_message="No market price available",
                 )
-                await self.write_order(leg, result, signal_id=signal_id)
+                await self.write_order(
+                    leg, result, signal_id=signal_id, strategy=strategy
+                )
                 return result
 
         # For limit orders, check if price is executable
@@ -126,7 +131,9 @@ class PaperExecutionClient(BaseExecutionClient):
                     submission_latency_ms=submission_latency_ms,
                     error_message=f"Market price {market_price:.4f} above limit {leg.limit_price:.4f}",
                 )
-                await self.write_order(leg, result, signal_id=signal_id)
+                await self.write_order(
+                    leg, result, signal_id=signal_id, strategy=strategy
+                )
                 return result
             if leg.side.upper() == "SELL" and market_price < leg.limit_price:
                 result = OrderResult(
@@ -136,7 +143,9 @@ class PaperExecutionClient(BaseExecutionClient):
                     submission_latency_ms=submission_latency_ms,
                     error_message=f"Market price {market_price:.4f} below limit {leg.limit_price:.4f}",
                 )
-                await self.write_order(leg, result, signal_id=signal_id)
+                await self.write_order(
+                    leg, result, signal_id=signal_id, strategy=strategy
+                )
                 return result
 
         # Simulate fill latency (no actual sleep — just record the number)
@@ -167,7 +176,7 @@ class PaperExecutionClient(BaseExecutionClient):
             slippage=round(slippage, 4),
         )
 
-        await self.write_order(leg, result, signal_id=signal_id)
+        await self.write_order(leg, result, signal_id=signal_id, strategy=strategy)
         await self.write_fill_event(result)
 
         logger.info(

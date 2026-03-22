@@ -655,8 +655,9 @@ async def execute_signals(
             (id, signal_id, platform, platform_order_id, market_id, side,
              order_type, requested_price, requested_size, filled_price,
              filled_size, slippage, fee_paid, status, submitted_at,
-             filled_at, submission_latency_ms, fill_latency_ms, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             filled_at, submission_latency_ms, fill_latency_ms,
+             strategy, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 order_id_1,
@@ -677,6 +678,7 @@ async def execute_signals(
                 now_utc(),
                 100,
                 200,
+                strategy,
                 now_utc(),
             ),
         )
@@ -693,8 +695,9 @@ async def execute_signals(
             (id, signal_id, platform, platform_order_id, market_id, side,
              order_type, requested_price, requested_size, filled_price,
              filled_size, slippage, fee_paid, status, submitted_at,
-             filled_at, submission_latency_ms, fill_latency_ms, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             filled_at, submission_latency_ms, fill_latency_ms,
+             strategy, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 order_id_2,
@@ -715,6 +718,7 @@ async def execute_signals(
                 now_utc(),
                 100,
                 200,
+                strategy,
                 now_utc(),
             ),
         )
@@ -952,7 +956,7 @@ async def take_pnl_snapshot(db: aiosqlite.Connection) -> None:
     total_capital = 100000.0
     cash = total_capital - (unrealized_pnl if unrealized_pnl > 0 else 0)
 
-    await db.execute(
+    cursor = await db.execute(
         """
         INSERT INTO pnl_snapshots
         (snapshot_type, total_capital, cash, open_positions_count,
@@ -975,6 +979,28 @@ async def take_pnl_snapshot(db: aiosqlite.Connection) -> None:
             now_utc(),
         ),
     )
+    snapshot_id = cursor.lastrowid
+
+    # Write per-strategy PnL to normalized table
+    strategy_cursor = await db.execute("""
+        SELECT
+            strategy,
+            SUM(CASE WHEN status = 'closed' THEN realized_pnl ELSE 0 END) as realized,
+            SUM(CASE WHEN status = 'open' THEN unrealized_pnl ELSE 0 END) as unrealized,
+            SUM(fees_paid) as fees,
+            COUNT(*) as trade_count,
+            SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as win_count
+        FROM positions
+        GROUP BY strategy
+    """)
+    strategy_rows = await strategy_cursor.fetchall()
+    for srow in strategy_rows:
+        await db.execute(
+            """INSERT INTO strategy_pnl_snapshots
+               (snapshot_id, strategy, realized_pnl, unrealized_pnl, fees, trade_count, win_count)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (snapshot_id, srow[0], srow[1], srow[2], srow[3], srow[4], srow[5]),
+        )
 
     await db.commit()
     logger.info(

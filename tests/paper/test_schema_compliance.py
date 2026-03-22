@@ -175,13 +175,15 @@ class TestOrdersInsert:
                 filled_price, filled_size, slippage, fee_paid,
                 status, failure_reason,
                 retry_count, submitted_at, filled_at,
-                submission_latency_ms, fill_latency_ms, updated_at)
+                submission_latency_ms, fill_latency_ms,
+                strategy, updated_at)
                VALUES (?, ?, 'paper_polymarket', ?,
                        ?, 'buy', 'limit',
                        0.55, 5.0,
                        0.50, 5.0, 0.05, 0.05,
                        'filled', NULL,
-                       0, ?, ?, 150, 300, ?)""",
+                       0, ?, ?, 150, 300,
+                       'P1_cross_market_arb', ?)""",
             (order_id, signal_id, order_id, "o_mkt", now, now, now),
         )
         await db.commit()
@@ -189,6 +191,71 @@ class TestOrdersInsert:
         cursor = await db.execute("SELECT * FROM orders WHERE id = ?", (order_id,))
         row = await cursor.fetchone()
         assert row is not None
+
+    async def test_order_strategy_column(self, db):
+        """orders.strategy column stores and retrieves correctly."""
+        now = datetime.now(timezone.utc).isoformat()
+        await _insert_market(db, "strat_mkt")
+
+        signal_id = f"sig_{uuid.uuid4().hex[:12]}"
+        await db.execute(
+            """INSERT INTO signals
+               (id, strategy, signal_type, market_id_a,
+                model_edge, kelly_fraction, position_size_a, total_capital_at_risk,
+                status, fired_at, updated_at)
+               VALUES (?, 'P3_calibration_bias', 'single', ?, 0.08, 0.15, 5.0, 5.0, 'fired', ?, ?)""",
+            (signal_id, "strat_mkt", now, now),
+        )
+
+        order_id = f"PAPER-{uuid.uuid4().hex[:12]}"
+        await db.execute(
+            """INSERT INTO orders
+               (id, signal_id, platform, market_id, side, order_type,
+                requested_size, status, submitted_at, strategy, updated_at)
+               VALUES (?, ?, 'paper_kalshi', ?, 'buy', 'limit',
+                       5.0, 'filled', ?, 'P3_calibration_bias', ?)""",
+            (order_id, signal_id, "strat_mkt", now, now),
+        )
+        await db.commit()
+
+        cursor = await db.execute(
+            "SELECT strategy FROM orders WHERE id = ?", (order_id,)
+        )
+        row = await cursor.fetchone()
+        assert row is not None
+        assert row[0] == "P3_calibration_bias"
+
+    async def test_order_strategy_nullable(self, db):
+        """orders.strategy is nullable for backward compat."""
+        now = datetime.now(timezone.utc).isoformat()
+        await _insert_market(db, "null_mkt")
+
+        signal_id = f"sig_{uuid.uuid4().hex[:12]}"
+        await db.execute(
+            """INSERT INTO signals
+               (id, strategy, signal_type, market_id_a,
+                model_edge, kelly_fraction, position_size_a, total_capital_at_risk,
+                status, fired_at, updated_at)
+               VALUES (?, 'P1', 'arb', ?, 0.05, 0.10, 5.0, 10.0, 'fired', ?, ?)""",
+            (signal_id, "null_mkt", now, now),
+        )
+
+        order_id = f"PAPER-{uuid.uuid4().hex[:12]}"
+        await db.execute(
+            """INSERT INTO orders
+               (id, signal_id, platform, market_id, side, order_type,
+                requested_size, status, submitted_at, updated_at)
+               VALUES (?, ?, 'paper', ?, 'buy', 'limit', 5.0, 'pending', ?, ?)""",
+            (order_id, signal_id, "null_mkt", now, now),
+        )
+        await db.commit()
+
+        cursor = await db.execute(
+            "SELECT strategy FROM orders WHERE id = ?", (order_id,)
+        )
+        row = await cursor.fetchone()
+        assert row is not None
+        assert row[0] is None
 
     async def test_order_fk_to_signal(self, db):
         """orders.signal_id must reference signals.id."""
@@ -281,11 +348,95 @@ class TestTradeOutcomesInsert:
 
 
 @pytest.mark.asyncio
+class TestStrategyPnlSnapshotsInsert:
+    """Test the normalized strategy_pnl_snapshots table."""
+
+    async def test_insert_strategy_pnl_snapshot(self, db):
+        """strategy_pnl_snapshots INSERT matches schema."""
+        now = datetime.now(timezone.utc).isoformat()
+
+        # Create parent pnl_snapshot
+        cursor = await db.execute(
+            """INSERT INTO pnl_snapshots
+               (snapshot_type, total_capital, cash, open_positions_count, snapshotted_at)
+               VALUES ('scheduled', 100000, 95000, 5, ?)""",
+            (now,),
+        )
+        snapshot_id = cursor.lastrowid
+        assert snapshot_id is not None
+
+        # Insert per-strategy rows
+        await db.execute(
+            """INSERT INTO strategy_pnl_snapshots
+               (snapshot_id, strategy, realized_pnl, unrealized_pnl, fees, trade_count, win_count)
+               VALUES (?, 'P1_cross_market_arb', 150.50, 25.00, 12.50, 20, 14)""",
+            (snapshot_id,),
+        )
+        await db.execute(
+            """INSERT INTO strategy_pnl_snapshots
+               (snapshot_id, strategy, realized_pnl, unrealized_pnl, fees, trade_count, win_count)
+               VALUES (?, 'P3_calibration_bias', -30.00, 10.00, 8.00, 10, 3)""",
+            (snapshot_id,),
+        )
+        await db.commit()
+
+        cursor = await db.execute(
+            "SELECT COUNT(*) FROM strategy_pnl_snapshots WHERE snapshot_id = ?",
+            (snapshot_id,),
+        )
+        row = await cursor.fetchone()
+        assert row[0] == 2
+
+    async def test_strategy_pnl_fk_to_snapshots(self, db):
+        """strategy_pnl_snapshots.snapshot_id must reference pnl_snapshots.id."""
+        with pytest.raises(Exception):
+            await db.execute(
+                """INSERT INTO strategy_pnl_snapshots
+                   (snapshot_id, strategy, realized_pnl)
+                   VALUES (99999, 'P1_cross_market_arb', 100.0)""",
+            )
+
+    async def test_strategy_pnl_query_by_strategy(self, db):
+        """Can query strategy_pnl_snapshots filtered by strategy."""
+        now = datetime.now(timezone.utc).isoformat()
+
+        cursor = await db.execute(
+            """INSERT INTO pnl_snapshots
+               (snapshot_type, total_capital, cash, open_positions_count, snapshotted_at)
+               VALUES ('scheduled', 100000, 95000, 5, ?)""",
+            (now,),
+        )
+        snapshot_id = cursor.lastrowid
+
+        strategies = [
+            "P1_cross_market_arb",
+            "P3_calibration_bias",
+            "P4_liquidity_timing",
+        ]
+        for strat in strategies:
+            await db.execute(
+                """INSERT INTO strategy_pnl_snapshots
+                   (snapshot_id, strategy, realized_pnl, trade_count)
+                   VALUES (?, ?, 50.0, 10)""",
+                (snapshot_id, strat),
+            )
+        await db.commit()
+
+        cursor = await db.execute(
+            "SELECT * FROM strategy_pnl_snapshots WHERE strategy = ?",
+            ("P3_calibration_bias",),
+        )
+        rows = await cursor.fetchall()
+        assert len(rows) == 1
+        assert rows[0]["strategy"] == "P3_calibration_bias"
+
+
+@pytest.mark.asyncio
 class TestFullCascade:
     """Test the full FK chain: market_pairs → violations → signals → orders."""
 
     async def test_full_chain_succeeds(self, db):
-        """All 4 levels of the FK chain insert successfully."""
+        """All 4 levels of the FK chain insert successfully, with strategy on orders."""
         now = datetime.now(timezone.utc).isoformat()
         await _insert_market(db, "chain_a")
         await _insert_market(db, "chain_b", "kalshi")
@@ -328,11 +479,13 @@ class TestFullCascade:
                 requested_price, requested_size,
                 filled_price, filled_size, slippage, fee_paid,
                 status, retry_count, submitted_at, filled_at,
-                submission_latency_ms, fill_latency_ms, updated_at)
+                submission_latency_ms, fill_latency_ms,
+                strategy, updated_at)
                VALUES (?, ?, 'paper_polymarket', ?,
                        ?, 'buy', 'limit',
                        0.50, 5.0, 0.45, 5.0, 0.05, 0.05,
-                       'filled', 0, ?, ?, 150, 300, ?)""",
+                       'filled', 0, ?, ?, 150, 300,
+                       'P1_cross_market_arb', ?)""",
             (order_id, signal_id, order_id, "chain_a", now, now, now),
         )
         await db.commit()
@@ -349,3 +502,10 @@ class TestFullCascade:
             )
             row = await cursor.fetchone()
             assert row[0] == 1, f"Missing row in {table}"
+
+        # Verify strategy on order
+        cursor = await db.execute(
+            "SELECT strategy FROM orders WHERE id = ?", (order_id,)
+        )
+        row = await cursor.fetchone()
+        assert row[0] == "P1_cross_market_arb"
