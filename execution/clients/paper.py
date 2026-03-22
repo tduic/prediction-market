@@ -8,7 +8,6 @@ for fill simulation, producing analytics identical to live mode.
 Enable via: EXECUTION_MODE=paper
 """
 
-import asyncio
 import logging
 import random
 import time
@@ -74,7 +73,9 @@ class PaperExecutionClient(BaseExecutionClient):
         except Exception:
             return None
 
-    async def submit_order(self, leg: OrderLeg) -> OrderResult:
+    async def submit_order(
+        self, leg: OrderLeg, signal_id: str | None = None
+    ) -> OrderResult:
         """
         Simulate order submission using real market prices.
 
@@ -82,13 +83,11 @@ class PaperExecutionClient(BaseExecutionClient):
         price from the database, with realistic latency and fee calculation.
         """
         self.total_submitted += 1
-        start_time = time.time()
         order_id = f"PAPER-{self.platform_label}-{uuid.uuid4().hex[:12]}"
 
-        # Simulate submission latency
+        # Simulate submission latency (no actual sleep — just record the number)
         latency_ms = random.randint(self.min_latency_ms, self.max_latency_ms)
-        await asyncio.sleep(latency_ms / 1000.0)
-        submission_latency_ms = int((time.time() - start_time) * 1000)
+        submission_latency_ms = latency_ms
 
         logger.info(
             "[PAPER] Order submitted: %s | market=%s side=%s size=%.2f price=%s",
@@ -114,7 +113,7 @@ class PaperExecutionClient(BaseExecutionClient):
                     submission_latency_ms=submission_latency_ms,
                     error_message="No market price available",
                 )
-                await self.write_order(leg, result)
+                await self.write_order(leg, result, signal_id=signal_id)
                 return result
 
         # For limit orders, check if price is executable
@@ -127,7 +126,7 @@ class PaperExecutionClient(BaseExecutionClient):
                     submission_latency_ms=submission_latency_ms,
                     error_message=f"Market price {market_price:.4f} above limit {leg.limit_price:.4f}",
                 )
-                await self.write_order(leg, result)
+                await self.write_order(leg, result, signal_id=signal_id)
                 return result
             if leg.side.upper() == "SELL" and market_price < leg.limit_price:
                 result = OrderResult(
@@ -137,14 +136,13 @@ class PaperExecutionClient(BaseExecutionClient):
                     submission_latency_ms=submission_latency_ms,
                     error_message=f"Market price {market_price:.4f} below limit {leg.limit_price:.4f}",
                 )
-                await self.write_order(leg, result)
+                await self.write_order(leg, result, signal_id=signal_id)
                 return result
 
-        # Simulate fill
+        # Simulate fill latency (no actual sleep — just record the number)
         fill_latency_ms = random.randint(
             self.min_fill_latency_ms, self.max_fill_latency_ms
         )
-        await asyncio.sleep(fill_latency_ms / 1000.0)
 
         filled_price = market_price
         filled_size = leg.size
@@ -169,7 +167,7 @@ class PaperExecutionClient(BaseExecutionClient):
             slippage=round(slippage, 4),
         )
 
-        await self.write_order(leg, result)
+        await self.write_order(leg, result, signal_id=signal_id)
         await self.write_fill_event(result)
 
         logger.info(

@@ -122,7 +122,7 @@ class BaseExecutionClient:
                     now,
                 ),
             )
-            await self.db.commit()
+            # Note: caller is responsible for committing in batches
         except Exception as e:
             logger.error("Failed to write order to DB: %s", e, exc_info=True)
 
@@ -149,7 +149,7 @@ class BaseExecutionClient:
                     now,
                 ),
             )
-            await self.db.commit()
+            # Note: caller is responsible for committing in batches
         except Exception as e:
             logger.error("Failed to write fill event to DB: %s", e, exc_info=True)
 

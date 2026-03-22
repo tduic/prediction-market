@@ -8,20 +8,18 @@ import logging
 from datetime import datetime
 from uuid import uuid4
 
-from core import Config, get_config, Database, EventBus
+from core import get_config, Database, EventBus
 from core.events import (
     MarketUpdated,
     ViolationDetected,
     SignalFired,
-    OrderSubmitted,
     PnLSnapshot,
 )
 from core.storage import queries
 
 # Configure logging
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
 
@@ -51,8 +49,7 @@ async def main():
     print("=" * 80)
 
     db = Database(
-        config.database.database_path,
-        migrations_dir="./core/storage/migrations"
+        config.database.database_path, migrations_dir="./core/storage/migrations"
     )
 
     try:
@@ -95,9 +92,15 @@ async def main():
     await event_bus.subscribe(ViolationDetected, on_violation_detected)
     await event_bus.subscribe(SignalFired, on_signal_fired)
 
-    print(f"✓ Event bus configured with {event_bus.get_subscriber_count(MarketUpdated)} market subscribers")
-    print(f"✓ Event bus configured with {event_bus.get_subscriber_count(ViolationDetected)} violation subscribers")
-    print(f"✓ Event bus configured with {event_bus.get_subscriber_count(SignalFired)} signal subscribers")
+    print(
+        f"✓ Event bus configured with {event_bus.get_subscriber_count(MarketUpdated)} market subscribers"
+    )
+    print(
+        f"✓ Event bus configured with {event_bus.get_subscriber_count(ViolationDetected)} violation subscribers"
+    )
+    print(
+        f"✓ Event bus configured with {event_bus.get_subscriber_count(SignalFired)} signal subscribers"
+    )
 
     await event_bus.start()
     print("✓ Event bus started")
@@ -197,11 +200,21 @@ async def main():
         similarity_score, match_method, verified, created_at, updated_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """
-    await db.execute(pair_insert_sql, (
-        pair_id, market_id_a, market_id_b, "identical_question",
-        "same_market_cross_platform", 0.95, "semantic_similarity", 1,
-        datetime.utcnow().isoformat(), datetime.utcnow().isoformat()
-    ))
+    await db.execute(
+        pair_insert_sql,
+        (
+            pair_id,
+            market_id_a,
+            market_id_b,
+            "identical_question",
+            "same_market_cross_platform",
+            0.95,
+            "semantic_similarity",
+            1,
+            datetime.utcnow().isoformat(),
+            datetime.utcnow().isoformat(),
+        ),
+    )
 
     # Insert violation
     raw_spread = abs(0.52 - 0.53)
@@ -396,11 +409,11 @@ async def main():
     )
 
     print(f"✓ PnL snapshot {snapshot_id} recorded")
-    print(f"  Total Capital: $10,000.00")
-    print(f"  Cash: $9,800.00")
-    print(f"  Open Positions: 1")
-    print(f"  Unrealized PnL: $1.40")
-    print(f"  Fees (today): $1.03")
+    print("  Total Capital: $10,000.00")
+    print("  Cash: $9,800.00")
+    print("  Open Positions: 1")
+    print("  Unrealized PnL: $1.40")
+    print("  Fees (today): $1.03")
 
     # Publish snapshot event
     await event_bus.publish(

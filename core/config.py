@@ -91,12 +91,12 @@ class ConstraintEngineConfig:
 
     min_net_spread_single_platform: float = field(
         default_factory=lambda: float(
-            os.getenv("MIN_NET_SPREAD_SINGLE_PLATFORM", "0.02")
+            os.getenv("MIN_NET_SPREAD_SINGLE_PLATFORM", "0.03")
         )
     )
     min_net_spread_cross_platform: float = field(
         default_factory=lambda: float(
-            os.getenv("MIN_NET_SPREAD_CROSS_PLATFORM", "0.03")
+            os.getenv("MIN_NET_SPREAD_CROSS_PLATFORM", "0.04")
         )
     )
     fee_rate_polymarket: float = field(

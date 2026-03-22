@@ -383,7 +383,7 @@ class TradeLifecycleManager:
             for row in closed_rows:
                 closed_dict = dict(zip(cols, row))
                 strategy = closed_dict["strategy"]
-                realized_pnl = closed_dict["realized_pnl"]
+                realized_pnl = closed_dict["actual_pnl"]
 
                 realized_pnl_today += realized_pnl
                 if strategy in strategy_pnl:
@@ -513,7 +513,7 @@ class StrategyScorecard:
             # Build query
             base_query = """
                 SELECT
-                    id, realized_pnl, fees_total, edge_captured_pct,
+                    id, actual_pnl, fees_total, edge_captured_pct,
                     signal_to_fill_ms, created_at
                 FROM trade_outcomes
                 WHERE created_at > ?
@@ -549,10 +549,10 @@ class StrategyScorecard:
 
             # Compute metrics
             total_trades = len(trades)
-            win_count = sum(1 for t in trades if t["realized_pnl"] > 0)
+            win_count = sum(1 for t in trades if t["actual_pnl"] > 0)
             win_rate = (win_count / total_trades * 100) if total_trades > 0 else 0.0
 
-            pnl_values = [t["realized_pnl"] for t in trades]
+            pnl_values = [t["actual_pnl"] for t in trades]
             total_pnl = sum(pnl_values)
             avg_pnl = total_pnl / total_trades if total_trades > 0 else 0.0
 
@@ -636,7 +636,7 @@ class StrategyScorecard:
         try:
             cursor = await self.db.execute(
                 """
-                SELECT DATE(resolved_at) as date, realized_pnl
+                SELECT DATE(resolved_at) as date, actual_pnl
                 FROM trade_outcomes
                 WHERE resolved_at > ?
                 ORDER BY date ASC

@@ -73,6 +73,7 @@ Order routing with platform-specific clients:
 
 - **Polymarket client** – CLOB API via `py-clob-client` with two-stage authentication (credential derivation → signed order submission)
 - **Kalshi client** – REST API with RSA-PSS (SHA-256) authentication, matching the production Kalshi API
+- **Paper client** – Executes against real market prices without placing orders; identical DB writes to live mode for analytics
 - **Mock client** – Simulates realistic fills with configurable latency, slippage, partial fills, and rejection rates
 - **Order router** – Routes signal legs to the correct platform, handles retries with exponential backoff
 - **Position state manager** – In-memory position tracking with periodic database flush
@@ -132,7 +133,33 @@ cp config/settings.example.env .env
 # Edit .env with your API credentials (EXECUTION_MODE=mock for testing)
 ```
 
-### Run a Mock Session
+### Paper Trading Session
+
+The paper trading system fetches real markets from Polymarket (~35k) and Kalshi (~30k), matches identical events across platforms, and executes simulated trades with full analytics.
+
+```bash
+# First run: fetch all markets, match across platforms, persist matches, trade once
+python scripts/paper_trading_session.py --refresh
+
+# Subsequent runs: use cached matches, trade once using stored prices
+python scripts/paper_trading_session.py --once
+
+# Continuous mode: cached matches + websocket price streaming, trades every 30s
+python scripts/paper_trading_session.py --stream
+
+# With options
+python scripts/paper_trading_session.py --stream --interval 15 --min-spread 0.05
+```
+
+| Flag | Description |
+|------|-------------|
+| `--refresh` | Fetch all markets from both exchanges, run matcher, persist matched pairs to DB. Slow (~30s) but only needed to discover new matches. |
+| `--once` | Load cached matches from DB, run one trading cycle, exit. Auto-refreshes if no cached matches exist. |
+| `--stream` | Load cached matches, open websocket connections for real-time prices, run trading cycles continuously until Ctrl+C. |
+| `--interval N` | Seconds between trading cycles in stream mode (default: 30). |
+| `--min-spread X` | Minimum price spread to trigger a trade (default: 0.03). |
+
+### Mock Session (Synthetic Data)
 ```bash
 python scripts/run_mock_session.py --db-path prediction_market.db --num-markets 20 --num-violations 15 --verbose
 ```
@@ -199,7 +226,8 @@ prediction-market/
 │   ├── models.py              # Shared Pydantic models
 │   └── clients/               # Platform clients (polymarket, kalshi, mock)
 ├── scripts/
-│   ├── run_mock_session.py    # Full lifecycle mock harness
+│   ├── paper_trading_session.py # Paper trading with real market data + websocket streaming
+│   ├── run_mock_session.py    # Full lifecycle mock harness (synthetic data)
 │   ├── dashboard.py           # Analytics dashboard CLI
 │   ├── export_analytics.py    # CSV export utility
 │   ├── backfill_prices.py     # Historical price backfill

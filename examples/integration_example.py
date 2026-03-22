@@ -16,11 +16,9 @@ from core.constraints.fees import FeeConfig
 from core.matching import MarketPairCurator, MarketEmbedder
 from core.matching.rules import match_by_rules
 
-
 # Configure logging
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
 
@@ -65,7 +63,8 @@ class MockDatabase:
     async def get_pairs_for_market(self, market_id: str) -> List[MarketPair]:
         """Get pairs for a market."""
         return [
-            pair for pair in self.pairs.values()
+            pair
+            for pair in self.pairs.values()
             if pair.market_id_a == market_id or pair.market_id_b == market_id
         ]
 
@@ -79,30 +78,25 @@ class MockDatabase:
         similarity_score: float,
         is_active: bool,
         created_by: str,
-        created_at: datetime
+        created_at: datetime,
     ) -> str:
         """Insert a market pair."""
         pair_id = f"pair_{len(self.pairs) + 1}"
         # Would store to database in production
         return pair_id
 
-    async def get_active_market_pairs(
-        self,
-        pair_type: str = None
-    ) -> List[MarketPair]:
+    async def get_active_market_pairs(self, pair_type: str = None) -> List[MarketPair]:
         """Get active pairs."""
         pairs = [p for p in self.pairs.values() if p.is_active]
         if pair_type:
             pairs = [p for p in pairs if p.pair_type == pair_type]
         return pairs
 
-    async def get_market_pairs_by_market_id(
-        self,
-        market_id: str
-    ) -> List[MarketPair]:
+    async def get_market_pairs_by_market_id(self, market_id: str) -> List[MarketPair]:
         """Get pairs for a market."""
         return [
-            p for p in self.pairs.values()
+            p
+            for p in self.pairs.values()
             if p.market_id_a == market_id or p.market_id_b == market_id
         ]
 
@@ -121,17 +115,19 @@ class MockDatabase:
         description: str,
         implied_arbitrage: float,
         detected_at: datetime,
-        is_new: bool
+        is_new: bool,
     ) -> None:
         """Record a violation."""
-        self.violations.append({
-            "violation_id": violation_id,
-            "pair_id": pair_id,
-            "rule_type": rule_type,
-            "severity": severity,
-            "implied_arbitrage": implied_arbitrage,
-            "is_new": is_new,
-        })
+        self.violations.append(
+            {
+                "violation_id": violation_id,
+                "pair_id": pair_id,
+                "rule_type": rule_type,
+                "severity": severity,
+                "implied_arbitrage": implied_arbitrage,
+                "is_new": is_new,
+            }
+        )
 
 
 async def example_constraint_engine():
@@ -148,14 +144,14 @@ async def example_constraint_engine():
         platform="polymarket",
         title="Will Trump win 2024?",
         current_price=0.65,
-        last_updated=datetime.utcnow()
+        last_updated=datetime.utcnow(),
     )
     db.markets["kalshi_1"] = MarketData(
         market_id="kalshi_1",
         platform="kalshi",
         title="Trump wins 2024",
         current_price=0.67,
-        last_updated=datetime.utcnow()
+        last_updated=datetime.utcnow(),
     )
 
     # Add a market pair
@@ -169,15 +165,13 @@ async def example_constraint_engine():
         market_b_title="Trump wins 2024",
         platform_a="polymarket",
         platform_b="kalshi",
-        is_active=True
+        is_active=True,
     )
 
     # Configure constraint engine
     fee_config = FeeConfig(polymarket=0.02, kalshi=0.02)
     config = ConstraintConfig(
-        min_net_spread_cross_platform=0.03,
-        fee_config=fee_config,
-        enable_logging=True
+        min_net_spread_cross_platform=0.03, fee_config=fee_config, enable_logging=True
     )
 
     # Create and start engine
@@ -217,7 +211,7 @@ async def example_market_matching():
     result = match_by_rules(
         market_a_title="FOMC Interest Rate Decision March 2026 75bps",
         market_b_title="Federal Reserve 75bp Hike Probability March",
-        category="economic"
+        category="economic",
     )
     if result:
         logger.info(
@@ -238,9 +232,9 @@ async def example_market_matching():
                 "FOMC Rate Decision",
                 "Fed Hikes Rates 50bps",
                 "Trump Election 2024",
-                "S&P 500 above 6000"
+                "S&P 500 above 6000",
             ],
-            threshold=0.70
+            threshold=0.70,
         )
         logger.info(f"Semantic matches: {len(matches)} found")
         for idx, similarity in matches:
@@ -264,7 +258,7 @@ async def example_pair_curation():
             market_id_b="kalshi_001",
             pair_type="cross_platform",
             match_method="rules",
-            created_by="system"
+            created_by="system",
         )
         logger.info(f"Created pair: {pair_id}")
     except Exception as e:
@@ -301,16 +295,11 @@ async def example_end_to_end():
     event_bus = SimpleEventBus()
     db = MockDatabase()
 
-    fee_config = FeeConfig(
-        polymarket=0.02,
-        kalshi=0.02,
-        manifold=0.01,
-        metaculus=0.00
-    )
+    fee_config = FeeConfig(polymarket=0.02, kalshi=0.02, manifold=0.01, metaculus=0.00)
     config = ConstraintConfig(
         min_net_spread_single_platform=0.02,
         min_net_spread_cross_platform=0.03,
-        fee_config=fee_config
+        fee_config=fee_config,
     )
 
     engine = ConstraintEngine(event_bus, db, config)
