@@ -207,7 +207,9 @@ class DeadLetterQueue:
             Number of entries deleted
         """
         try:
-            deleted_count = await self.redis_client.delete(self.queue_key)
+            # Get the count before deleting (redis DELETE returns key count, not list length)
+            deleted_count = await self.redis_client.llen(self.queue_key)
+            await self.redis_client.delete(self.queue_key)
             logger.warning(f"Purged {deleted_count} entries from DLQ")
             return deleted_count
 
