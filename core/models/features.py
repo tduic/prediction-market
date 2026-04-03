@@ -1,6 +1,5 @@
 """Feature extraction and engineering for model training."""
 
-import json
 import logging
 from typing import Any
 
@@ -54,7 +53,9 @@ def extract_features(
     features["strategy_encoded"] = float(strategy_map.get(strategy, 0.0))
 
     # Platform encoding (derived from strategy or market)
-    platform = trade_outcome_row.get("platform", "polymarket") if market_data else "polymarket"
+    platform = (
+        trade_outcome_row.get("platform", "polymarket") if market_data else "polymarket"
+    )
     platform_map = {"polymarket": 1.0, "kalshi": 2.0}
     features["platform_encoded"] = float(platform_map.get(platform, 1.0))
 
@@ -64,7 +65,9 @@ def extract_features(
 
     # Signal to fill latency (milliseconds)
     signal_fill_ms = trade_outcome_row.get("signal_to_fill_ms", 0)
-    features["signal_to_fill_ms"] = float(signal_fill_ms) if signal_fill_ms is not None else 0.0
+    features["signal_to_fill_ms"] = (
+        float(signal_fill_ms) if signal_fill_ms is not None else 0.0
+    )
 
     # Liquidity at signal
     liquidity = trade_outcome_row.get("liquidity_at_signal", 0.0)

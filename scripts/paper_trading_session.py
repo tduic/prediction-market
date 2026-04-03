@@ -44,12 +44,16 @@ import httpx  # noqa: E402
 # loads EventBus, Database, etc. and can hang on first compilation.
 print("[startup] Loading config...", flush=True)
 from core.config import get_config  # noqa: E402
+
 print("[startup] Loading storage...", flush=True)
 from core.storage.db import Database  # noqa: E402
+
 print("[startup] Loading analytics...", flush=True)
 from core.analytics import StrategyScorecard  # noqa: E402
+
 print("[startup] Loading logging config...", flush=True)
 from core.logging_config import configure_from_env  # noqa: E402
+
 print("[startup] All imports complete.", flush=True)
 
 logger = logging.getLogger(__name__)
@@ -1993,13 +1997,11 @@ async def take_trading_snapshot(db: aiosqlite.Connection) -> int | None:
 
     try:
         # ── Aggregate totals from trade_outcomes ──
-        cursor = await db.execute(
-            """SELECT
+        cursor = await db.execute("""SELECT
                    COALESCE(SUM(actual_pnl), 0) as realized_pnl,
                    COALESCE(SUM(fees_total), 0) as total_fees,
                    COUNT(*) as trade_count
-               FROM trade_outcomes"""
-        )
+               FROM trade_outcomes""")
         totals = await cursor.fetchone()
         realized_pnl_total = totals[0] if totals else 0
         fees_total = totals[1] if totals else 0
@@ -2021,14 +2023,18 @@ async def take_trading_snapshot(db: aiosqlite.Connection) -> int | None:
                 "periodic",
                 total_capital,
                 cash,
-                0,    # open_positions_count
+                0,  # open_positions_count
                 0.0,  # open_notional
                 0.0,  # unrealized_pnl
                 0.0,  # realized_pnl_today (we could compute this, but keeping simple)
                 realized_pnl_total,
                 0.0,  # fees_today
                 fees_total,
-                0.0, 0.0, 0.0, 0.0, 0.0,  # strategy-specific PnL columns
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,  # strategy-specific PnL columns
                 total_capital * 0.6,  # capital_polymarket
                 total_capital * 0.4,  # capital_kalshi
                 now,
@@ -2037,16 +2043,14 @@ async def take_trading_snapshot(db: aiosqlite.Connection) -> int | None:
         snapshot_id = cursor.lastrowid
 
         # ── Per-strategy breakdown → strategy_pnl_snapshots ──
-        cursor = await db.execute(
-            """SELECT
+        cursor = await db.execute("""SELECT
                    strategy,
                    COALESCE(SUM(actual_pnl), 0) as realized_pnl,
                    COALESCE(SUM(fees_total), 0) as fees,
                    COUNT(*) as trade_count,
                    SUM(CASE WHEN actual_pnl > 0 THEN 1 ELSE 0 END) as win_count
                FROM trade_outcomes
-               GROUP BY strategy"""
-        )
+               GROUP BY strategy""")
         strategy_rows = await cursor.fetchall()
 
         for row in strategy_rows:
@@ -2060,7 +2064,10 @@ async def take_trading_snapshot(db: aiosqlite.Connection) -> int | None:
         await db.commit()
         logger.info(
             "Snapshot #%d: capital=$%.2f realized=$%.4f fees=$%.4f",
-            snapshot_id, total_capital, realized_pnl_total, fees_total,
+            snapshot_id,
+            total_capital,
+            realized_pnl_total,
+            fees_total,
         )
         return snapshot_id
 

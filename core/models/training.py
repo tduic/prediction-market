@@ -26,7 +26,12 @@ class SimpleLogisticRegression:
     Fits via gradient descent with optional L2 regularization.
     """
 
-    def __init__(self, learning_rate: float = 0.1, max_iterations: int = 1000, l2_reg: float = 0.01):
+    def __init__(
+        self,
+        learning_rate: float = 0.1,
+        max_iterations: int = 1000,
+        l2_reg: float = 0.01,
+    ):
         """
         Initialize logistic regression.
 
@@ -68,7 +73,9 @@ class SimpleLogisticRegression:
             eps = 1e-15
             predictions = np.clip(predictions, eps, 1 - eps)
 
-            ce_loss = -np.mean(y * np.log(predictions) + (1 - y) * np.log(1 - predictions))
+            ce_loss = -np.mean(
+                y * np.log(predictions) + (1 - y) * np.log(1 - predictions)
+            )
             l2_loss = (self.l2_reg / (2 * n_samples)) * np.sum(self.weights**2)
             loss = ce_loss + l2_loss
 
@@ -76,7 +83,9 @@ class SimpleLogisticRegression:
 
             # Compute gradients
             errors = predictions - y
-            dw = (1 / n_samples) * np.dot(X.T, errors) + (self.l2_reg / n_samples) * self.weights
+            dw = (1 / n_samples) * np.dot(X.T, errors) + (
+                self.l2_reg / n_samples
+            ) * self.weights
             db = (1 / n_samples) * np.sum(errors)
 
             # Update parameters
@@ -91,7 +100,9 @@ class SimpleLogisticRegression:
                     logger.debug(f"Early stopping at iteration {iteration}")
                     break
 
-        logger.info(f"Logistic regression fitted. Final loss: {self.loss_history[-1]:.6f}")
+        logger.info(
+            f"Logistic regression fitted. Final loss: {self.loss_history[-1]:.6f}"
+        )
 
     def predict_proba(self, X: np.ndarray) -> np.ndarray:
         """
@@ -141,7 +152,9 @@ class ModelTrainer:
         self.evaluation_results = None
         self._sklearn_model = None  # For models that use sklearn internally
 
-    def prepare_dataset(self, days: int = 90, limit: int | None = None) -> tuple[np.ndarray, np.ndarray]:
+    def prepare_dataset(
+        self, days: int = 90, limit: int | None = None
+    ) -> tuple[np.ndarray, np.ndarray]:
         """
         Fetch historical data and build feature matrix.
 
@@ -163,7 +176,7 @@ class ModelTrainer:
             raise RuntimeError("Database connection required for dataset preparation")
 
         import sqlite3
-        from datetime import datetime, timedelta
+        from datetime import timedelta
 
         # Calculate cutoff date
         cutoff_date = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
@@ -201,12 +214,24 @@ class ModelTrainer:
         if rows and not isinstance(rows[0], dict):
             # aiosqlite returns Row objects, convert to dict
             columns = [
-                "id", "signal_id", "strategy", "violation_id",
-                "market_id_a", "market_id_b", "predicted_edge", "predicted_pnl",
-                "actual_pnl", "fees_total", "edge_captured_pct",
-                "signal_to_fill_ms", "holding_period_ms",
-                "spread_at_signal", "volume_at_signal", "liquidity_at_signal",
-                "resolved_at", "created_at"
+                "id",
+                "signal_id",
+                "strategy",
+                "violation_id",
+                "market_id_a",
+                "market_id_b",
+                "predicted_edge",
+                "predicted_pnl",
+                "actual_pnl",
+                "fees_total",
+                "edge_captured_pct",
+                "signal_to_fill_ms",
+                "holding_period_ms",
+                "spread_at_signal",
+                "volume_at_signal",
+                "liquidity_at_signal",
+                "resolved_at",
+                "created_at",
             ]
             rows = [dict(zip(columns, row)) for row in rows]
 
@@ -215,11 +240,15 @@ class ModelTrainer:
         # Build feature matrix
         X, y = build_feature_matrix(rows, normalize=True)
 
-        logger.info(f"Feature matrix shape: {X.shape}, target distribution: {np.bincount(y.astype(int))}")
+        logger.info(
+            f"Feature matrix shape: {X.shape}, target distribution: {np.bincount(y.astype(int))}"
+        )
 
         return X, y
 
-    def train_test_split(self, test_ratio: float = 0.2) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    def train_test_split(
+        self, test_ratio: float = 0.2
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """
         Temporal train-test split (not random).
 
@@ -390,7 +419,6 @@ class ModelTrainer:
             raise RuntimeError("Database connection required")
 
         import sqlite3
-        from datetime import datetime
 
         results = self.evaluation_results
 

@@ -18,7 +18,7 @@ import pytest_asyncio
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from execution.state import Position, PositionStateManager
+from execution.state import Position, PositionStateManager  # noqa: E402
 
 MIGRATIONS_DIR = PROJECT_ROOT / "core" / "storage" / "migrations"
 NOW = datetime.now(timezone.utc).isoformat()
@@ -30,7 +30,10 @@ async def _apply_migrations(db: aiosqlite.Connection) -> None:
         clean_lines = []
         for line in sql.split("\n"):
             stripped = line.strip()
-            if stripped.upper().startswith("ALTER TABLE") and "ADD COLUMN" in stripped.upper():
+            if (
+                stripped.upper().startswith("ALTER TABLE")
+                and "ADD COLUMN" in stripped.upper()
+            ):
                 try:
                     await db.execute(stripped)
                 except Exception as e:
@@ -58,18 +61,38 @@ async def state(db):
     return PositionStateManager(db, flush_interval_s=999)
 
 
-async def _seed_position_in_db(db, pid, market_id, side="BUY", entry_price=0.50,
-                                 entry_size=100.0, strategy="arb", status="open",
-                                 current_price=None, unrealized_pnl=None):
+async def _seed_position_in_db(
+    db,
+    pid,
+    market_id,
+    side="BUY",
+    entry_price=0.50,
+    entry_size=100.0,
+    strategy="arb",
+    status="open",
+    current_price=None,
+    unrealized_pnl=None,
+):
     """Insert position using the real schema."""
     await db.execute(
         """INSERT INTO positions (id, market_id, side, entry_price, entry_size,
                                   signal_id, strategy, status, opened_at, updated_at,
                                   current_price, unrealized_pnl)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (pid, market_id, side, entry_price, entry_size,
-         f"sig_{pid}", strategy, status, NOW, NOW,
-         current_price, unrealized_pnl),
+        (
+            pid,
+            market_id,
+            side,
+            entry_price,
+            entry_size,
+            f"sig_{pid}",
+            strategy,
+            status,
+            NOW,
+            NOW,
+            current_price,
+            unrealized_pnl,
+        ),
     )
     await db.commit()
 
@@ -164,7 +187,13 @@ class TestClosePosition:
         # Seed in DB and in-memory
         await _seed_position_in_db(db, "pos1", "mkt1", "BUY", 0.40, 100)
         state.positions["pos1"] = Position(
-            "pos1", "mkt1", "poly", "BUY", 100, 0.40, 0,
+            "pos1",
+            "mkt1",
+            "poly",
+            "BUY",
+            100,
+            0.40,
+            0,
         )
 
         result = await state.close_position("pos1", exit_price=0.70)
@@ -176,7 +205,13 @@ class TestClosePosition:
     async def test_close_sell_position(self, db, state):
         await _seed_position_in_db(db, "pos2", "mkt2", "SELL", 0.70, 100)
         state.positions["pos2"] = Position(
-            "pos2", "mkt2", "poly", "SELL", 100, 0.70, 0,
+            "pos2",
+            "mkt2",
+            "poly",
+            "SELL",
+            100,
+            0.70,
+            0,
         )
 
         result = await state.close_position("pos2", exit_price=0.40)
@@ -191,11 +226,19 @@ class TestClosePosition:
     async def test_close_writes_trade_outcome(self, db, state):
         await _seed_position_in_db(db, "pos3", "mkt3", "BUY", 0.50, 10)
         state.positions["pos3"] = Position(
-            "pos3", "mkt3", "poly", "BUY", 10, 0.50, 0,
+            "pos3",
+            "mkt3",
+            "poly",
+            "BUY",
+            10,
+            0.50,
+            0,
         )
 
         await state.close_position("pos3", exit_price=0.80)
-        cursor = await db.execute("SELECT actual_pnl FROM trade_outcomes WHERE id LIKE 'outcome-%'")
+        cursor = await db.execute(
+            "SELECT actual_pnl FROM trade_outcomes WHERE id LIKE 'outcome-%'"
+        )
         row = await cursor.fetchone()
         assert row is not None
         assert abs(row[0] - 3.0) < 0.01  # (0.80 - 0.50) * 10
@@ -210,7 +253,9 @@ class TestLoadPositionsFromDb:
     async def test_loads_open_positions(self, db, state):
         await _seed_position_in_db(db, "pos1", "mkt1", "BUY", 0.50, 100)
         await _seed_position_in_db(db, "pos2", "mkt2", "SELL", 0.70, 50)
-        await _seed_position_in_db(db, "pos3", "mkt3", "BUY", 0.50, 100, status="closed")
+        await _seed_position_in_db(
+            db, "pos3", "mkt3", "BUY", 0.50, 100, status="closed"
+        )
 
         count = await state.load_positions_from_db()
         assert count == 2
@@ -226,8 +271,15 @@ class TestLoadPositionsFromDb:
     @pytest.mark.asyncio
     async def test_loaded_position_has_correct_fields(self, db, state):
         await _seed_position_in_db(
-            db, "posX", "mktX", "BUY", 0.40, 200,
-            strategy="polymarket_arb", current_price=0.55, unrealized_pnl=30.0,
+            db,
+            "posX",
+            "mktX",
+            "BUY",
+            0.40,
+            200,
+            strategy="polymarket_arb",
+            current_price=0.55,
+            unrealized_pnl=30.0,
         )
 
         await state.load_positions_from_db()
@@ -253,7 +305,9 @@ class TestExposureHelpers:
     @pytest.mark.asyncio
     async def test_net_exposure_mixed(self, state):
         state.positions["buy1"] = Position("buy1", "mkt1", "poly", "BUY", 100, 0.50, 0)
-        state.positions["sell1"] = Position("sell1", "mkt1", "poly", "SELL", 40, 0.55, 0)
+        state.positions["sell1"] = Position(
+            "sell1", "mkt1", "poly", "SELL", 40, 0.55, 0
+        )
         # Net = 100 (BUY) - 40 (SELL) = 60
         exposure = state.get_net_exposure("mkt1")
         assert abs(exposure - 60.0) < 0.01
@@ -271,9 +325,15 @@ class TestExposureHelpers:
 
     @pytest.mark.asyncio
     async def test_market_exposure_map(self, state):
-        state.positions["buy_a"] = Position("buy_a", "mkt_A", "poly", "BUY", 100, 0.50, 0)
-        state.positions["sell_a"] = Position("sell_a", "mkt_A", "poly", "SELL", 30, 0.55, 0)
-        state.positions["buy_b"] = Position("buy_b", "mkt_B", "poly", "BUY", 50, 0.40, 0)
+        state.positions["buy_a"] = Position(
+            "buy_a", "mkt_A", "poly", "BUY", 100, 0.50, 0
+        )
+        state.positions["sell_a"] = Position(
+            "sell_a", "mkt_A", "poly", "SELL", 30, 0.55, 0
+        )
+        state.positions["buy_b"] = Position(
+            "buy_b", "mkt_B", "poly", "BUY", 50, 0.40, 0
+        )
 
         exposure_map = state.get_market_exposure()
         assert abs(exposure_map["mkt_A"] - 70.0) < 0.01

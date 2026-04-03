@@ -157,7 +157,9 @@ def classification_metrics(
     tn = int(np.sum((predicted_labels == 0) & (actuals == 0)))
     fn = int(np.sum((predicted_labels == 0) & (actuals == 1)))
 
-    accuracy = float((tp + tn) / (tp + tn + fp + fn)) if (tp + tn + fp + fn) > 0 else 0.0
+    accuracy = (
+        float((tp + tn) / (tp + tn + fp + fn)) if (tp + tn + fp + fn) > 0 else 0.0
+    )
 
     precision = float(tp / (tp + fp)) if (tp + fp) > 0 else 0.0
 

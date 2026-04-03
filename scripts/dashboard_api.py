@@ -21,7 +21,6 @@ from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-
 # ---------------------------------------------------------------------------
 # Module-level DB path (set by configure() or create_dashboard_app())
 # ---------------------------------------------------------------------------
@@ -166,27 +165,33 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
                         (row_dict["strategy"], cutoff_date.isoformat()),
                     )
                     pnl_rows = await cursor2.fetchall()
-                    pnl_values = [r["actual_pnl"] for r in pnl_rows if r["actual_pnl"] is not None]
+                    pnl_values = [
+                        r["actual_pnl"] for r in pnl_rows if r["actual_pnl"] is not None
+                    ]
                     if len(pnl_values) > 1:
                         mean_pnl = statistics.mean(pnl_values)
                         stdev_pnl = statistics.stdev(pnl_values)
                         if stdev_pnl > 0:
                             sharpe_ratio = mean_pnl / stdev_pnl
 
-                strategies.append({
-                    "strategy": row_dict.get("strategy"),
-                    "trade_count": trade_count,
-                    "win_count": win_count,
-                    "win_rate": round(win_rate, 2),
-                    "avg_pnl": round(row_dict.get("avg_pnl", 0) or 0, 2),
-                    "total_pnl": round(row_dict.get("total_pnl", 0) or 0, 2),
-                    "total_fees": round(row_dict.get("total_fees", 0) or 0, 2),
-                    "sharpe_ratio": round(sharpe_ratio, 2),
-                    "avg_edge_capture": round(row_dict.get("avg_edge_capture", 0) or 0, 2),
-                    "avg_execution_time_ms": round(
-                        row_dict.get("avg_execution_time_ms", 0) or 0, 0
-                    ),
-                })
+                strategies.append(
+                    {
+                        "strategy": row_dict.get("strategy"),
+                        "trade_count": trade_count,
+                        "win_count": win_count,
+                        "win_rate": round(win_rate, 2),
+                        "avg_pnl": round(row_dict.get("avg_pnl", 0) or 0, 2),
+                        "total_pnl": round(row_dict.get("total_pnl", 0) or 0, 2),
+                        "total_fees": round(row_dict.get("total_fees", 0) or 0, 2),
+                        "sharpe_ratio": round(sharpe_ratio, 2),
+                        "avg_edge_capture": round(
+                            row_dict.get("avg_edge_capture", 0) or 0, 2
+                        ),
+                        "avg_execution_time_ms": round(
+                            row_dict.get("avg_execution_time_ms", 0) or 0, 0
+                        ),
+                    }
+                )
 
             return strategies
         finally:
@@ -248,7 +253,9 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
                     "snapshotted_at": dict(r).get("snapshotted_at"),
                     "total_capital": round(dict(r).get("total_capital", 0) or 0, 2),
                     "unrealized_pnl": round(dict(r).get("unrealized_pnl", 0) or 0, 2),
-                    "realized_pnl_total": round(dict(r).get("realized_pnl_total", 0) or 0, 2),
+                    "realized_pnl_total": round(
+                        dict(r).get("realized_pnl_total", 0) or 0, 2
+                    ),
                     "fees_total": round(dict(r).get("fees_total", 0) or 0, 2),
                 }
                 for r in rows
@@ -279,26 +286,32 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
             result = []
             for row in rows:
                 d = dict(row)
-                result.append({
-                    "id": d.get("id"),
-                    "signal_id": d.get("signal_id"),
-                    "strategy": d.get("strategy"),
-                    "violation_id": d.get("violation_id"),
-                    "market_id_a": d.get("market_id_a"),
-                    "market_id_b": d.get("market_id_b"),
-                    "predicted_edge": round(d.get("predicted_edge", 0) or 0, 4),
-                    "predicted_pnl": round(d.get("predicted_pnl", 0) or 0, 2),
-                    "actual_pnl": round(d.get("actual_pnl", 0) or 0, 2),
-                    "fees_total": round(d.get("fees_total", 0) or 0, 2),
-                    "edge_captured_pct": round(d.get("edge_captured_pct", 0) or 0, 2),
-                    "signal_to_fill_ms": d.get("signal_to_fill_ms"),
-                    "holding_period_ms": d.get("holding_period_ms"),
-                    "spread_at_signal": round(d.get("spread_at_signal", 0) or 0, 4),
-                    "volume_at_signal": round(d.get("volume_at_signal", 0) or 0, 2),
-                    "liquidity_at_signal": round(d.get("liquidity_at_signal", 0) or 0, 2),
-                    "resolved_at": d.get("resolved_at"),
-                    "created_at": d.get("created_at"),
-                })
+                result.append(
+                    {
+                        "id": d.get("id"),
+                        "signal_id": d.get("signal_id"),
+                        "strategy": d.get("strategy"),
+                        "violation_id": d.get("violation_id"),
+                        "market_id_a": d.get("market_id_a"),
+                        "market_id_b": d.get("market_id_b"),
+                        "predicted_edge": round(d.get("predicted_edge", 0) or 0, 4),
+                        "predicted_pnl": round(d.get("predicted_pnl", 0) or 0, 2),
+                        "actual_pnl": round(d.get("actual_pnl", 0) or 0, 2),
+                        "fees_total": round(d.get("fees_total", 0) or 0, 2),
+                        "edge_captured_pct": round(
+                            d.get("edge_captured_pct", 0) or 0, 2
+                        ),
+                        "signal_to_fill_ms": d.get("signal_to_fill_ms"),
+                        "holding_period_ms": d.get("holding_period_ms"),
+                        "spread_at_signal": round(d.get("spread_at_signal", 0) or 0, 4),
+                        "volume_at_signal": round(d.get("volume_at_signal", 0) or 0, 2),
+                        "liquidity_at_signal": round(
+                            d.get("liquidity_at_signal", 0) or 0, 2
+                        ),
+                        "resolved_at": d.get("resolved_at"),
+                        "created_at": d.get("created_at"),
+                    }
+                )
             return result
         finally:
             await close_db(db)
@@ -317,14 +330,16 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
                     "SELECT COALESCE(SUM(actual_pnl), 0), COALESCE(SUM(fees_total), 0) FROM trade_outcomes"
                 )
                 row = await cursor.fetchone()
-                total_capital = PAPER_CAPITAL + (row[0] or 0) - (row[1] or 0) if row else PAPER_CAPITAL
+                total_capital = (
+                    PAPER_CAPITAL + (row[0] or 0) - (row[1] or 0)
+                    if row
+                    else PAPER_CAPITAL
+                )
 
-            cursor = await db.execute(
-                """
+            cursor = await db.execute("""
                 SELECT total_capital, realized_pnl_total + unrealized_pnl as net_pnl
                 FROM pnl_snapshots ORDER BY snapshotted_at DESC LIMIT 100
-                """
-            )
+                """)
             snapshots = await cursor.fetchall()
 
             max_drawdown = 0
@@ -348,18 +363,20 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
             row = await cursor.fetchone()
             max_position_pnl = row["max_position_pnl"] or 0 if row else 0
             concentration = (
-                (abs(max_position_pnl) / total_capital * 100) if total_capital > 0 else 0
+                (abs(max_position_pnl) / total_capital * 100)
+                if total_capital > 0
+                else 0
             )
 
-            cursor = await db.execute(
-                """
+            cursor = await db.execute("""
                 SELECT DATE(created_at) as trade_date, SUM(actual_pnl) as daily_pnl
                 FROM trade_outcomes GROUP BY DATE(created_at)
                 ORDER BY trade_date DESC LIMIT 30
-                """
-            )
+                """)
             daily_rows = await cursor.fetchall()
-            daily_pnls = [r["daily_pnl"] for r in daily_rows if r["daily_pnl"] is not None]
+            daily_pnls = [
+                r["daily_pnl"] for r in daily_rows if r["daily_pnl"] is not None
+            ]
 
             daily_var = 0
             if len(daily_pnls) > 1:
@@ -394,27 +411,29 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
     async def get_fees() -> Dict[str, Any]:
         db = await get_db()
         try:
-            cursor = await db.execute(
-                """
+            cursor = await db.execute("""
                 SELECT platform, COALESCE(SUM(fee_paid), 0) as total_fees
                 FROM orders WHERE fee_paid IS NOT NULL GROUP BY platform
-                """
-            )
+                """)
             platform_rows = await cursor.fetchall()
             fees_by_platform = [
-                {"platform": row["platform"], "total_fees": round(row["total_fees"] or 0, 2)}
+                {
+                    "platform": row["platform"],
+                    "total_fees": round(row["total_fees"] or 0, 2),
+                }
                 for row in platform_rows
             ]
 
-            cursor = await db.execute(
-                """
+            cursor = await db.execute("""
                 SELECT strategy, COALESCE(SUM(fees_total), 0) as total_fees
                 FROM trade_outcomes WHERE fees_total IS NOT NULL GROUP BY strategy
-                """
-            )
+                """)
             strategy_rows = await cursor.fetchall()
             fees_by_strategy = [
-                {"strategy": row["strategy"], "total_fees": round(row["total_fees"] or 0, 2)}
+                {
+                    "strategy": row["strategy"],
+                    "total_fees": round(row["total_fees"] or 0, 2),
+                }
                 for row in strategy_rows
             ]
 

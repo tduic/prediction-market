@@ -29,7 +29,10 @@ async def _apply_migrations(db: aiosqlite.Connection) -> None:
         clean_lines = []
         for line in sql.split("\n"):
             stripped = line.strip()
-            if stripped.upper().startswith("ALTER TABLE") and "ADD COLUMN" in stripped.upper():
+            if (
+                stripped.upper().startswith("ALTER TABLE")
+                and "ADD COLUMN" in stripped.upper()
+            ):
                 try:
                     await db.execute(stripped)
                 except Exception as e:

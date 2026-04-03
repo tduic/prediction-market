@@ -16,11 +16,8 @@ import json
 import logging
 import sqlite3
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-
-import numpy as np
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -36,18 +33,21 @@ MODELS = {}
 
 try:
     from core.models.calibration import CalibrationModel
+
     MODELS["calibration"] = CalibrationModel
 except ImportError as e:
     logger.warning(f"Could not import CalibrationModel: {e}")
 
 try:
     from core.models.cpi import CPIModel
+
     MODELS["cpi"] = CPIModel
 except ImportError as e:
     logger.warning(f"Could not import CPIModel: {e}")
 
 try:
     from core.models.fomc import FOMCModel
+
     MODELS["fomc"] = FOMCModel
 except ImportError as e:
     logger.warning(f"Could not import FOMCModel: {e}")
@@ -71,20 +71,17 @@ def get_db_connection(db_path: str) -> sqlite3.Connection:
 
 def check_model_evaluations_table(db: sqlite3.Connection) -> bool:
     """Check if model_evaluations table exists, create if not."""
-    cursor = db.execute(
-        """
+    cursor = db.execute("""
         SELECT name FROM sqlite_master
         WHERE type='table' AND name='model_evaluations'
-        """
-    )
+        """)
 
     if cursor.fetchone():
         return True
 
     # Create table if missing
     logger.warning("model_evaluations table not found, creating...")
-    db.executescript(
-        """
+    db.executescript("""
         CREATE TABLE IF NOT EXISTS model_evaluations (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             model_name TEXT NOT NULL,
@@ -102,8 +99,7 @@ def check_model_evaluations_table(db: sqlite3.Connection) -> bool:
         );
         CREATE INDEX IF NOT EXISTS idx_model_evaluations_name ON model_evaluations(model_name);
         CREATE INDEX IF NOT EXISTS idx_model_evaluations_trained_at ON model_evaluations(trained_at);
-        """
-    )
+        """)
     db.commit()
     return True
 
@@ -224,12 +220,12 @@ def print_results_table(results: list[dict[str, Any]]) -> None:
         print("-" * 100)
 
         if not success:
-            print(f"Status: FAILED")
+            print("Status: FAILED")
             print(f"Error: {result.get('error', 'Unknown error')}")
             continue
 
         res = result["results"]
-        print(f"Status: SUCCESS")
+        print("Status: SUCCESS")
         print(f"  Dataset size: {res['train_samples'] + res['test_samples']}")
         print(f"  Train/Test split: {res['train_samples']} / {res['test_samples']}")
         print(f"  Accuracy: {res['accuracy']:.4f}")
@@ -240,7 +236,7 @@ def print_results_table(results: list[dict[str, Any]]) -> None:
         print(f"  MAE: {res['mae']:.4f}")
 
         # Confusion matrix
-        print(f"\n  Confusion Matrix:")
+        print("\n  Confusion Matrix:")
         print(f"    True Positives:  {res['true_positives']:6d}")
         print(f"    False Positives: {res['false_positives']:6d}")
         print(f"    True Negatives:  {res['true_negatives']:6d}")
@@ -248,7 +244,7 @@ def print_results_table(results: list[dict[str, Any]]) -> None:
 
         # Calibration bins
         if res["calibration_bins"]:
-            print(f"\n  Calibration Bins (showing first 5):")
+            print("\n  Calibration Bins (showing first 5):")
             for i, bin_data in enumerate(res["calibration_bins"][:5]):
                 print(
                     f"    Bin {bin_data['bin_index']}: "
@@ -333,11 +329,15 @@ def main():
 
     # Train models
     if args.model == "all":
-        logger.info(f"Training all models (days={args.days}, test_ratio={args.test_ratio})")
+        logger.info(
+            f"Training all models (days={args.days}, test_ratio={args.test_ratio})"
+        )
         results = train_all_models(db_path, days=args.days, test_ratio=args.test_ratio)
     else:
         logger.info(f"Training model: {args.model} (days={args.days})")
-        results = [train_model(args.model, db_path, days=args.days, test_ratio=args.test_ratio)]
+        results = [
+            train_model(args.model, db_path, days=args.days, test_ratio=args.test_ratio)
+        ]
 
     # Output results
     if args.json:

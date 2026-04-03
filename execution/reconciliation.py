@@ -410,7 +410,10 @@ class ReconciliationEngine:
                 continue
 
             discrepancy_pct = report.get("discrepancy_pct")
-            if discrepancy_pct is not None and discrepancy_pct > self.halt_threshold_pct:
+            if (
+                discrepancy_pct is not None
+                and discrepancy_pct > self.halt_threshold_pct
+            ):
                 logger.error(
                     "%s discrepancy %.4f (%.2f%%) exceeds halt threshold %.2f%%",
                     platform,
@@ -433,22 +436,18 @@ class ReconciliationEngine:
             Estimated portfolio value
         """
         try:
-            cursor = await self.db.execute(
-                """
+            cursor = await self.db.execute("""
                 SELECT COALESCE(SUM(realized_pnl), 0) FROM positions
                 WHERE status = 'closed'
-                """
-            )
+                """)
             row = await cursor.fetchone()
             realized_pnl = row[0] if row else 0.0
 
             # Rough estimate: assume starting capital minus fees
             # This is approximate; actual value requires balance queries
-            cursor = await self.db.execute(
-                """
+            cursor = await self.db.execute("""
                 SELECT COALESCE(SUM(fee_paid), 0) FROM orders
-                """
-            )
+                """)
             row = await cursor.fetchone()
             total_fees = row[0] if row else 0.0
 
@@ -459,9 +458,7 @@ class ReconciliationEngine:
             logger.warning("Error estimating portfolio value: %s", e)
             return self.starting_capital
 
-    async def _log_reconciliation(
-        self, report: dict, check_type: str = "full"
-    ) -> None:
+    async def _log_reconciliation(self, report: dict, check_type: str = "full") -> None:
         """
         Log reconciliation check to database.
 

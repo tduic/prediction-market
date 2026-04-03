@@ -9,16 +9,12 @@ Provides operational visibility and control over:
 """
 
 import asyncio
-import json
-import sys
-from datetime import datetime
 from typing import Optional
 
 import click
 import redis.asyncio as redis
 from tabulate import tabulate
 
-from core.config import get_config
 from core.signals.dedup import SignalDeduplicator
 from core.signals.backpressure import BackpressureMonitor
 from core.signals.dlq import DeadLetterQueue
@@ -77,7 +73,9 @@ class QueueAdmin:
             ]
 
             print("\n=== Processing Statistics ===\n")
-            print(tabulate(processing_stats, headers=["Metric", "Value"], tablefmt="grid"))
+            print(
+                tabulate(processing_stats, headers=["Metric", "Value"], tablefmt="grid")
+            )
 
     async def list_dlq(self, limit: int = 50) -> None:
         """List failed signals in the DLQ."""

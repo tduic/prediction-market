@@ -7,7 +7,6 @@ Helps prevent system cascade failures under high signal volume.
 
 import logging
 from datetime import datetime, timezone
-from typing import Optional
 
 import redis.asyncio as redis
 
@@ -129,7 +128,9 @@ class BackpressureMonitor:
                     )
             else:
                 result["action"] = "CONTINUE"
-                logger.debug(f"No backpressure needed (queue depth: {depth}/{max_depth})")
+                logger.debug(
+                    f"No backpressure needed (queue depth: {depth}/{max_depth})"
+                )
 
             return result
 
@@ -230,7 +231,7 @@ class BackpressureMonitor:
                 latencies = await self.redis_client.lrange(latency_history_key, 0, -1)
 
                 if latencies:
-                    latencies_float = [float(l) for l in latencies]
+                    latencies_float = [float(val) for val in latencies]
                     latencies_float.sort()
 
                     stats["p50_latency_ms"] = latencies_float[len(latencies_float) // 2]

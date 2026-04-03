@@ -139,10 +139,7 @@ class SignalHandler:
 
         try:
             # ── 0. Reconciliation halt check ──
-            if (
-                self.reconciliation_engine
-                and self.reconciliation_engine.trading_halted
-            ):
+            if self.reconciliation_engine and self.reconciliation_engine.trading_halted:
                 logger.error(
                     "TRADING HALTED by reconciliation — rejecting signal %s",
                     signal_id,
@@ -187,7 +184,9 @@ class SignalHandler:
                 failed = [r for r in risk_results if not r.passed]
                 reasons = "; ".join(f"{r.check_type}: {r.detail}" for r in failed)
                 logger.warning(
-                    "RISK REJECTED signal %s: %s", signal_id, reasons,
+                    "RISK REJECTED signal %s: %s",
+                    signal_id,
+                    reasons,
                 )
                 await self._log_signal_intent(
                     signal_id, "RISK_REJECTED", f"Failed checks: {reasons}"
@@ -196,7 +195,9 @@ class SignalHandler:
 
             # ── 4. Route orders ──
             await self._log_signal_intent(
-                signal_id, "INITIATED", f"Processing {len(valid_legs)} legs (all risk checks passed)"
+                signal_id,
+                "INITIATED",
+                f"Processing {len(valid_legs)} legs (all risk checks passed)",
             )
 
             await self.order_router.route_orders(

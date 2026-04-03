@@ -71,20 +71,16 @@ class Database:
             return
 
         # Ensure migration history table exists
-        await self._conn.executescript(
-            """
+        await self._conn.executescript("""
             CREATE TABLE IF NOT EXISTS migration_history (
                 filename TEXT PRIMARY KEY,
                 applied_at TEXT NOT NULL DEFAULT (datetime('now'))
             );
-            """
-        )
+            """)
         await self._conn.commit()
 
         # Get already-applied migrations
-        cursor = await self._conn.execute(
-            "SELECT filename FROM migration_history"
-        )
+        cursor = await self._conn.execute("SELECT filename FROM migration_history")
         rows = await cursor.fetchall()
         applied = {row[0] for row in rows}
 
@@ -92,7 +88,9 @@ class Database:
 
         for migration_file in migration_files:
             if migration_file.name in applied:
-                logger.debug(f"Skipping already-applied migration: {migration_file.name}")
+                logger.debug(
+                    f"Skipping already-applied migration: {migration_file.name}"
+                )
                 continue
 
             logger.info(f"Running migration: {migration_file.name}")
@@ -132,7 +130,10 @@ class Database:
         lines_out = []
         for line in sql_content.split("\n"):
             stripped = line.strip()
-            if stripped.upper().startswith("ALTER TABLE") and "ADD COLUMN" in stripped.upper():
+            if (
+                stripped.upper().startswith("ALTER TABLE")
+                and "ADD COLUMN" in stripped.upper()
+            ):
                 try:
                     await self._conn.execute(stripped)
                     await self._conn.commit()

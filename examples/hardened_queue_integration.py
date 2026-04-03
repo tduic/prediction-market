@@ -6,7 +6,6 @@ the production-hardened queue implementation.
 """
 
 import asyncio
-import json
 import logging
 from typing import Optional
 
@@ -195,11 +194,9 @@ class HardenedExecutionService:
 
                         if not success:
                             # Failed signal — automatic retry or DLQ
-                            is_retrying = (
-                                await self.signal_queue.handle_processing_failure(
-                                    signal,
-                                    error="Signal processing failed (validation/execution error)",
-                                )
+                            is_retrying = await self.signal_queue.handle_processing_failure(
+                                signal,
+                                error="Signal processing failed (validation/execution error)",
                             )
 
                             if is_retrying:
@@ -216,11 +213,9 @@ class HardenedExecutionService:
                     except ValidationError as e:
                         logger.error(f"Validation error for signal {signal_id}: {e}")
 
-                        is_retrying = (
-                            await self.signal_queue.handle_processing_failure(
-                                signal,
-                                error=f"Validation error: {str(e)[:100]}",
-                            )
+                        is_retrying = await self.signal_queue.handle_processing_failure(
+                            signal,
+                            error=f"Validation error: {str(e)[:100]}",
                         )
 
                         if not is_retrying:
@@ -232,11 +227,9 @@ class HardenedExecutionService:
                             exc_info=True,
                         )
 
-                        is_retrying = (
-                            await self.signal_queue.handle_processing_failure(
-                                signal,
-                                error=f"Unexpected error: {str(e)[:100]}",
-                            )
+                        is_retrying = await self.signal_queue.handle_processing_failure(
+                            signal,
+                            error=f"Unexpected error: {str(e)[:100]}",
                         )
 
                         if not is_retrying:
@@ -251,9 +244,7 @@ class HardenedExecutionService:
                 redis.TimeoutError,
                 ConnectionResetError,
             ) as e:
-                logger.warning(
-                    f"Redis connection lost: {e}. Attempting reconnect..."
-                )
+                logger.warning(f"Redis connection lost: {e}. Attempting reconnect...")
                 if not await self._reconnect_redis():
                     logger.error("Giving up on Redis reconnection, shutting down")
                     self.running = False

@@ -5,10 +5,11 @@ Unifies all signal queue hardening features into a single interface
 for publishing and consuming signals with automatic error handling.
 """
 
+import asyncio
 import json
 import logging
 import time
-from typing import AsyncIterator, Optional
+from typing import AsyncIterator
 
 import redis.asyncio as redis
 
@@ -90,7 +91,9 @@ class HardenedSignalQueue:
                 return False
 
             # Check backpressure
-            overloaded = await self.backpressure.is_overloaded(self.backpressure_threshold)
+            overloaded = await self.backpressure.is_overloaded(
+                self.backpressure_threshold
+            )
             if overloaded:
                 logger.warning(f"Queue overloaded, rejecting signal: {signal_id}")
                 return False
@@ -303,7 +306,3 @@ class HardenedSignalQueue:
             Number of entries deleted
         """
         return await self.dlq.purge()
-
-
-# Async import needed for consume()
-import asyncio

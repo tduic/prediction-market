@@ -51,7 +51,9 @@ async def get_portfolio_value(
         total_fees = row[1] if row else 0
         return starting_capital + realized_pnl - total_fees
     except Exception as e:
-        logger.warning("Could not compute portfolio value: %s — using starting_capital", e)
+        logger.warning(
+            "Could not compute portfolio value: %s — using starting_capital", e
+        )
         return starting_capital
 
 
@@ -266,15 +268,27 @@ async def run_all_checks(
     Returns:
         (all_passed, list of RiskCheckResult)
     """
-    portfolio_value = await get_portfolio_value(db, risk_config.starting_capital) if db else risk_config.starting_capital
+    portfolio_value = (
+        await get_portfolio_value(db, risk_config.starting_capital)
+        if db
+        else risk_config.starting_capital
+    )
 
     results: list[RiskCheckResult] = []
 
     checks = [
-        lambda: check_position_limit(signal, portfolio_value, risk_config.max_position_pct, db),
-        lambda: check_daily_loss_limit(signal, portfolio_value, risk_config.max_daily_loss_pct, db),
-        lambda: check_portfolio_exposure(signal, portfolio_value, risk_config.max_portfolio_exposure_pct, db),
-        lambda: check_duplicate_signal(signal, risk_config.duplicate_signal_window_s, db),
+        lambda: check_position_limit(
+            signal, portfolio_value, risk_config.max_position_pct, db
+        ),
+        lambda: check_daily_loss_limit(
+            signal, portfolio_value, risk_config.max_daily_loss_pct, db
+        ),
+        lambda: check_portfolio_exposure(
+            signal, portfolio_value, risk_config.max_portfolio_exposure_pct, db
+        ),
+        lambda: check_duplicate_signal(
+            signal, risk_config.duplicate_signal_window_s, db
+        ),
         lambda: check_min_edge(signal, risk_config.min_edge),
     ]
 
@@ -322,7 +336,15 @@ async def _log_risk_checks(
                 """INSERT INTO risk_check_log
                    (signal_id, check_type, passed, check_value, threshold, detail, evaluated_at)
                    VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                (signal_id, r.check_type, int(r.passed), r.check_value, r.threshold, r.detail, now),
+                (
+                    signal_id,
+                    r.check_type,
+                    int(r.passed),
+                    r.check_value,
+                    r.threshold,
+                    r.detail,
+                    now,
+                ),
             )
         await db.commit()
     except Exception as e:

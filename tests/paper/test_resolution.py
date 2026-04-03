@@ -18,8 +18,8 @@ import pytest_asyncio
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from execution.resolution import ResolutionMonitor
-from execution.state import Position, PositionStateManager
+from execution.resolution import ResolutionMonitor  # noqa: E402
+from execution.state import Position, PositionStateManager  # noqa: E402
 
 MIGRATIONS_DIR = PROJECT_ROOT / "core" / "storage" / "migrations"
 
@@ -30,7 +30,10 @@ async def _apply_migrations(db: aiosqlite.Connection) -> None:
         clean_lines = []
         for line in sql.split("\n"):
             stripped = line.strip()
-            if stripped.upper().startswith("ALTER TABLE") and "ADD COLUMN" in stripped.upper():
+            if (
+                stripped.upper().startswith("ALTER TABLE")
+                and "ADD COLUMN" in stripped.upper()
+            ):
                 try:
                     await db.execute(stripped)
                 except Exception as e:
@@ -76,25 +79,46 @@ async def _seed_market(db, market_id, status="open", outcome=None, outcome_value
     await db.commit()
 
 
-async def _seed_position(db, position_id, market_id, side="BUY", entry_price=0.50,
-                          entry_size=100.0, strategy="P1_cross_market_arb",
-                          opened_at=None):
+async def _seed_position(
+    db,
+    position_id,
+    market_id,
+    side="BUY",
+    entry_price=0.50,
+    entry_size=100.0,
+    strategy="P1_cross_market_arb",
+    opened_at=None,
+):
     if opened_at is None:
         opened_at = NOW
     await db.execute(
         """INSERT INTO positions (id, market_id, side, entry_price, entry_size,
                                   signal_id, strategy, status, opened_at, updated_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, 'open', ?, ?)""",
-        (position_id, market_id, side, entry_price, entry_size,
-         f"sig-{position_id}", strategy, opened_at, NOW),
+        (
+            position_id,
+            market_id,
+            side,
+            entry_price,
+            entry_size,
+            f"sig-{position_id}",
+            strategy,
+            opened_at,
+            NOW,
+        ),
     )
     await db.commit()
 
 
 def _make_position(pid, mkt, side, qty, entry_price):
     return Position(
-        position_id=pid, market_id=mkt, platform="polymarket",
-        side=side, quantity=qty, entry_price=entry_price, entry_timestamp=0,
+        position_id=pid,
+        market_id=mkt,
+        platform="polymarket",
+        side=side,
+        quantity=qty,
+        entry_price=entry_price,
+        entry_timestamp=0,
     )
 
 
@@ -112,15 +136,21 @@ class TestCheckResolutions:
     @pytest.mark.asyncio
     async def test_close_buy_on_yes_resolution(self, db, state, monitor):
         """BUY at 0.40, resolves YES (1.0) → PnL = +60."""
-        await _seed_market(db, "mkt1", status="resolved", outcome="yes", outcome_value=1.0)
-        await _seed_position(db, "pos1", "mkt1", side="BUY", entry_price=0.40, entry_size=100.0)
+        await _seed_market(
+            db, "mkt1", status="resolved", outcome="yes", outcome_value=1.0
+        )
+        await _seed_position(
+            db, "pos1", "mkt1", side="BUY", entry_price=0.40, entry_size=100.0
+        )
         state.positions["pos1"] = _make_position("pos1", "mkt1", "BUY", 100.0, 0.40)
 
         summary = await monitor.check_resolutions()
         assert summary["closed"] == 1
         assert abs(summary["total_realized_pnl"] - 60.0) < 0.01
 
-        cursor = await db.execute("SELECT status, exit_price, realized_pnl FROM positions WHERE id='pos1'")
+        cursor = await db.execute(
+            "SELECT status, exit_price, realized_pnl FROM positions WHERE id='pos1'"
+        )
         row = await cursor.fetchone()
         assert row[0] == "closed"
         assert abs(row[1] - 1.0) < 0.01
@@ -128,8 +158,12 @@ class TestCheckResolutions:
     @pytest.mark.asyncio
     async def test_close_sell_on_no_resolution(self, db, state, monitor):
         """SELL at 0.70, resolves NO (0.0) → PnL = +70."""
-        await _seed_market(db, "mkt2", status="resolved", outcome="no", outcome_value=0.0)
-        await _seed_position(db, "pos2", "mkt2", side="SELL", entry_price=0.70, entry_size=100.0)
+        await _seed_market(
+            db, "mkt2", status="resolved", outcome="no", outcome_value=0.0
+        )
+        await _seed_position(
+            db, "pos2", "mkt2", side="SELL", entry_price=0.70, entry_size=100.0
+        )
         state.positions["pos2"] = _make_position("pos2", "mkt2", "SELL", 100.0, 0.70)
 
         summary = await monitor.check_resolutions()
@@ -139,8 +173,12 @@ class TestCheckResolutions:
     @pytest.mark.asyncio
     async def test_buy_losing_trade(self, db, state, monitor):
         """BUY at 0.80, resolves NO (0.0) → PnL = -80."""
-        await _seed_market(db, "mkt3", status="resolved", outcome="no", outcome_value=0.0)
-        await _seed_position(db, "pos3", "mkt3", side="BUY", entry_price=0.80, entry_size=100.0)
+        await _seed_market(
+            db, "mkt3", status="resolved", outcome="no", outcome_value=0.0
+        )
+        await _seed_position(
+            db, "pos3", "mkt3", side="BUY", entry_price=0.80, entry_size=100.0
+        )
         state.positions["pos3"] = _make_position("pos3", "mkt3", "BUY", 100.0, 0.80)
 
         summary = await monitor.check_resolutions()
@@ -158,13 +196,19 @@ class TestCheckResolutions:
 
     @pytest.mark.asyncio
     async def test_trade_outcome_written(self, db, state, monitor):
-        await _seed_market(db, "mkt5", status="closed", outcome="yes", outcome_value=1.0)
-        await _seed_position(db, "pos5", "mkt5", side="BUY", entry_price=0.50, entry_size=10.0)
+        await _seed_market(
+            db, "mkt5", status="closed", outcome="yes", outcome_value=1.0
+        )
+        await _seed_position(
+            db, "pos5", "mkt5", side="BUY", entry_price=0.50, entry_size=10.0
+        )
         state.positions["pos5"] = _make_position("pos5", "mkt5", "BUY", 10.0, 0.50)
 
         await monitor.check_resolutions()
 
-        cursor = await db.execute("SELECT actual_pnl FROM trade_outcomes WHERE id='outcome-pos5'")
+        cursor = await db.execute(
+            "SELECT actual_pnl FROM trade_outcomes WHERE id='outcome-pos5'"
+        )
         row = await cursor.fetchone()
         assert row is not None
         assert abs(row[0] - 5.0) < 0.01
@@ -185,10 +229,16 @@ class TestForceClosePosition:
     @pytest.mark.asyncio
     async def test_force_close_success(self, db, state, monitor):
         await _seed_market(db, "mkt_fc", status="open")
-        await _seed_position(db, "pos_fc", "mkt_fc", side="BUY", entry_price=0.40, entry_size=50.0)
-        state.positions["pos_fc"] = _make_position("pos_fc", "mkt_fc", "BUY", 50.0, 0.40)
+        await _seed_position(
+            db, "pos_fc", "mkt_fc", side="BUY", entry_price=0.40, entry_size=50.0
+        )
+        state.positions["pos_fc"] = _make_position(
+            "pos_fc", "mkt_fc", "BUY", 50.0, 0.40
+        )
 
-        result = await monitor.force_close_position("pos_fc", exit_price=0.60, reason="stop_loss")
+        result = await monitor.force_close_position(
+            "pos_fc", exit_price=0.60, reason="stop_loss"
+        )
 
         assert result is not None
         assert result["position_id"] == "pos_fc"

@@ -54,14 +54,12 @@ class ResolutionMonitor:
 
         try:
             # Query all open positions from DB
-            cursor = await self.db_connection.execute(
-                """
+            cursor = await self.db_connection.execute("""
                 SELECT id, market_id, side, entry_price, entry_size,
                        signal_id, strategy
                 FROM positions
                 WHERE status = 'open'
-                """
-            )
+                """)
             open_positions = await cursor.fetchall()
             summary["checked"] = len(open_positions)
 
@@ -69,7 +67,9 @@ class ResolutionMonitor:
                 logger.debug("No open positions to check for resolution")
                 return summary
 
-            logger.info("Checking resolution status for %d open positions", len(open_positions))
+            logger.info(
+                "Checking resolution status for %d open positions", len(open_positions)
+            )
 
             for position_row in open_positions:
                 (
@@ -374,17 +374,19 @@ class ResolutionMonitor:
                     age_seconds,
                 ) = row
 
-                stale_positions.append({
-                    "position_id": pos_id,
-                    "market_id": market_id,
-                    "side": side,
-                    "entry_price": entry_price,
-                    "entry_size": entry_size,
-                    "current_price": current_price,
-                    "unrealized_pnl": unrealized_pnl,
-                    "opened_at": opened_at,
-                    "age_hours": age_seconds / 3600.0,
-                })
+                stale_positions.append(
+                    {
+                        "position_id": pos_id,
+                        "market_id": market_id,
+                        "side": side,
+                        "entry_price": entry_price,
+                        "entry_size": entry_size,
+                        "current_price": current_price,
+                        "unrealized_pnl": unrealized_pnl,
+                        "opened_at": opened_at,
+                        "age_hours": age_seconds / 3600.0,
+                    }
+                )
 
             logger.debug(
                 "Found %d stale positions (threshold=%f hours)",

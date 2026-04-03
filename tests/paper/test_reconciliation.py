@@ -20,7 +20,7 @@ import pytest_asyncio
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from execution.reconciliation import ReconciliationEngine
+from execution.reconciliation import ReconciliationEngine  # noqa: E402
 
 MIGRATIONS_DIR = PROJECT_ROOT / "core" / "storage" / "migrations"
 NOW = datetime.now(timezone.utc).isoformat()
@@ -32,7 +32,10 @@ async def _apply_migrations(db: aiosqlite.Connection) -> None:
         clean_lines = []
         for line in sql.split("\n"):
             stripped = line.strip()
-            if stripped.upper().startswith("ALTER TABLE") and "ADD COLUMN" in stripped.upper():
+            if (
+                stripped.upper().startswith("ALTER TABLE")
+                and "ADD COLUMN" in stripped.upper()
+            ):
                 try:
                     await db.execute(stripped)
                 except Exception as e:
@@ -75,15 +78,27 @@ async def engine(db):
     )
 
 
-async def _insert_filled_order(db, order_id, platform, side, filled_size, filled_price, fee_paid=0.0):
+async def _insert_filled_order(
+    db, order_id, platform, side, filled_size, filled_price, fee_paid=0.0
+):
     """Insert a filled order using the real schema."""
     await db.execute(
         """INSERT INTO orders (id, signal_id, platform, market_id, side, order_type,
                                requested_price, requested_size, filled_price, filled_size,
                                fee_paid, status, submitted_at, updated_at)
            VALUES (?, 'sig1', ?, 'mkt1', ?, 'limit', ?, ?, ?, ?, ?, 'filled', ?, ?)""",
-        (order_id, platform, side, filled_price, filled_size,
-         filled_price, filled_size, fee_paid, NOW, NOW),
+        (
+            order_id,
+            platform,
+            side,
+            filled_price,
+            filled_size,
+            filled_price,
+            filled_size,
+            fee_paid,
+            NOW,
+            NOW,
+        ),
     )
     await db.commit()
 
@@ -112,14 +127,18 @@ class TestReconcileBalances:
 
     @pytest.mark.asyncio
     async def test_local_balance_from_buy_orders(self, db, engine):
-        await _insert_filled_order(db, "ord1", "polymarket", "buy", 10, 0.50, fee_paid=0.10)
+        await _insert_filled_order(
+            db, "ord1", "polymarket", "buy", 10, 0.50, fee_paid=0.10
+        )
         report = await engine.reconcile_balances()
         # BUY 10 @ 0.50 = -5.0, fee -0.10 → -5.10
         assert abs(report["polymarket"]["local"] - (-5.10)) < 0.01
 
     @pytest.mark.asyncio
     async def test_sell_increases_local_balance(self, db, engine):
-        await _insert_filled_order(db, "ord2", "kalshi", "sell", 20, 0.60, fee_paid=0.20)
+        await _insert_filled_order(
+            db, "ord2", "kalshi", "sell", 20, 0.60, fee_paid=0.20
+        )
         report = await engine.reconcile_balances()
         # SELL 20 @ 0.60 = +12.0, fee -0.20 → +11.80
         assert abs(report["kalshi"]["local"] - 11.80) < 0.01

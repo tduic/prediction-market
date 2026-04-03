@@ -346,15 +346,13 @@ class PolymarketExecutionClient(BaseExecutionClient):
             self._ensure_client()
             # py_clob_client doesn't expose balance directly;
             # compute from local DB trade history as fallback
-            cursor = await self.db.execute(
-                """
+            cursor = await self.db.execute("""
                 SELECT
                     COALESCE(SUM(CASE WHEN side = 'buy' THEN -filled_size * filled_price ELSE filled_size * filled_price END), 0)
                     + COALESCE(SUM(-fee_paid), 0)
                 FROM orders
                 WHERE platform LIKE '%polymarket%' AND status = 'filled'
-                """
-            )
+                """)
             row = await cursor.fetchone()
             return row[0] if row else None
         except Exception as e:

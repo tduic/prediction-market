@@ -174,14 +174,12 @@ class PositionStateManager:
             Number of positions loaded
         """
         try:
-            cursor = await self.db_connection.execute(
-                """
+            cursor = await self.db_connection.execute("""
                 SELECT id, market_id, strategy, side, entry_size, entry_price,
                        opened_at, current_price, unrealized_pnl
                 FROM positions
                 WHERE status = 'open'
-                """
-            )
+                """)
             rows = await cursor.fetchall()
 
             loaded_count = 0
@@ -201,6 +199,7 @@ class PositionStateManager:
                 # Convert opened_at to timestamp; fallback to 0
                 try:
                     from datetime import datetime
+
                     entry_ts = datetime.fromisoformat(opened_at).timestamp()
                 except Exception:
                     entry_ts = 0.0
@@ -313,6 +312,7 @@ class PositionStateManager:
 
             # Write trade outcome record
             from datetime import datetime, timezone
+
             trade_outcome_id = f"outcome-{position_id}"
 
             await self.db_connection.execute(
@@ -325,9 +325,9 @@ class PositionStateManager:
                 (
                     trade_outcome_id,
                     position_id,  # Using position_id as signal_id placeholder
-                    "unknown",    # Strategy not available in position object
+                    "unknown",  # Strategy not available in position object
                     position.market_id,
-                    0.0,          # predicted_pnl placeholder
+                    0.0,  # predicted_pnl placeholder
                     realized_pnl,
                     datetime.now(timezone.utc).isoformat(),
                     datetime.now(timezone.utc).isoformat(),
