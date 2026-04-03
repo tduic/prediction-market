@@ -202,10 +202,11 @@ class SignalGenerator:
             ),
         )
 
-        # Compute position sizing
-        bankroll = self.config.get("bankroll_usd", 100000)
+        # Compute position sizing (percentage-based)
+        bankroll = self.config.get("starting_capital", 10000)
         kelly_fraction = self.config.get("kelly_fraction", 0.25)
-        max_position_size = self.config.get("max_position_size_usd", 5000)
+        max_position_pct = self.config.get("max_position_pct", 0.05)
+        max_position_size = bankroll * max_position_pct
 
         kelly_f = compute_kelly_fraction(
             edge=violation.edge,

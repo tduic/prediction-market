@@ -1,13 +1,14 @@
 """
-Database connection pool and migration runner for aiosqlite.
-Implements single-writer pattern with concurrent read support via WAL mode.
+Async SQLite database wrapper with migration support.
+
+Provides a single-writer pattern using asyncio locks and
+automatic migration execution on startup.
 """
 
 import asyncio
 import logging
+from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
-
 import aiosqlite
 
 logger = logging.getLogger(__name__)
@@ -15,13 +16,13 @@ logger = logging.getLogger(__name__)
 
 class Database:
     """
-    Async database connection pool with migration support.
+    Async SQLite database wrapper.
 
     Features:
-    - Connection pooling for efficient resource usage
-    - Single writer pattern using asyncio.Lock
-    - WAL mode for concurrent reads
-    - Automatic schema migration on initialization
+    - Automatic WAL mode and foreign key enforcement
+    - Write lock for single-writer pattern
+    - Ordered migration execution with history tracking
+    - Row-factory dict access for fetch operations
     """
 
     def __init__(self, db_path: str, migrations_dir: str = "./migrations"):
@@ -38,7 +39,7 @@ class Database:
         self._write_lock = asyncio.Lock()
         self._initialized = False
 
-    async def init(self) -> None:
+    async def init(self):
         """
         Initialize the database connection and run migrations.
 
@@ -48,63 +49,114 @@ class Database:
             logger.warning("Database already initialized")
             return
 
-        # Create connection
         self._conn = await aiosqlite.connect(self.db_path)
-
-        # Enable WAL mode for concurrent reads
         await self._conn.execute("PRAGMA journal_mode=WAL")
-
-        # Enable foreign keys
         await self._conn.execute("PRAGMA foreign_keys=ON")
+        await self._conn.execute("PRAGMA busy_timeout=30000")
 
-        # Set reasonable timeout
-        self._conn.timeout = 30.0
-
-        # Run migrations
         await self._run_migrations()
 
         self._initialized = True
         logger.info(f"Database initialized at {self.db_path}")
 
-    async def _run_migrations(self) -> None:
+    async def _run_migrations(self):
         """
-        Run all SQL migrations in order.
+        Run all SQL migrations in order, skipping already-applied ones.
 
         Migrations are expected to be named 001_*, 002_*, etc.
+        Uses a migration_history table to track what has been applied.
         """
         if not self.migrations_dir.exists():
             logger.warning(f"Migrations directory not found: {self.migrations_dir}")
             return
 
+        # Ensure migration history table exists
+        await self._conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS migration_history (
+                filename TEXT PRIMARY KEY,
+                applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+            """
+        )
+        await self._conn.commit()
+
+        # Get already-applied migrations
+        cursor = await self._conn.execute(
+            "SELECT filename FROM migration_history"
+        )
+        rows = await cursor.fetchall()
+        applied = {row[0] for row in rows}
+
         migration_files = sorted(self.migrations_dir.glob("*.sql"))
 
         for migration_file in migration_files:
+            if migration_file.name in applied:
+                logger.debug(f"Skipping already-applied migration: {migration_file.name}")
+                continue
+
             logger.info(f"Running migration: {migration_file.name}")
 
             async with self._write_lock:
                 sql_content = migration_file.read_text()
+
+                # Handle ALTER TABLE ADD COLUMN separately (not idempotent in SQLite)
+                sql_content = await self._apply_alter_statements(sql_content)
+
                 try:
                     await self._conn.executescript(sql_content)
+                    await self._conn.execute(
+                        "INSERT INTO migration_history (filename) VALUES (?)",
+                        (migration_file.name,),
+                    )
                     await self._conn.commit()
                 except aiosqlite.Error as e:
                     await self._conn.rollback()
                     logger.error(
-                        f"Migration failed: {migration_file.name}: {e}", exc_info=True
+                        f"Migration failed: {migration_file.name}: {e}",
+                        exc_info=True,
                     )
                     raise
 
-    async def close(self) -> None:
+    async def _apply_alter_statements(self, sql_content: str) -> str:
+        """
+        Extract and safely execute ALTER TABLE ADD COLUMN statements.
+
+        SQLite ALTER TABLE ADD COLUMN fails if the column already exists
+        and there is no IF NOT EXISTS syntax for it. We handle each one
+        individually, catching the 'duplicate column' error, then remove
+        them from the script so executescript doesn't re-run them.
+
+        Returns the SQL content with ALTER statements removed.
+        """
+        lines_out = []
+        for line in sql_content.split("\n"):
+            stripped = line.strip()
+            if stripped.upper().startswith("ALTER TABLE") and "ADD COLUMN" in stripped.upper():
+                try:
+                    await self._conn.execute(stripped)
+                    await self._conn.commit()
+                    logger.debug(f"Applied: {stripped}")
+                except Exception as e:
+                    if "duplicate column" in str(e).lower():
+                        logger.debug(f"Column already exists, skipping: {stripped}")
+                    else:
+                        raise
+                # Either way, don't include in the script
+                lines_out.append(f"-- (applied separately) {stripped}")
+            else:
+                lines_out.append(line)
+
+        return "\n".join(lines_out)
+
+    async def close(self):
         """Close the database connection."""
         if self._conn:
             await self._conn.close()
             self._initialized = False
             logger.info("Database connection closed")
 
-    async def execute(
-        self,
-        sql: str,
-        params: tuple | None = None,
-    ) -> int:
+    async def execute(self, sql: str, params: tuple = ()) -> int:
         """
         Execute a single SQL statement (INSERT, UPDATE, DELETE).
 
@@ -122,19 +174,15 @@ class Database:
 
         async with self._write_lock:
             try:
-                cursor = await self._conn.execute(sql, params or ())
+                cursor = await self._conn.execute(sql, params)
                 await self._conn.commit()
                 return cursor.lastrowid
             except aiosqlite.Error as e:
                 await self._conn.rollback()
-                logger.error(f"Execute error: {e}", exc_info=True)
+                logger.error(f"Execute error: {e}")
                 raise
 
-    async def executemany(
-        self,
-        sql: str,
-        params_list: list[tuple],
-    ) -> int:
+    async def executemany(self, sql: str, params_list: list[tuple]) -> int:
         """
         Execute multiple SQL statements in a transaction.
 
@@ -155,14 +203,10 @@ class Database:
                 return cursor.lastrowid
             except aiosqlite.Error as e:
                 await self._conn.rollback()
-                logger.error(f"Executemany error: {e}", exc_info=True)
+                logger.error(f"Executemany error: {e}")
                 raise
 
-    async def fetch_one(
-        self,
-        sql: str,
-        params: tuple | None = None,
-    ) -> dict[str, Any] | None:
+    async def fetch_one(self, sql: str, params: tuple = ()) -> dict | None:
         """
         Fetch a single row as a dictionary.
 
@@ -177,26 +221,17 @@ class Database:
             raise RuntimeError("Database not initialized")
 
         try:
-            # Set row_factory for dict-like access
             self._conn.row_factory = aiosqlite.Row
-
-            cursor = await self._conn.execute(sql, params or ())
+            cursor = await self._conn.execute(sql, params)
             row = await cursor.fetchone()
-
             if row:
                 return dict(row)
             return None
         except aiosqlite.Error as e:
-            logger.error(f"Fetch one error: {e}", exc_info=True)
+            logger.error(f"Fetch one error: {e}")
             raise
-        finally:
-            self._conn.row_factory = None
 
-    async def fetch_all(
-        self,
-        sql: str,
-        params: tuple | None = None,
-    ) -> list[dict[str, Any]]:
+    async def fetch_all(self, sql: str, params: tuple = ()) -> list[dict]:
         """
         Fetch all rows as dictionaries.
 
@@ -211,24 +246,15 @@ class Database:
             raise RuntimeError("Database not initialized")
 
         try:
-            # Set row_factory for dict-like access
             self._conn.row_factory = aiosqlite.Row
-
-            cursor = await self._conn.execute(sql, params or ())
+            cursor = await self._conn.execute(sql, params)
             rows = await cursor.fetchall()
-
             return [dict(row) for row in rows]
         except aiosqlite.Error as e:
-            logger.error(f"Fetch all error: {e}", exc_info=True)
+            logger.error(f"Fetch all error: {e}")
             raise
-        finally:
-            self._conn.row_factory = None
 
-    async def fetch_val(
-        self,
-        sql: str,
-        params: tuple | None = None,
-    ) -> Any:
+    async def fetch_val(self, sql: str, params: tuple = ()):
         """
         Fetch a single scalar value.
 
@@ -243,14 +269,16 @@ class Database:
             raise RuntimeError("Database not initialized")
 
         try:
-            cursor = await self._conn.execute(sql, params or ())
+            cursor = await self._conn.execute(sql, params)
             row = await cursor.fetchone()
-            return row[0] if row else None
+            if row:
+                return row[0]
+            return None
         except aiosqlite.Error as e:
-            logger.error(f"Fetch val error: {e}", exc_info=True)
+            logger.error(f"Fetch val error: {e}")
             raise
 
-    async def execute_script(self, sql: str) -> None:
+    async def execute_script(self, sql: str):
         """
         Execute a multi-statement SQL script.
 
@@ -268,9 +296,10 @@ class Database:
                 await self._conn.commit()
             except aiosqlite.Error as e:
                 await self._conn.rollback()
-                logger.error(f"Script execution error: {e}", exc_info=True)
+                logger.error(f"Script execution error: {e}")
                 raise
 
+    @asynccontextmanager
     async def transaction(self):
         """
         Context manager for explicit transactions.
@@ -280,35 +309,22 @@ class Database:
                 await db.execute(...)
                 await db.execute(...)
         """
+        async with self._write_lock:
+            try:
+                yield self._conn
+                await self._conn.commit()
+            except Exception:
+                await self._conn.rollback()
+                raise
 
-        class TransactionContext:
-            def __init__(self, db: "Database"):
-                self.db = db
-
-            async def __aenter__(self):
-                await self.db._write_lock.acquire()
-                await self.db._conn.execute("BEGIN")
-                return self
-
-            async def __aexit__(self, exc_type, exc_val, exc_tb):
-                try:
-                    if exc_type:
-                        await self.db._conn.rollback()
-                    else:
-                        await self.db._conn.commit()
-                finally:
-                    self.db._write_lock.release()
-
-        return TransactionContext(self)
-
-    async def vacuum(self) -> None:
+    async def vacuum(self):
         """Vacuum the database to optimize storage."""
         async with self._write_lock:
             await self._conn.execute("VACUUM")
             await self._conn.commit()
             logger.info("Database vacuumed")
 
-    async def checkpoint(self) -> None:
+    async def checkpoint(self):
         """Checkpoint the WAL, merging it into the main database file."""
         async with self._write_lock:
             await self._conn.execute("PRAGMA wal_checkpoint(RESTART)")

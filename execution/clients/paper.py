@@ -220,3 +220,22 @@ class PaperExecutionClient(BaseExecutionClient):
             return None
         except Exception:
             return None
+
+    async def get_balance(self) -> float | None:
+        """Get paper balance from trade history."""
+        try:
+            cursor = await self.db.execute(
+                """
+                SELECT COALESCE(SUM(CASE
+                    WHEN side = 'buy' THEN -filled_size * filled_price
+                    ELSE filled_size * filled_price
+                END), 0) + COALESCE(SUM(-fee_paid), 0)
+                FROM orders
+                WHERE platform = ? AND status = 'filled'
+                """,
+                (self.platform_label,),
+            )
+            row = await cursor.fetchone()
+            return row[0] if row else None
+        except Exception:
+            return None

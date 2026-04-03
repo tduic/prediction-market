@@ -1,0 +1,137 @@
+name: Deploy to GCP
+
+on:
+  release:
+    types: [published]
+
+  # Allow manual trigger from the Actions tab
+  workflow_dispatch:
+
+env:
+  PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  ZONE: ${{ secrets.GCP_ZONE || 'us-central1-a' }}
+  VM_NAME: ${{ secrets.GCP_VM_NAME || 'predictor-vm' }}
+
+jobs:
+  deploy:
+    name: Deploy to GCE
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      # ── 1. Checkout code ──────────────────────────────────────────────
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ── 2. Authenticate to GCP ────────────────────────────────────────
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up gcloud CLI
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+
+      # ── 3. Package code (tar is much faster than recursive scp) ───────
+      - name: Package code
+        run: |
+          tar czf /tmp/predictor.tar.gz \
+            --exclude='.git' \
+            --exclude='node_modules' \
+            --exclude='venv' \
+            --exclude='__pycache__' \
+            --exclude='*.db' \
+            --exclude='*.db-shm' \
+            --exclude='*.db-wal' \
+            --exclude='deploy/config.env' \
+            .
+
+      # ── 4. Upload to VM ───────────────────────────────────────────────
+      - name: Upload to VM
+        run: |
+          gcloud compute scp /tmp/predictor.tar.gz \
+            "$VM_NAME:/tmp/predictor.tar.gz" \
+            --zone="$ZONE" \
+            --project="$PROJECT_ID" \
+            --strict-host-key-checking=no \
+            --quiet
+
+      # ── 5. Deploy on VM ───────────────────────────────────────────────
+      - name: Deploy on VM
+        run: |
+          gcloud compute ssh "$VM_NAME" \
+            --zone="$ZONE" \
+            --project="$PROJECT_ID" \
+            --command="$(cat <<'REMOTE_SCRIPT'
+          set -euo pipefail
+
+          APP_DIR="/data/predictor/prediction-market"
+          VENV="/data/predictor/venv"
+
+          echo "=== Extracting code ==="
+          sudo mkdir -p /tmp/predictor-staging
+          sudo tar xzf /tmp/predictor.tar.gz -C /tmp/predictor-staging
+
+          echo "=== Syncing to app directory ==="
+          sudo rsync -a --delete \
+            --exclude='.env' \
+            --exclude='*.db' \
+            --exclude='*.db-shm' \
+            --exclude='*.db-wal' \
+            --exclude='venv' \
+            --exclude='node_modules' \
+            --exclude='dashboard/dist' \
+            /tmp/predictor-staging/ "$APP_DIR/"
+          sudo chown -R predictor:predictor "$APP_DIR"
+
+          echo "=== Installing Python dependencies ==="
+          sudo -u predictor "$VENV/bin/pip" install --quiet --upgrade pip
+          sudo -u predictor "$VENV/bin/pip" install --quiet -r "$APP_DIR/requirements.txt"
+
+          echo "=== Building dashboard ==="
+          cd "$APP_DIR/dashboard"
+          sudo -u predictor npm install --silent 2>/dev/null
+          sudo -u predictor npm run build --silent 2>/dev/null
+          cd "$APP_DIR"
+
+          echo "=== Reloading systemd and restarting service ==="
+          sudo cp "$APP_DIR/deploy/predictor.service" /etc/systemd/system/predictor.service
+          sudo systemctl daemon-reload
+          sudo systemctl restart predictor
+
+          echo "=== Waiting for service to stabilize ==="
+          sleep 5
+          STATUS=$(sudo systemctl is-active predictor || true)
+          echo "Service status: $STATUS"
+
+          if [ "$STATUS" != "active" ]; then
+            echo "=== Service failed to start — last 30 log lines ==="
+            sudo journalctl -u predictor -n 30 --no-pager
+            exit 1
+          fi
+
+          echo "=== Cleaning up ==="
+          sudo rm -rf /tmp/predictor-staging /tmp/predictor.tar.gz
+
+          echo "=== Deploy complete ==="
+          REMOTE_SCRIPT
+          )"
+
+      # ── 6. Post-deploy health check ───────────────────────────────────
+      - name: Health check
+        run: |
+          echo "Checking service health..."
+          STATUS=$(gcloud compute ssh "$VM_NAME" \
+            --zone="$ZONE" \
+            --project="$PROJECT_ID" \
+            --command="sudo systemctl is-active predictor" 2>/dev/null || echo "unknown")
+
+          echo "Service status: $STATUS"
+          if [ "$STATUS" != "active" ]; then
+            echo "::error::Service is not running after deploy"
+            exit 1
+          fi
+
+          echo "Deploy successful — service is running."

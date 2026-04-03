@@ -20,10 +20,27 @@ MIGRATIONS_DIR = PROJECT_ROOT / "core" / "storage" / "migrations"
 
 
 async def _apply_migrations(db: aiosqlite.Connection) -> None:
-    """Run all .sql migration files in order."""
+    """Run all .sql migration files in order, handling ALTER TABLE safely."""
     for sql_file in sorted(MIGRATIONS_DIR.glob("*.sql")):
         sql = sql_file.read_text()
-        await db.executescript(sql)
+
+        # Extract ALTER TABLE ADD COLUMN statements and run them separately
+        # because they are not idempotent and executescript can't catch errors.
+        clean_lines = []
+        for line in sql.split("\n"):
+            stripped = line.strip()
+            if stripped.upper().startswith("ALTER TABLE") and "ADD COLUMN" in stripped.upper():
+                try:
+                    await db.execute(stripped)
+                except Exception as e:
+                    if "duplicate column" not in str(e).lower():
+                        raise
+                clean_lines.append(f"-- (applied separately) {stripped}")
+            else:
+                clean_lines.append(line)
+
+        await db.executescript("\n".join(clean_lines))
+
     await db.execute("PRAGMA foreign_keys = ON")
     await db.commit()
 

@@ -1,11 +1,10 @@
--- Migration 003: Improve per-strategy performance tracking
+-- Migration 003: Improve per-strategy performance tracking (idempotent)
 --
--- 1. Add strategy column to orders table for direct queries without
---    joining through signals.
--- 2. Replace hard-coded pnl_constraint_arb/pnl_event_model/etc columns
---    on pnl_snapshots with a normalized strategy_pnl_snapshots table.
+-- NOTE: The ALTER TABLE below is extracted and executed separately by
+-- db.py _apply_alter_statements() so it can handle "duplicate column"
+-- errors gracefully. Tests that apply migrations via raw executescript
+-- must handle this line too.
 
--- Add strategy column to orders (nullable for backcompat with existing rows)
 ALTER TABLE orders ADD COLUMN strategy TEXT;
 
 CREATE INDEX IF NOT EXISTS idx_orders_strategy ON orders(strategy);

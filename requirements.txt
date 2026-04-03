@@ -1,45 +1,44 @@
-# Core async database
+# ── Core ─────────────────────────────────────────────────────────
 aiosqlite==0.20.0
+python-dotenv==1.0.1
+python-dateutil==2.8.2
 
-# HTTP client for API calls
+# ── HTTP / API clients ──────────────────────────────────────────
 httpx==0.27.0
+httpx-socks>=0.9.0            # SOCKS5 proxy support for Polymarket EU routing
 beautifulsoup4>=4.12.0
 
-# Task scheduling
+# ── Dashboard (FastAPI + static file serving) ───────────────────
+fastapi>=0.115.0
+uvicorn>=0.34.0
+
+# ── Task scheduling ─────────────────────────────────────────────
 APScheduler==3.11.1
 
-# Redis (optional, for signal queue)
+# ── Redis (optional, for signal queue) ──────────────────────────
 redis==5.0.0
 
-# Configuration management
-python-dotenv==1.0.1
-
-# Data validation
+# ── Data validation ─────────────────────────────────────────────
 pydantic>=2.10.0
 pydantic-settings>=2.7.0
 
-# Scientific computing
+# ── Scientific computing ────────────────────────────────────────
 numpy>=1.26.0
 scipy>=1.12.0
 scikit-learn>=1.4.0
 
-# Cryptography (Kalshi RSA-PSS signing)
+# ── Cryptography (Kalshi RSA-PSS signing) ───────────────────────
 cryptography>=42.0.0
 
-# Polymarket CLOB client
+# ── Polymarket CLOB client ──────────────────────────────────────
 py-clob-client>=0.5.0
 
-# Utilities
-python-dateutil==2.8.2
-
-# Testing
+# ── Testing ─────────────────────────────────────────────────────
 pytest>=8.0.0
 pytest-asyncio>=0.24.0
 pytest-cov>=6.0.0
+pytest-mock>=3.10.0
 
-# Type checking
-mypy>=1.13.0
-
-# Code quality
-black>=24.0.0
+# ── Code quality ────────────────────────────────────────────────
 ruff>=0.8.0
+mypy>=1.13.0

@@ -49,6 +49,7 @@ class PolymarketExecutionClient(BaseExecutionClient):
         private_key: str | None = None,
         funder: str | None = None,
         chain_id: int = 137,
+        proxy_url: str | None = None,
     ) -> None:
         super().__init__(db_connection, platform_label="polymarket")
 
@@ -57,6 +58,9 @@ class PolymarketExecutionClient(BaseExecutionClient):
         self.chain_id = chain_id
         self.host = os.getenv("POLYMARKET_API_BASE", "https://clob.polymarket.com")
         self.signature_type = int(os.getenv("POLYMARKET_SIGNATURE_TYPE", "1"))
+
+        # SOCKS5 proxy URL for EU routing (e.g. "socks5://1.2.3.4:1080")
+        self.proxy_url = proxy_url or os.getenv("POLYMARKET_PROXY", "")
 
         self._client = None
         self._initialized = False
@@ -112,8 +116,44 @@ class PolymarketExecutionClient(BaseExecutionClient):
             funder=self.funder if self.funder else None,
         )
 
+        # Patch py-clob-client's HTTP layer to use SOCKS5 proxy
+        if self.proxy_url:
+            self._install_proxy()
+
         self._initialized = True
         logger.info("Polymarket CLOB client initialized")
+
+    def _install_proxy(self) -> None:
+        """
+        Replace py-clob-client's global httpx client with a proxy-aware one.
+
+        py-clob-client uses a module-level `_http_client = httpx.Client(http2=True)`
+        in `py_clob_client.http_helpers.helpers`. We swap it for an httpx client
+        configured with a SOCKS5 transport so all CLOB API calls route through
+        the EU proxy.
+        """
+        try:
+            import httpx
+            from httpx_socks import SyncProxyTransport
+            from py_clob_client.http_helpers import helpers as clob_helpers
+
+            transport = SyncProxyTransport.from_url(self.proxy_url)
+            proxied_client = httpx.Client(transport=transport, http2=False)
+            clob_helpers._http_client = proxied_client
+
+            logger.info(
+                "Polymarket HTTP traffic routed through proxy: %s",
+                self.proxy_url.split("@")[-1],  # log host:port only, not creds
+            )
+        except ImportError:
+            logger.error(
+                "httpx-socks not installed — cannot use POLYMARKET_PROXY. "
+                "Install with: pip install httpx-socks"
+            )
+            raise
+        except Exception as e:
+            logger.error("Failed to configure proxy: %s", e, exc_info=True)
+            raise
 
     async def submit_order(self, leg: OrderLeg) -> OrderResult:
         """Submit order to Polymarket, poll for fill. Returns unified OrderResult."""
@@ -297,6 +337,28 @@ class PolymarketExecutionClient(BaseExecutionClient):
             return self._client.get_order(order_id)
         except Exception as e:
             logger.error("Error getting order status: %s", e, exc_info=True)
+            return None
+
+    async def get_balance(self) -> float | None:
+        """Get USDC balance on Polymarket."""
+        await self._acquire_rate_limit()
+        try:
+            self._ensure_client()
+            # py_clob_client doesn't expose balance directly;
+            # compute from local DB trade history as fallback
+            cursor = await self.db.execute(
+                """
+                SELECT
+                    COALESCE(SUM(CASE WHEN side = 'buy' THEN -filled_size * filled_price ELSE filled_size * filled_price END), 0)
+                    + COALESCE(SUM(-fee_paid), 0)
+                FROM orders
+                WHERE platform LIKE '%polymarket%' AND status = 'filled'
+                """
+            )
+            row = await cursor.fetchone()
+            return row[0] if row else None
+        except Exception as e:
+            logger.error("Error getting Polymarket balance: %s", e, exc_info=True)
             return None
 
     async def close(self) -> None:

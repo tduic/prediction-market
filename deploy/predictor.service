@@ -1,0 +1,42 @@
+[Unit]
+Description=Predictor Trading System (paper mode)
+Documentation=https://github.com/tyjodu/prediction-market
+After=network-online.target redis.service
+Wants=network-online.target
+Requires=redis.service
+
+[Service]
+Type=simple
+User=predictor
+Group=predictor
+
+WorkingDirectory=/data/predictor/prediction-market
+
+# Load all environment variables from .env file
+EnvironmentFile=/data/predictor/.env
+
+# Python venv binary
+ExecStart=/data/predictor/venv/bin/python \
+    scripts/paper_trading_session.py \
+    --refresh \
+    --stream \
+    --dashboard \
+    --dashboard-port 8000
+
+# Restart policy: wait 30s before retrying on crash
+Restart=on-failure
+RestartSec=30
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+# Logging — view with: journalctl -u predictor -f
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=predictor
+
+# Resource limits
+LimitNOFILE=65536
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

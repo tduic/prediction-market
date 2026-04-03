@@ -109,13 +109,23 @@ class ConstraintEngineConfig:
 
 @dataclass
 class RiskControlConfig:
-    """Risk management settings."""
+    """Risk management settings.
 
-    max_position_size_usd: float = field(
-        default_factory=lambda: float(os.getenv("MAX_POSITION_SIZE_USD", "500"))
+    All limits are expressed as percentages of portfolio value so they
+    scale automatically as the account grows or shrinks.
+
+    Portfolio value is computed as:
+        starting_capital + realized_pnl - total_fees
+    """
+
+    starting_capital: float = field(
+        default_factory=lambda: float(os.getenv("STARTING_CAPITAL", "10000"))
     )
-    max_daily_loss_usd: float = field(
-        default_factory=lambda: float(os.getenv("MAX_DAILY_LOSS_USD", "200"))
+    max_position_pct: float = field(
+        default_factory=lambda: float(os.getenv("MAX_POSITION_PCT", "0.05"))
+    )
+    max_daily_loss_pct: float = field(
+        default_factory=lambda: float(os.getenv("MAX_DAILY_LOSS_PCT", "0.02"))
     )
     max_portfolio_exposure_pct: float = field(
         default_factory=lambda: float(os.getenv("MAX_PORTFOLIO_EXPOSURE_PCT", "0.20"))
@@ -125,6 +135,9 @@ class RiskControlConfig:
     )
     duplicate_signal_window_s: int = field(
         default_factory=lambda: int(os.getenv("DUPLICATE_SIGNAL_WINDOW_S", "300"))
+    )
+    min_edge: float = field(
+        default_factory=lambda: float(os.getenv("MIN_EDGE_TO_TRADE", "0.02"))
     )
 
 
@@ -242,10 +255,24 @@ class Config:
             )
 
         # Position size validation
-        if self.risk_controls.max_position_size_usd <= 0:
+        if not (0 < self.risk_controls.max_position_pct <= 1):
             raise ValueError(
-                f"MAX_POSITION_SIZE_USD must be > 0, "
-                f"got {self.risk_controls.max_position_size_usd}"
+                f"MAX_POSITION_PCT must be > 0 and <= 1, "
+                f"got {self.risk_controls.max_position_pct}"
+            )
+
+        # Daily loss validation
+        if not (0 < self.risk_controls.max_daily_loss_pct <= 1):
+            raise ValueError(
+                f"MAX_DAILY_LOSS_PCT must be > 0 and <= 1, "
+                f"got {self.risk_controls.max_daily_loss_pct}"
+            )
+
+        # Starting capital validation
+        if self.risk_controls.starting_capital <= 0:
+            raise ValueError(
+                f"STARTING_CAPITAL must be > 0, "
+                f"got {self.risk_controls.starting_capital}"
             )
 
         # Spread validation

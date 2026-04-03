@@ -1,8 +1,11 @@
 """
 Signal handler for validating and processing trading signals.
 
-Receives signals from the queue, validates them, and routes them
-to the order router for execution.
+Receives signals from the queue, validates them, runs risk checks,
+and routes them to the order router for execution.
+
+Risk checks are ENFORCED here — a signal that fails any check is
+rejected and logged, never routed to exchange clients.
 """
 
 import logging
@@ -13,6 +16,8 @@ import aiosqlite
 import redis.asyncio as redis
 from pydantic import ValidationError
 
+from core.config import RiskControlConfig, get_config
+from core.signals.risk import run_all_checks
 from execution.models import OrderLeg, TradingSignal
 from execution.router import OrderRouter
 
@@ -27,6 +32,8 @@ class SignalHandler:
         db_connection: aiosqlite.Connection,
         redis_client: redis.Redis,
         execution_mode: str = "live",
+        risk_config: RiskControlConfig | None = None,
+        reconciliation_engine: Any | None = None,
     ) -> None:
         """
         Initialize the signal handler.
@@ -34,12 +41,16 @@ class SignalHandler:
         Args:
             db_connection: SQLite connection for writing results
             redis_client: Redis client for queue operations
-            execution_mode: Execution mode - "live" or "mock" (default: "live")
+            execution_mode: Execution mode - "live", "paper", or "mock"
+            risk_config: Risk control configuration. If None, loaded from env.
+            reconciliation_engine: Optional ReconciliationEngine for halt checks.
         """
         self.db_connection = db_connection
         self.redis_client = redis_client
         self.execution_mode = execution_mode
         self.order_router = OrderRouter(db_connection, execution_mode=execution_mode)
+        self.risk_config = risk_config or get_config().risk_controls
+        self.reconciliation_engine = reconciliation_engine
 
     async def validate_signal(self, payload: dict[str, Any]) -> bool:
         """
@@ -114,16 +125,36 @@ class SignalHandler:
         """
         Process a trading signal end-to-end.
 
+        Flow:
+            1. Validate signal schema + TTL
+            2. Validate each leg's parameters
+            3. Run ALL risk checks (position limit, daily loss, exposure, dedup, min edge)
+            4. If all pass → route to exchange clients
+            5. If any fail → reject and log
+
         Args:
             payload: The signal payload
-
-        Raises:
-            ValidationError: If signal validation fails
         """
         signal_id = payload.get("signal_id", "unknown")
 
         try:
-            # Validate signal schema
+            # ── 0. Reconciliation halt check ──
+            if (
+                self.reconciliation_engine
+                and self.reconciliation_engine.trading_halted
+            ):
+                logger.error(
+                    "TRADING HALTED by reconciliation — rejecting signal %s",
+                    signal_id,
+                )
+                await self._log_signal_intent(
+                    signal_id,
+                    "REJECTED",
+                    "Trading halted by reconciliation discrepancy",
+                )
+                return
+
+            # ── 1. Schema validation ──
             if not await self.validate_signal(payload):
                 await self._log_signal_intent(
                     signal_id, "REJECTED", "Signal validation failed"
@@ -133,7 +164,7 @@ class SignalHandler:
             signal = TradingSignal(**payload)
             logger.info("Processing signal: %s", signal_id)
 
-            # Validate each leg independently
+            # ── 2. Leg parameter validation ──
             valid_legs = []
             for idx, leg in enumerate(signal.legs):
                 if await self.validate_params_independently(leg):
@@ -145,12 +176,29 @@ class SignalHandler:
                 await self._log_signal_intent(signal_id, "REJECTED", "No valid legs")
                 return
 
-            # Log intent to process
-            await self._log_signal_intent(
-                signal_id, "INITIATED", f"Processing {len(valid_legs)} legs"
+            # ── 3. Risk checks (ENFORCED) ──
+            all_passed, risk_results = await run_all_checks(
+                signal=signal,
+                risk_config=self.risk_config,
+                db=self.db_connection,
             )
 
-            # Route orders to platforms
+            if not all_passed:
+                failed = [r for r in risk_results if not r.passed]
+                reasons = "; ".join(f"{r.check_type}: {r.detail}" for r in failed)
+                logger.warning(
+                    "RISK REJECTED signal %s: %s", signal_id, reasons,
+                )
+                await self._log_signal_intent(
+                    signal_id, "RISK_REJECTED", f"Failed checks: {reasons}"
+                )
+                return
+
+            # ── 4. Route orders ──
+            await self._log_signal_intent(
+                signal_id, "INITIATED", f"Processing {len(valid_legs)} legs (all risk checks passed)"
+            )
+
             await self.order_router.route_orders(
                 signal_id=signal_id,
                 legs=valid_legs,

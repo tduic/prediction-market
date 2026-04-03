@@ -1,15 +1,28 @@
-"""Risk checks for signal generation."""
+"""
+Risk checks for signal validation before execution.
+
+All monetary limits are computed as percentages of current portfolio value,
+so they scale automatically as the account grows or shrinks.
+
+Portfolio value = starting_capital + realized_pnl_total - fees_total
+
+These checks are called by the execution handler BEFORE routing orders.
+Every check result is logged to the risk_check_log table for audit.
+"""
 
 import logging
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any
+
+import aiosqlite
 
 logger = logging.getLogger(__name__)
 
 
 @dataclass
 class RiskCheckResult:
-    """Result of a risk check."""
+    """Result of a single risk check."""
 
     passed: bool
     check_type: str
@@ -18,22 +31,47 @@ class RiskCheckResult:
     detail: str
 
 
+async def get_portfolio_value(
+    db: aiosqlite.Connection,
+    starting_capital: float,
+) -> float:
+    """
+    Compute current portfolio value from trade history.
+
+    Returns starting_capital + sum(actual_pnl) - sum(fees_total)
+    from trade_outcomes. Falls back to starting_capital if no trades.
+    """
+    try:
+        cursor = await db.execute(
+            "SELECT COALESCE(SUM(actual_pnl), 0), COALESCE(SUM(fees_total), 0) "
+            "FROM trade_outcomes"
+        )
+        row = await cursor.fetchone()
+        realized_pnl = row[0] if row else 0
+        total_fees = row[1] if row else 0
+        return starting_capital + realized_pnl - total_fees
+    except Exception as e:
+        logger.warning("Could not compute portfolio value: %s — using starting_capital", e)
+        return starting_capital
+
+
 async def check_position_limit(
-    signal: Any, config: dict, db: Any | None = None
+    signal: Any,
+    portfolio_value: float,
+    max_position_pct: float,
+    db: aiosqlite.Connection | None = None,
 ) -> RiskCheckResult:
     """
-    Check if signal respects maximum position size limit.
+    Check if signal size respects maximum position size (% of portfolio).
 
-    Args:
-        signal: Signal object
-        config: Config dict with max_position_size_usd
-        db: Database connection
-
-    Returns:
-        RiskCheckResult
+    A single trade should not risk more than max_position_pct of the portfolio.
+    Default: 5% → on a $10,000 portfolio, max single position = $500.
     """
-    max_size = config.get("max_position_size_usd", 5000)
-    signal_size = sum(leg.size_usd for leg in signal.legs)
+    max_size = portfolio_value * max_position_pct
+    signal_size = 0.0
+    for leg in signal.legs:
+        price = leg.limit_price if leg.limit_price is not None else 0.5
+        signal_size += leg.size * price
 
     passed = signal_size <= max_size
 
@@ -42,41 +80,48 @@ async def check_position_limit(
         check_type="position_limit",
         check_value=signal_size,
         threshold=max_size,
-        detail=f"Signal size {signal_size:.2f} vs limit {max_size:.2f}",
+        detail=(
+            f"Signal size ${signal_size:.2f} vs limit ${max_size:.2f} "
+            f"({max_position_pct:.0%} of ${portfolio_value:.2f})"
+        ),
     )
 
 
 async def check_daily_loss_limit(
-    signal: Any, config: dict, db: Any | None = None
+    signal: Any,
+    portfolio_value: float,
+    max_daily_loss_pct: float,
+    db: aiosqlite.Connection | None = None,
 ) -> RiskCheckResult:
     """
-    Check daily loss limit not exceeded.
+    Check if today's realized losses are within the daily loss limit.
 
-    Args:
-        signal: Signal object
-        config: Config dict with max_daily_loss_usd
-        db: Database connection
-
-    Returns:
-        RiskCheckResult
+    Default: 2% → on a $10,000 portfolio, max daily loss = $200.
     """
+    max_loss = portfolio_value * max_daily_loss_pct
+
     if not db:
-        # No DB, assume check passes
         return RiskCheckResult(
             passed=True,
             check_type="daily_loss_limit",
             check_value=0,
-            threshold=config.get("max_daily_loss_usd", 10000),
-            detail="No DB to check realized loss",
+            threshold=max_loss,
+            detail="No DB — cannot verify daily loss, passing cautiously",
         )
 
     try:
-        daily_loss = await db.get_realized_loss_today()
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        cursor = await db.execute(
+            "SELECT COALESCE(SUM(actual_pnl), 0) FROM trade_outcomes "
+            "WHERE DATE(created_at) = ? AND actual_pnl < 0",
+            (today,),
+        )
+        row = await cursor.fetchone()
+        daily_loss = abs(row[0]) if row and row[0] else 0
     except Exception as e:
-        logger.error(f"Error checking daily loss: {e}")
+        logger.error("Error checking daily loss: %s", e)
         daily_loss = 0
 
-    max_loss = config.get("max_daily_loss_usd", 10000)
     passed = daily_loss < max_loss
 
     return RiskCheckResult(
@@ -84,68 +129,70 @@ async def check_daily_loss_limit(
         check_type="daily_loss_limit",
         check_value=daily_loss,
         threshold=max_loss,
-        detail=f"Daily loss {daily_loss:.2f} vs limit {max_loss:.2f}",
+        detail=(
+            f"Today's losses ${daily_loss:.2f} vs limit ${max_loss:.2f} "
+            f"({max_daily_loss_pct:.0%} of ${portfolio_value:.2f})"
+        ),
     )
 
 
-async def check_concentration(
-    signal: Any, config: dict, db: Any | None = None
+async def check_portfolio_exposure(
+    signal: Any,
+    portfolio_value: float,
+    max_exposure_pct: float,
+    db: aiosqlite.Connection | None = None,
 ) -> RiskCheckResult:
     """
-    Check market concentration limit.
+    Check that total open exposure + this signal doesn't exceed the cap.
 
-    Args:
-        signal: Signal object
-        config: Config dict with max_concentration_pct
-        db: Database connection
-
-    Returns:
-        RiskCheckResult
+    Default: 20% → on $10,000, max total deployed capital = $2,000.
     """
-    if not db:
-        return RiskCheckResult(
-            passed=True,
-            check_type="concentration",
-            check_value=0,
-            threshold=config.get("max_concentration_pct", 0.3),
-            detail="No DB to check concentration",
-        )
+    max_exposure = portfolio_value * max_exposure_pct
 
-    try:
-        total_exposure = await db.get_total_exposure()
-    except Exception as e:
-        logger.error(f"Error checking concentration: {e}")
-        total_exposure = 0
+    # Current open exposure from positions table
+    current_exposure = 0.0
+    if db:
+        try:
+            cursor = await db.execute(
+                "SELECT COALESCE(SUM(entry_price * entry_size), 0) "
+                "FROM positions WHERE status = 'open'"
+            )
+            row = await cursor.fetchone()
+            current_exposure = row[0] if row and row[0] else 0
+        except Exception as e:
+            logger.warning("Could not query open exposure: %s", e)
 
-    signal_exposure = sum(leg.size_usd for leg in signal.legs)
-    bankroll = config.get("bankroll_usd", 100000)
-    max_concentration = config.get("max_concentration_pct", 0.3)
+    # Add this signal's notional
+    signal_notional = 0.0
+    for leg in signal.legs:
+        price = leg.limit_price if leg.limit_price is not None else 0.5
+        signal_notional += leg.size * price
 
-    total_pct = (total_exposure + signal_exposure) / bankroll if bankroll > 0 else 0
-    passed = total_pct <= max_concentration
+    total_exposure = current_exposure + signal_notional
+    passed = total_exposure <= max_exposure
 
     return RiskCheckResult(
         passed=passed,
-        check_type="concentration",
-        check_value=total_pct,
-        threshold=max_concentration,
-        detail=f"Portfolio concentration {total_pct:.2%} vs limit {max_concentration:.2%}",
+        check_type="portfolio_exposure",
+        check_value=total_exposure,
+        threshold=max_exposure,
+        detail=(
+            f"Total exposure ${total_exposure:.2f} (open ${current_exposure:.2f} + "
+            f"signal ${signal_notional:.2f}) vs limit ${max_exposure:.2f} "
+            f"({max_exposure_pct:.0%} of ${portfolio_value:.2f})"
+        ),
     )
 
 
 async def check_duplicate_signal(
-    signal: Any, config: dict, db: Any | None = None
+    signal: Any,
+    duplicate_window_s: int = 300,
+    db: aiosqlite.Connection | None = None,
 ) -> RiskCheckResult:
     """
-    Check for duplicate signals on same market.
+    Check for duplicate signals on the same market within a time window.
 
-    Args:
-        signal: Signal object
-        config: Config dict
-        db: Database connection
-
-    Returns:
-        RiskCheckResult
+    Prevents the system from stacking trades on the same opportunity.
     """
     if not db:
         return RiskCheckResult(
@@ -153,15 +200,22 @@ async def check_duplicate_signal(
             check_type="duplicate",
             check_value=0,
             threshold=0,
-            detail="No DB to check duplicates",
+            detail="No DB — cannot check duplicates",
         )
 
     try:
-        # Check for recent signals on same markets
         market_ids = [leg.market_id for leg in signal.legs]
-        recent_count = await db.count_recent_signals(market_ids, minutes=5)
+        placeholders = ",".join("?" for _ in market_ids)
+        cursor = await db.execute(
+            f"SELECT COUNT(*) FROM orders "
+            f"WHERE market_id IN ({placeholders}) "
+            f"AND submitted_at > datetime('now', '-{duplicate_window_s} seconds')",
+            market_ids,
+        )
+        row = await cursor.fetchone()
+        recent_count = row[0] if row else 0
     except Exception as e:
-        logger.error(f"Error checking duplicates: {e}")
+        logger.warning("Error checking duplicates: %s", e)
         recent_count = 0
 
     passed = recent_count == 0
@@ -171,29 +225,20 @@ async def check_duplicate_signal(
         check_type="duplicate",
         check_value=recent_count,
         threshold=0,
-        detail=f"Found {recent_count} recent signals on same markets",
+        detail=f"Found {recent_count} recent orders on same markets (window: {duplicate_window_s}s)",
     )
 
 
 async def check_min_edge(
-    signal: Any, config: dict, db: Any | None = None
+    signal: Any,
+    min_edge: float = 0.02,
 ) -> RiskCheckResult:
     """
-    Check minimum edge threshold.
+    Check that the signal's expected edge exceeds the minimum threshold.
 
-    Args:
-        signal: Signal object
-        config: Config dict with min_edge
-        db: Database connection
-
-    Returns:
-        RiskCheckResult
+    Prevents trading on noise — the edge must clear fees + slippage.
     """
-    min_edge = config.get("min_edge", 0.02)
-
-    # Get edge from metadata if available
-    edge = getattr(signal, "edge", 0)
-
+    edge = getattr(signal, "edge", None) or 0
     passed = abs(edge) >= min_edge
 
     return RiskCheckResult(
@@ -206,45 +251,47 @@ async def check_min_edge(
 
 
 async def run_all_checks(
-    signal: Any, config: dict, db: Any | None = None
+    signal: Any,
+    risk_config: Any,
+    db: aiosqlite.Connection | None = None,
 ) -> tuple[bool, list[RiskCheckResult]]:
     """
-    Run all risk checks on signal.
+    Run all risk checks on a signal before execution.
 
     Args:
-        signal: Signal object
-        config: Config dict
-        db: Database connection
+        signal: TradingSignal with .legs, optionally .edge
+        risk_config: RiskControlConfig from core.config
+        db: aiosqlite.Connection for querying portfolio state
 
     Returns:
         (all_passed, list of RiskCheckResult)
     """
-    results = []
+    portfolio_value = await get_portfolio_value(db, risk_config.starting_capital) if db else risk_config.starting_capital
 
-    # Run checks in order
+    results: list[RiskCheckResult] = []
+
     checks = [
-        check_position_limit,
-        check_daily_loss_limit,
-        check_concentration,
-        check_duplicate_signal,
-        check_min_edge,
+        lambda: check_position_limit(signal, portfolio_value, risk_config.max_position_pct, db),
+        lambda: check_daily_loss_limit(signal, portfolio_value, risk_config.max_daily_loss_pct, db),
+        lambda: check_portfolio_exposure(signal, portfolio_value, risk_config.max_portfolio_exposure_pct, db),
+        lambda: check_duplicate_signal(signal, risk_config.duplicate_signal_window_s, db),
+        lambda: check_min_edge(signal, risk_config.min_edge),
     ]
 
     for check_fn in checks:
         try:
-            result = await check_fn(signal, config, db)
+            result = await check_fn()
             results.append(result)
 
-            # Log result
             status = "PASS" if result.passed else "FAIL"
-            logger.info(f"[{status}] {result.check_type}: {result.detail}")
+            logger.info("[%s] %s: %s", status, result.check_type, result.detail)
 
         except Exception as e:
-            logger.error(f"Error running {check_fn.__name__}: {e}")
+            logger.error("Error running risk check: %s", e)
             results.append(
                 RiskCheckResult(
                     passed=False,
-                    check_type=check_fn.__name__,
+                    check_type="error",
                     check_value=0,
                     threshold=0,
                     detail=f"Check error: {str(e)}",
@@ -253,4 +300,30 @@ async def run_all_checks(
 
     all_passed = all(r.passed for r in results)
 
+    # Log all results to risk_check_log for audit
+    if db:
+        await _log_risk_checks(db, signal, results)
+
     return all_passed, results
+
+
+async def _log_risk_checks(
+    db: aiosqlite.Connection,
+    signal: Any,
+    results: list[RiskCheckResult],
+) -> None:
+    """Write risk check results to the risk_check_log table."""
+    signal_id = getattr(signal, "signal_id", "unknown")
+    now = datetime.now(timezone.utc).isoformat()
+
+    try:
+        for r in results:
+            await db.execute(
+                """INSERT INTO risk_check_log
+                   (signal_id, check_type, passed, check_value, threshold, detail, evaluated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (signal_id, r.check_type, int(r.passed), r.check_value, r.threshold, r.detail, now),
+            )
+        await db.commit()
+    except Exception as e:
+        logger.warning("Failed to log risk checks: %s", e)

@@ -8,6 +8,7 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass
+from typing import Any
 
 import aiosqlite
 
@@ -162,6 +163,74 @@ class PositionStateManager:
         """
         return list(self.positions.values())
 
+    async def load_positions_from_db(self) -> int:
+        """
+        Load all open positions from database on startup.
+
+        Populates the in-memory position dict with positions from the
+        positions table that have status='open'.
+
+        Returns:
+            Number of positions loaded
+        """
+        try:
+            cursor = await self.db_connection.execute(
+                """
+                SELECT id, market_id, strategy, side, entry_size, entry_price,
+                       opened_at, current_price, unrealized_pnl
+                FROM positions
+                WHERE status = 'open'
+                """
+            )
+            rows = await cursor.fetchall()
+
+            loaded_count = 0
+            for row in rows:
+                (
+                    position_id,
+                    market_id,
+                    platform,
+                    side,
+                    entry_size,
+                    entry_price,
+                    opened_at,
+                    current_price,
+                    unrealized_pnl,
+                ) = row
+
+                # Convert opened_at to timestamp; fallback to 0
+                try:
+                    from datetime import datetime
+                    entry_ts = datetime.fromisoformat(opened_at).timestamp()
+                except Exception:
+                    entry_ts = 0.0
+
+                position = Position(
+                    position_id=position_id,
+                    market_id=market_id,
+                    platform=platform or "",
+                    side=side,
+                    quantity=entry_size,
+                    entry_price=entry_price,
+                    entry_timestamp=entry_ts,
+                    current_price=current_price,
+                    unrealized_pnl=unrealized_pnl or 0.0,
+                )
+
+                self.positions[position_id] = position
+                loaded_count += 1
+
+            logger.info(
+                "Loaded %d open positions from database on startup",
+                loaded_count,
+            )
+
+            return loaded_count
+
+        except Exception as e:
+            logger.error("Error loading positions from database: %s", e, exc_info=True)
+            return 0
+
     def get_positions_by_market(self, market_id: str) -> list[Position]:
         """
         Get all positions for a specific market.
@@ -186,26 +255,117 @@ class PositionStateManager:
         """
         return self.positions.get(position_id)
 
-    async def close_position(self, position_id: str) -> bool:
+    async def close_position(
+        self,
+        position_id: str,
+        exit_price: float,
+        resolution_outcome: str = "",
+        fees: float = 0.0,
+    ) -> dict[str, Any] | None:
         """
-        Close a position (remove from in-memory store).
+        Close a position and persist exit data to database.
+
+        Computes realized PnL based on side, entry price, exit price, and quantity.
+        Updates the positions table with exit data and writes trade outcome record.
 
         Args:
             position_id: The position ID to close
+            exit_price: The exit price
+            resolution_outcome: The resolution outcome or reason for closure
+            fees: Fees paid on the exit
 
         Returns:
-            True if position was closed, False if not found
+            Dict with closure details or None if position not found
         """
-        if position_id in self.positions:
-            position = self.positions.pop(position_id)
-            logger.info(
-                "Position closed: %s (realized_pnl=%f)",
-                position_id,
-                position.unrealized_pnl,
-            )
-            return True
+        if position_id not in self.positions:
+            logger.warning("Position not found for closure: %s", position_id)
+            return None
 
-        return False
+        try:
+            position = self.positions.pop(position_id)
+
+            # Compute realized PnL based on side
+            if position.side == "BUY":
+                realized_pnl = (exit_price - position.entry_price) * position.quantity
+            else:  # SELL
+                realized_pnl = (position.entry_price - exit_price) * position.quantity
+
+            # Update positions table
+            await self.db_connection.execute(
+                """
+                UPDATE positions
+                SET status = 'closed',
+                    exit_price = ?,
+                    exit_size = ?,
+                    realized_pnl = ?,
+                    resolution_outcome = ?,
+                    closed_at = datetime('now')
+                WHERE id = ?
+                """,
+                (
+                    exit_price,
+                    position.quantity,
+                    realized_pnl,
+                    resolution_outcome,
+                    position_id,
+                ),
+            )
+
+            # Write trade outcome record
+            from datetime import datetime, timezone
+            trade_outcome_id = f"outcome-{position_id}"
+
+            await self.db_connection.execute(
+                """
+                INSERT OR REPLACE INTO trade_outcomes
+                (id, signal_id, strategy, market_id_a,
+                 predicted_pnl, actual_pnl, resolved_at, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    trade_outcome_id,
+                    position_id,  # Using position_id as signal_id placeholder
+                    "unknown",    # Strategy not available in position object
+                    position.market_id,
+                    0.0,          # predicted_pnl placeholder
+                    realized_pnl,
+                    datetime.now(timezone.utc).isoformat(),
+                    datetime.now(timezone.utc).isoformat(),
+                ),
+            )
+
+            await self.db_connection.commit()
+
+            closure_details = {
+                "position_id": position_id,
+                "market_id": position.market_id,
+                "side": position.side,
+                "entry_price": position.entry_price,
+                "exit_price": exit_price,
+                "entry_size": position.quantity,
+                "realized_pnl": realized_pnl,
+                "fees": fees,
+                "resolution_outcome": resolution_outcome,
+            }
+
+            logger.info(
+                "Position closed: %s (exit_price=%.6f, realized_pnl=%.6f, outcome=%s)",
+                position_id,
+                exit_price,
+                realized_pnl,
+                resolution_outcome,
+            )
+
+            return closure_details
+
+        except Exception as e:
+            logger.error(
+                "Error closing position: %s (position_id=%s)",
+                e,
+                position_id,
+                exc_info=True,
+            )
+            return None
 
     async def flush_to_db(self) -> None:
         """Flush all pending writes to SQLite database."""

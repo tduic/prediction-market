@@ -57,6 +57,10 @@ class BaseExecutionClient:
         """Get order status. Subclasses must implement."""
         raise NotImplementedError
 
+    async def get_balance(self) -> float | None:
+        """Get account balance. Subclasses must implement."""
+        raise NotImplementedError
+
     async def close(self) -> None:
         """Clean up resources. Override if needed."""
         pass

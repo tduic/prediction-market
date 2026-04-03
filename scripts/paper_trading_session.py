@@ -10,6 +10,7 @@ Usage:
     python scripts/paper_trading_session.py --refresh     # Fetch all markets, match, persist, trade once
     python scripts/paper_trading_session.py --once        # Use cached matches, trade once
     python scripts/paper_trading_session.py --stream      # Use cached matches + websocket prices, trade continuously
+    python scripts/paper_trading_session.py --stream --dashboard  # Stream + analytics dashboard on :8000
 """
 
 import argparse
@@ -26,7 +27,8 @@ from datetime import datetime, timezone
 from difflib import SequenceMatcher
 from pathlib import Path
 
-from dotenv import load_dotenv
+print("[startup] Loading environment...", flush=True)
+from dotenv import load_dotenv  # noqa: E402
 
 load_dotenv()
 
@@ -34,13 +36,21 @@ load_dotenv()
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
+print("[startup] Importing dependencies...", flush=True)
 import aiosqlite  # noqa: E402
 import httpx  # noqa: E402
 
+# Import directly from submodules to avoid core/__init__.py which eagerly
+# loads EventBus, Database, etc. and can hang on first compilation.
+print("[startup] Loading config...", flush=True)
 from core.config import get_config  # noqa: E402
+print("[startup] Loading storage...", flush=True)
 from core.storage.db import Database  # noqa: E402
+print("[startup] Loading analytics...", flush=True)
 from core.analytics import StrategyScorecard  # noqa: E402
+print("[startup] Loading logging config...", flush=True)
 from core.logging_config import configure_from_env  # noqa: E402
+print("[startup] All imports complete.", flush=True)
 
 logger = logging.getLogger(__name__)
 
@@ -628,34 +638,16 @@ def compute_match_score(
     return max(0.0, min(1.0, score))
 
 
-async def find_matches(db: aiosqlite.Connection, threshold: float = 0.80) -> list[dict]:
+def _find_matches_sync(
+    poly: list[tuple], kalshi: list[tuple], threshold: float
+) -> list[dict]:
     """
-    Find matching markets across platforms using inverted-index blocking.
+    CPU-bound matching logic — runs in a thread to avoid blocking the event loop.
 
-    Instead of O(n²) brute force, builds a token index on Kalshi markets
-    and only scores Polymarket markets against Kalshi candidates that share
-    at least 2 meaningful tokens. Runs in seconds even at 30k × 30k.
+    Builds a token index on Kalshi markets and scores Polymarket markets against
+    Kalshi candidates that share at least 2 meaningful tokens.
     """
     t_start = time.time()
-
-    cursor = await db.execute("""SELECT id, platform, title,
-           (SELECT yes_price FROM market_prices WHERE market_id = m.id
-            ORDER BY polled_at DESC LIMIT 1) as price
-           FROM markets m WHERE status = 'open'""")
-    rows = await cursor.fetchall()
-
-    poly = [(r[0], r[2], r[3]) for r in rows if r[1] == "polymarket" and r[3]]
-    kalshi = [(r[0], r[2], r[3]) for r in rows if r[1] == "kalshi" and r[3]]
-
-    logger.info(
-        "Matching %d Polymarket × %d Kalshi markets (inverted-index)...",
-        len(poly),
-        len(kalshi),
-    )
-
-    if not poly or not kalshi:
-        logger.info("One platform has 0 markets — skipping matching")
-        return []
 
     # Debug: dump sample titles
     logger.info("--- Sample Polymarket titles (first 5) ---")
@@ -772,6 +764,42 @@ async def find_matches(db: aiosqlite.Connection, threshold: float = 0.80) -> lis
                 m["kalshi_title"][:50],
             )
 
+    return matches
+
+
+async def find_matches(db: aiosqlite.Connection, threshold: float = 0.80) -> list[dict]:
+    """
+    Find matching markets across platforms using inverted-index blocking.
+
+    Instead of O(n²) brute force, builds a token index on Kalshi markets
+    and only scores Polymarket markets against Kalshi candidates that share
+    at least 2 meaningful tokens. Runs in seconds even at 30k × 30k.
+
+    The CPU-bound matching runs in a thread pool so it doesn't block the
+    asyncio event loop (which would freeze the dashboard).
+    """
+    cursor = await db.execute("""SELECT id, platform, title,
+           (SELECT yes_price FROM market_prices WHERE market_id = m.id
+            ORDER BY polled_at DESC LIMIT 1) as price
+           FROM markets m WHERE status = 'open'""")
+    rows = await cursor.fetchall()
+
+    poly = [(r[0], r[2], r[3]) for r in rows if r[1] == "polymarket" and r[3]]
+    kalshi = [(r[0], r[2], r[3]) for r in rows if r[1] == "kalshi" and r[3]]
+
+    logger.info(
+        "Matching %d Polymarket × %d Kalshi markets (inverted-index)...",
+        len(poly),
+        len(kalshi),
+    )
+
+    if not poly or not kalshi:
+        logger.info("One platform has 0 markets — skipping matching")
+        return []
+
+    # Run CPU-bound matching in a thread so the event loop stays responsive
+    # (keeps the dashboard serving requests during the 30k × 30k match)
+    matches = await asyncio.to_thread(_find_matches_sync, poly, kalshi, threshold)
     return matches
 
 
@@ -1948,6 +1976,99 @@ async def detect_single_platform_opportunities(
     return trades
 
 
+# ── PnL Snapshot ─────────────────────────────────────────────────────────────
+
+PAPER_CAPITAL = 10_000  # Default paper trading starting capital
+
+
+async def take_trading_snapshot(db: aiosqlite.Connection) -> int | None:
+    """
+    Write a pnl_snapshots row and per-strategy strategy_pnl_snapshots rows.
+
+    Computes metrics from trade_outcomes (the table paper trading writes to).
+    This feeds the dashboard's overview cards, equity curve, strategy PnL chart,
+    and risk metrics.
+    """
+    now = datetime.now(timezone.utc).isoformat()
+
+    try:
+        # ── Aggregate totals from trade_outcomes ──
+        cursor = await db.execute(
+            """SELECT
+                   COALESCE(SUM(actual_pnl), 0) as realized_pnl,
+                   COALESCE(SUM(fees_total), 0) as total_fees,
+                   COUNT(*) as trade_count
+               FROM trade_outcomes"""
+        )
+        totals = await cursor.fetchone()
+        realized_pnl_total = totals[0] if totals else 0
+        fees_total = totals[1] if totals else 0
+        total_capital = PAPER_CAPITAL + realized_pnl_total - fees_total
+        cash = total_capital  # Paper trading has no open positions
+
+        # ── Insert pnl_snapshots row ──
+        cursor = await db.execute(
+            """INSERT INTO pnl_snapshots (
+                   snapshot_type, total_capital, cash,
+                   open_positions_count, open_notional,
+                   unrealized_pnl, realized_pnl_today, realized_pnl_total,
+                   fees_today, fees_total,
+                   pnl_constraint_arb, pnl_event_model, pnl_calibration,
+                   pnl_liquidity, pnl_latency,
+                   capital_polymarket, capital_kalshi, snapshotted_at
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                "periodic",
+                total_capital,
+                cash,
+                0,    # open_positions_count
+                0.0,  # open_notional
+                0.0,  # unrealized_pnl
+                0.0,  # realized_pnl_today (we could compute this, but keeping simple)
+                realized_pnl_total,
+                0.0,  # fees_today
+                fees_total,
+                0.0, 0.0, 0.0, 0.0, 0.0,  # strategy-specific PnL columns
+                total_capital * 0.6,  # capital_polymarket
+                total_capital * 0.4,  # capital_kalshi
+                now,
+            ),
+        )
+        snapshot_id = cursor.lastrowid
+
+        # ── Per-strategy breakdown → strategy_pnl_snapshots ──
+        cursor = await db.execute(
+            """SELECT
+                   strategy,
+                   COALESCE(SUM(actual_pnl), 0) as realized_pnl,
+                   COALESCE(SUM(fees_total), 0) as fees,
+                   COUNT(*) as trade_count,
+                   SUM(CASE WHEN actual_pnl > 0 THEN 1 ELSE 0 END) as win_count
+               FROM trade_outcomes
+               GROUP BY strategy"""
+        )
+        strategy_rows = await cursor.fetchall()
+
+        for row in strategy_rows:
+            await db.execute(
+                """INSERT INTO strategy_pnl_snapshots
+                       (snapshot_id, strategy, realized_pnl, unrealized_pnl, fees, trade_count, win_count)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (snapshot_id, row[0], row[1], 0.0, row[2], row[3], row[4]),
+            )
+
+        await db.commit()
+        logger.info(
+            "Snapshot #%d: capital=$%.2f realized=$%.4f fees=$%.4f",
+            snapshot_id, total_capital, realized_pnl_total, fees_total,
+        )
+        return snapshot_id
+
+    except Exception as e:
+        logger.error("Failed to take snapshot: %s", e)
+        return None
+
+
 # ── Analytics report ─────────────────────────────────────────────────────────
 
 
@@ -2142,6 +2263,17 @@ async def main():
         default=0.03,
         help="Minimum spread to trade (default: 0.03)",
     )
+    parser.add_argument(
+        "--dashboard",
+        action="store_true",
+        help="Launch the analytics dashboard web server alongside trading.",
+    )
+    parser.add_argument(
+        "--dashboard-port",
+        type=int,
+        default=8000,
+        help="Port for the analytics dashboard (default: 8000)",
+    )
     args = parser.parse_args()
 
     cfg = get_config()
@@ -2151,6 +2283,8 @@ async def main():
     logger.info("  Mode: %s (execution: %s)", mode, cfg.execution.execution_mode)
     logger.info("  Database: %s", cfg.database.db_path)
     logger.info("  Min spread: %.4f", args.min_spread)
+    if args.dashboard:
+        logger.info("  Dashboard: http://127.0.0.1:%d", args.dashboard_port)
 
     db_wrapper = Database(
         cfg.database.db_path, migrations_dir=cfg.database.migrations_dir
@@ -2159,6 +2293,40 @@ async def main():
     db = db_wrapper._conn
 
     try:
+        # ── Dashboard (start FIRST so it's available during refresh) ──
+        dashboard_task = None
+        if args.dashboard and args.stream:
+            from scripts.dashboard_api import (
+                create_dashboard_app,
+                start_dashboard_server,
+            )
+
+            script_dir = Path(__file__).resolve().parent
+            dist_dir = script_dir.parent / "dashboard" / "dist"
+            static_dir = str(dist_dir) if dist_dir.is_dir() else None
+            if not static_dir:
+                logger.warning(
+                    "dashboard/dist/ not found — run 'npm run build' in dashboard/. "
+                    "API will still be available but no frontend."
+                )
+            dashboard_app = create_dashboard_app(
+                db_path=cfg.database.db_path,
+                static_dir=static_dir,
+            )
+            dashboard_task = asyncio.create_task(
+                start_dashboard_server(
+                    dashboard_app,
+                    host="127.0.0.1",
+                    port=args.dashboard_port,
+                )
+            )
+            # Yield to let uvicorn bind before continuing
+            await asyncio.sleep(0.5)
+            logger.info(
+                "Dashboard live at http://127.0.0.1:%d",
+                args.dashboard_port,
+            )
+
         # ── Step 1: Get matches (refresh or load from cache) ──
         if args.refresh:
             logger.info("Refreshing markets and matches...")
@@ -2172,6 +2340,36 @@ async def main():
         if not matches:
             logger.warning("No matches available. Run with --refresh to fetch markets.")
             await print_analytics(db)
+            if dashboard_task:
+                # Dashboard already running — just keep it alive
+                logger.info(
+                    "No matches, but dashboard is live at http://127.0.0.1:%d  (Ctrl-C to quit)",
+                    args.dashboard_port,
+                )
+                try:
+                    await dashboard_task
+                except asyncio.CancelledError:
+                    pass
+            elif args.dashboard:
+                from scripts.dashboard_api import (
+                    create_dashboard_app,
+                    start_dashboard_server,
+                )
+
+                script_dir = Path(__file__).resolve().parent
+                dist_dir = script_dir.parent / "dashboard" / "dist"
+                static_dir = str(dist_dir) if dist_dir.is_dir() else None
+                dashboard_app = create_dashboard_app(
+                    db_path=cfg.database.db_path,
+                    static_dir=static_dir,
+                )
+                logger.info(
+                    "No matches, but dashboard is live at http://127.0.0.1:%d  (Ctrl-C to quit)",
+                    args.dashboard_port,
+                )
+                await start_dashboard_server(
+                    dashboard_app, host="127.0.0.1", port=args.dashboard_port
+                )
             return
 
         logger.info("Working with %d matched pairs", len(matches))
@@ -2196,6 +2394,13 @@ async def main():
             # ════════════════════════════════════════════════════════════
 
             stop_event = asyncio.Event()
+
+            # Take initial snapshot so dashboard has data immediately
+            try:
+                await take_trading_snapshot(db)
+            except Exception as e:
+                logger.warning("Initial snapshot failed (will retry later): %s", e)
+
             arb_engine = ArbitrageEngine(db, matches, min_spread=args.min_spread)
             scheduled = ScheduledStrategyRunner(
                 db, interval=args.interval, max_trades_per_cycle=20
@@ -2260,7 +2465,7 @@ async def main():
             # Scheduled strategies (runs on timer)
             scheduled_task = asyncio.create_task(scheduled.run(stop_event))
 
-            # Status logging task
+            # Status logging + snapshot task (runs every 30s)
             async def _log_status():
                 while not stop_event.is_set():
                     try:
@@ -2277,27 +2482,33 @@ async def main():
                             stats["prices_tracked"],
                             scheduled.total_trades,
                         )
+                        # Write dashboard snapshot every status cycle
+                        try:
+                            await take_trading_snapshot(db)
+                        except Exception as snap_err:
+                            logger.debug("Snapshot failed: %s", snap_err)
 
             status_task = asyncio.create_task(_log_status())
 
+            # Gather all long-running tasks. The dashboard task is included
+            # so the process stays alive even if websockets disconnect.
+            all_tasks = [
+                *ws_tasks,
+                scheduled_task,
+                status_task,
+                *([dashboard_task] if dashboard_task else []),
+            ]
+
             try:
-                # Block until interrupted
-                await asyncio.gather(*ws_tasks, return_exceptions=True)
+                await asyncio.gather(*all_tasks, return_exceptions=True)
             except KeyboardInterrupt:
                 logger.info("Shutting down...")
             finally:
                 stop_event.set()
                 await arb_engine.flush()
-                scheduled_task.cancel()
-                status_task.cancel()
-                for t in ws_tasks:
+                for t in all_tasks:
                     t.cancel()
-                await asyncio.gather(
-                    scheduled_task,
-                    status_task,
-                    *ws_tasks,
-                    return_exceptions=True,
-                )
+                await asyncio.gather(*all_tasks, return_exceptions=True)
                 total_arb = len(arb_engine.trades)
                 total_sched = scheduled.total_trades
                 logger.info(
@@ -2315,8 +2526,34 @@ async def main():
             #  Good for testing or one-off analysis.
             # ════════════════════════════════════════════════════════════
             await run_trading_cycle(db, matches, args.min_spread)
+            try:
+                await take_trading_snapshot(db)
+            except Exception as e:
+                logger.warning("Post-batch snapshot failed: %s", e)
 
         await print_analytics(db)
+
+        # If --dashboard was passed in batch mode, keep serving until Ctrl-C
+        if args.dashboard and not args.stream:
+            from scripts.dashboard_api import (
+                create_dashboard_app,
+                start_dashboard_server,
+            )
+
+            script_dir = Path(__file__).resolve().parent
+            dist_dir = script_dir.parent / "dashboard" / "dist"
+            static_dir = str(dist_dir) if dist_dir.is_dir() else None
+            dashboard_app = create_dashboard_app(
+                db_path=cfg.database.db_path,
+                static_dir=static_dir,
+            )
+            logger.info(
+                "Batch complete. Dashboard at http://127.0.0.1:%d  (Ctrl-C to quit)",
+                args.dashboard_port,
+            )
+            await start_dashboard_server(
+                dashboard_app, host="127.0.0.1", port=args.dashboard_port
+            )
 
     finally:
         await db_wrapper.close()

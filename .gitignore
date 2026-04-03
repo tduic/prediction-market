@@ -31,10 +31,11 @@ Thumbs.db
 settings.env
 
 # Database files
-data/*.db
-data/*.db-journal
-data/*.db-wal
+data/
 *.db
+*.db-shm
+*.db-wal
+*.db-journal
 *.sqlite3
 
 # Redis dump
@@ -49,7 +50,17 @@ logs/
 htmlcov/
 .pytest_cache/
 .mypy_cache/
+.ruff_cache/
 
 # Distribution
 *.tar.gz
 *.whl
+
+# Node / Frontend
+**/node_modules/
+services/post-trade/frontend/dist/
+dashboard/dist/
+
+# Deployment config and credentials
+deploy/config.env
+deploy/*-key.json
