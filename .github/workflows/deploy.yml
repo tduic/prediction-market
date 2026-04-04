@@ -34,7 +34,14 @@ jobs:
         with:
           project_id: ${{ env.PROJECT_ID }}
 
-      # ── 3. Package code (tar is much faster than recursive scp) ───────
+      # ── 3. Build dashboard in CI (avoids Node.js on the VM) ─────────
+      - name: Build dashboard
+        run: |
+          cd dashboard
+          npm ci --no-audit --no-fund
+          npm run build
+
+      # ── 4. Package code (includes pre-built dashboard/dist) ──────────
       - name: Package code
         run: |
           tar czf /tmp/predictor.tar.gz \
@@ -48,7 +55,7 @@ jobs:
             --exclude='deploy/config.env' \
             .
 
-      # ── 4. Upload to VM ───────────────────────────────────────────────
+      # ── 5. Upload to VM ───────────────────────────────────────────────
       - name: Upload to VM
         run: |
           gcloud compute scp /tmp/predictor.tar.gz \
@@ -82,19 +89,12 @@ jobs:
             --exclude='*.db-wal' \
             --exclude='venv' \
             --exclude='node_modules' \
-            --exclude='dashboard/dist' \
             /tmp/predictor-staging/ "$APP_DIR/"
           sudo chown -R predictor:predictor "$APP_DIR"
 
           echo "=== Installing Python dependencies ==="
           sudo -u predictor "$VENV/bin/pip" install --quiet --upgrade pip
           sudo -u predictor "$VENV/bin/pip" install --quiet -r "$APP_DIR/requirements.txt"
-
-          echo "=== Building dashboard ==="
-          cd "$APP_DIR/dashboard"
-          sudo -u predictor npm install --silent 2>/dev/null
-          sudo -u predictor npm run build --silent 2>/dev/null
-          cd "$APP_DIR"
 
           echo "=== Reloading systemd and restarting service ==="
           sudo cp "$APP_DIR/deploy/predictor.service" /etc/systemd/system/predictor.service
