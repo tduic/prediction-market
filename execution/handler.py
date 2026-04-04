@@ -18,6 +18,7 @@ from pydantic import ValidationError
 
 from core.config import RiskControlConfig, get_config
 from core.signals.risk import run_all_checks
+from execution.circuit_breaker import DailyLossCircuitBreaker
 from execution.models import OrderLeg, TradingSignal
 from execution.router import OrderRouter
 
@@ -34,6 +35,7 @@ class SignalHandler:
         execution_mode: str = "live",
         risk_config: RiskControlConfig | None = None,
         reconciliation_engine: Any | None = None,
+        circuit_breaker: DailyLossCircuitBreaker | None = None,
     ) -> None:
         """
         Initialize the signal handler.
@@ -44,6 +46,7 @@ class SignalHandler:
             execution_mode: Execution mode - "live", "paper", or "mock"
             risk_config: Risk control configuration. If None, loaded from env.
             reconciliation_engine: Optional ReconciliationEngine for halt checks.
+            circuit_breaker: Optional DailyLossCircuitBreaker for sticky halts.
         """
         self.db_connection = db_connection
         self.redis_client = redis_client
@@ -51,6 +54,12 @@ class SignalHandler:
         self.order_router = OrderRouter(db_connection, execution_mode=execution_mode)
         self.risk_config = risk_config or get_config().risk_controls
         self.reconciliation_engine = reconciliation_engine
+        self.circuit_breaker = circuit_breaker or DailyLossCircuitBreaker(
+            db=db_connection,
+            starting_capital=self.risk_config.starting_capital,
+            max_daily_loss_pct=self.risk_config.max_daily_loss_pct,
+            consecutive_failure_limit=self.risk_config.consecutive_failure_limit,
+        )
 
     async def validate_signal(self, payload: dict[str, Any]) -> bool:
         """
@@ -138,7 +147,22 @@ class SignalHandler:
         signal_id = payload.get("signal_id", "unknown")
 
         try:
-            # ── 0. Reconciliation halt check ──
+            # ── 0a. Circuit breaker halt check (sticky daily loss) ──
+            if await self.circuit_breaker.should_halt():
+                state = await self.circuit_breaker.get_state()
+                logger.error(
+                    "CIRCUIT BREAKER HALT — rejecting signal %s: %s",
+                    signal_id,
+                    state.reason,
+                )
+                await self._log_signal_intent(
+                    signal_id,
+                    "REJECTED",
+                    f"Circuit breaker tripped: {state.reason}",
+                )
+                return
+
+            # ── 0b. Reconciliation halt check ──
             if self.reconciliation_engine and self.reconciliation_engine.trading_halted:
                 logger.error(
                     "TRADING HALTED by reconciliation — rejecting signal %s",
@@ -200,13 +224,20 @@ class SignalHandler:
                 f"Processing {len(valid_legs)} legs (all risk checks passed)",
             )
 
-            await self.order_router.route_orders(
+            results = await self.order_router.route_orders(
                 signal_id=signal_id,
                 legs=valid_legs,
                 execution_mode=signal.execution_mode,
                 abort_on_partial=signal.abort_on_partial,
                 expiry_s=signal.expiry_s,
             )
+
+            # Report outcome to circuit breaker for consecutive-failure tracking.
+            # Treat the signal as a success only if at least one leg was accepted.
+            any_accepted = any(
+                getattr(r, "status", None) == "ACCEPTED" for r in (results or [])
+            )
+            await self.circuit_breaker.record_order_result(success=any_accepted)
 
         except ValidationError as e:
             await self._log_signal_intent(
