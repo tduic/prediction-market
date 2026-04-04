@@ -169,8 +169,7 @@ class DailyLossCircuitBreaker:
         if success:
             if self._consecutive_failures > 0:
                 logger.info(
-                    "Circuit breaker consecutive failures reset after success "
-                    "(was %d)",
+                    "Circuit breaker consecutive failures reset after success (was %d)",
                     self._consecutive_failures,
                 )
             self._consecutive_failures = 0
@@ -199,6 +198,7 @@ class DailyLossCircuitBreaker:
     async def reset(self, reason: str = "manual reset") -> None:
         """Manually clear the tripped state (for operator kill-switch off)."""
         was_tripped = self._tripped
+        previous_reason = self._reason
         self._tripped = False
         self._reason = None
         self._tripped_at = None
@@ -208,7 +208,7 @@ class DailyLossCircuitBreaker:
                 "CIRCUIT_BREAKER_RESET",
                 severity="warning",
                 detail=reason,
-                context={"previous_reason": self._reason},
+                context={"previous_reason": previous_reason},
             )
             logger.warning("Circuit breaker RESET: %s", reason)
             try:

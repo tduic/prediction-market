@@ -175,8 +175,9 @@ class CalibrationModel(BaseModel):
             bin_means.append(mean_price)
             bin_outcomes.append(mean_outcome)
 
-        bin_means = np.array(sorted(bin_means))
-        bin_outcomes = np.array(bin_outcomes)
+        sort_idx = np.argsort(bin_means)
+        bin_means = np.array(bin_means)[sort_idx]
+        bin_outcomes = np.array(bin_outcomes)[sort_idx]
 
         # Create interpolation function
         try:
