@@ -11,7 +11,7 @@ Or embedded in paper_trading_session.py as a background asyncio task:
 
 import argparse
 import statistics
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -137,7 +137,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
     async def get_strategies(days: int = Query(30, ge=1)) -> List[Dict[str, Any]]:
         db = await get_db()
         try:
-            cutoff_date = datetime.utcnow() - timedelta(days=days)
+            cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
             cursor = await db.execute(
                 """
                 SELECT
@@ -209,7 +209,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
     ) -> List[Dict[str, Any]]:
         db = await get_db()
         try:
-            cutoff_date = datetime.utcnow() - timedelta(days=days)
+            cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
             cursor = await db.execute(
                 """
                 SELECT
@@ -243,7 +243,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
     async def get_equity_curve(days: int = Query(30, ge=1)) -> List[Dict[str, Any]]:
         db = await get_db()
         try:
-            cutoff_date = datetime.utcnow() - timedelta(days=days)
+            cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
             cursor = await db.execute(
                 """
                 SELECT snapshotted_at, total_capital, unrealized_pnl,
@@ -277,7 +277,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
     ) -> List[Dict[str, Any]]:
         db = await get_db()
         try:
-            cutoff_date = datetime.utcnow() - timedelta(days=days)
+            cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
             if strategy:
                 cursor = await db.execute(
                     "SELECT * FROM trade_outcomes WHERE created_at >= ? AND strategy = ? ORDER BY created_at DESC LIMIT ?",

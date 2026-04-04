@@ -44,7 +44,11 @@ class OrderRouter:
     """Routes orders to platform-specific clients and manages execution."""
 
     def __init__(
-        self, db_connection: aiosqlite.Connection, execution_mode: str = "live"
+        self,
+        db_connection: aiosqlite.Connection,
+        execution_mode: str = "live",
+        max_retries: int = MAX_ORDER_RETRIES,
+        retry_backoff_base_s: float = RETRY_BACKOFF_BASE_S,
     ) -> None:
         """
         Initialize the order router.
@@ -52,9 +56,13 @@ class OrderRouter:
         Args:
             db_connection: SQLite connection for writing results
             execution_mode: "live" for real clients, "mock" for mock clients
+            max_retries: Maximum number of order submission attempts
+            retry_backoff_base_s: Base seconds for exponential backoff between retries
         """
         self.db_connection = db_connection
         self.execution_mode = execution_mode
+        self.max_retries = max_retries
+        self.retry_backoff_base_s = retry_backoff_base_s
 
         if execution_mode == "mock":
             logger.info("Initializing router in MOCK execution mode")
@@ -118,13 +126,13 @@ class OrderRouter:
         )
 
         # Retry logic with exponential backoff
-        for attempt in range(MAX_ORDER_RETRIES):
+        for attempt in range(self.max_retries):
             try:
                 logger.info(
                     "Submitting order to %s (attempt %d/%d): signal=%s, market=%s",
                     platform,
                     attempt + 1,
-                    MAX_ORDER_RETRIES,
+                    self.max_retries,
                     signal_id,
                     leg.market_id,
                 )
@@ -150,8 +158,8 @@ class OrderRouter:
                     e,
                 )
 
-                if attempt < MAX_ORDER_RETRIES - 1:
-                    backoff = RETRY_BACKOFF_BASE_S * (2**attempt)
+                if attempt < self.max_retries - 1:
+                    backoff = self.retry_backoff_base_s * (2**attempt)
                     logger.info("Retrying in %d seconds", backoff)
                     await asyncio.sleep(backoff)
                 else:
@@ -161,7 +169,7 @@ class OrderRouter:
                         order_id=f"FAILED-{leg.market_id}",
                         leg_index=leg_index,
                         status="REJECTED",
-                        details=f"Failed after {MAX_ORDER_RETRIES} attempts: {str(e)}",
+                        details=f"Failed after {self.max_retries} attempts: {str(e)}",
                     )
 
                     return OrderResult(
