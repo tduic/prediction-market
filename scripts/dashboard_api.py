@@ -45,11 +45,17 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
     """
     app = FastAPI(title="Prediction Market Dashboard API")
 
-    # CORS middleware
+    # CORS middleware.
+    #
+    # Note: allow_origins=["*"] and allow_credentials=True are mutually
+    # exclusive per the CORS spec — Starlette silently drops the wildcard
+    # when credentials are enabled, which rejects every origin. The dashboard
+    # doesn't use cookies or credentialed requests, so we keep the wildcard
+    # and disable credentials.
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
-        allow_credentials=True,
+        allow_credentials=False,
         allow_methods=["*"],
         allow_headers=["*"],
     )
