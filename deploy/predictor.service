@@ -15,6 +15,11 @@ WorkingDirectory=/data/predictor/prediction-market
 # Load all environment variables from .env file
 EnvironmentFile=/data/predictor/.env
 
+# Secrets backend
+Environment="SECRETS_BACKEND=gcp"
+Environment="GCP_PROJECT_ID=predictor-trading-2026"
+Environment="ALERT_DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/REDACTED_DISCORD_WEBHOOK"
+
 # Python venv binary
 ExecStart=/data/predictor/venv/bin/python \
     scripts/paper_trading_session.py \

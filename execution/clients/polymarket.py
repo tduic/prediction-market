@@ -12,6 +12,7 @@ import time
 
 import aiosqlite
 
+from core.secrets import get_secret
 from execution.clients.base import BaseExecutionClient, OrderResult
 from execution.models import OrderLeg
 
@@ -53,8 +54,8 @@ class PolymarketExecutionClient(BaseExecutionClient):
     ) -> None:
         super().__init__(db_connection, platform_label="polymarket")
 
-        self.private_key = private_key or os.getenv("POLYMARKET_PRIVATE_KEY", "")
-        self.funder = funder or os.getenv("POLYMARKET_WALLET_ADDRESS", "")
+        self.private_key = private_key or get_secret("POLYMARKET_PRIVATE_KEY", "") or ""
+        self.funder = funder or get_secret("POLYMARKET_WALLET_ADDRESS", "") or ""
         self.chain_id = chain_id
         self.host = os.getenv("POLYMARKET_API_BASE", "https://clob.polymarket.com")
         self.signature_type = int(os.getenv("POLYMARKET_SIGNATURE_TYPE", "1"))

@@ -12,6 +12,8 @@ from datetime import datetime, timezone
 
 import aiosqlite
 
+from core.alerting import Severity, get_alert_manager
+
 logger = logging.getLogger(__name__)
 
 
@@ -243,6 +245,7 @@ class ReconciliationEngine:
         trading_should_continue = await self._check_halt_conditions(balance_report)
 
         if not trading_should_continue:
+            was_halted = self.trading_halted
             self.trading_halted = True
             logger.error(
                 "RECONCILIATION HALT: Discrepancy exceeded halt threshold. Report: %s",
@@ -253,7 +256,42 @@ class ReconciliationEngine:
                 f"Exchange discrepancy exceeded {self.halt_threshold_pct*100:.1f}%",
                 combined_report,
             )
+            # Only alert on the transition (not every periodic check) — the
+            # AlertManager dedup would catch this too, but being explicit is
+            # cheaper than hashing every call.
+            if not was_halted:
+                try:
+                    await get_alert_manager().send(
+                        title="Reconciliation HALT — trading halted",
+                        message=(
+                            f"Exchange balance discrepancy exceeded "
+                            f"{self.halt_threshold_pct * 100:.1f}%"
+                        ),
+                        severity=Severity.CRITICAL,
+                        context={
+                            "polymarket_status": balance_report.get(
+                                "polymarket", {}
+                            ).get("status"),
+                            "kalshi_status": balance_report.get("kalshi", {}).get(
+                                "status"
+                            ),
+                        },
+                        component="reconciliation",
+                    )
+                except Exception as e:
+                    logger.error("Failed to send reconciliation alert: %s", e)
         else:
+            if self.trading_halted:
+                # Transition back to healthy — notify so ops knows it cleared.
+                try:
+                    await get_alert_manager().send(
+                        title="Reconciliation recovered — trading resumed",
+                        message="Balance discrepancies back within threshold",
+                        severity=Severity.WARNING,
+                        component="reconciliation",
+                    )
+                except Exception as e:
+                    logger.error("Failed to send recovery alert: %s", e)
             self.trading_halted = False
 
         return trading_should_continue, combined_report

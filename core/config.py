@@ -11,20 +11,24 @@ from dataclasses import dataclass, field
 import os
 from pathlib import Path
 
+from core.secrets import get_secret
+
 
 @dataclass
 class PlatformCredentials:
     """Platform-specific API credentials."""
 
     polymarket_private_key: str = field(
-        default_factory=lambda: os.getenv("POLYMARKET_PRIVATE_KEY", "")
+        default_factory=lambda: get_secret("POLYMARKET_PRIVATE_KEY", "") or ""
     )
     polymarket_wallet_address: str = field(
-        default_factory=lambda: os.getenv("POLYMARKET_WALLET_ADDRESS", "")
+        default_factory=lambda: get_secret("POLYMARKET_WALLET_ADDRESS", "") or ""
     )
-    kalshi_api_key: str = field(default_factory=lambda: os.getenv("KALSHI_API_KEY", ""))
+    kalshi_api_key: str = field(
+        default_factory=lambda: get_secret("KALSHI_API_KEY", "") or ""
+    )
     kalshi_rsa_key_path: str = field(
-        default_factory=lambda: os.getenv("KALSHI_RSA_KEY_PATH", "")
+        default_factory=lambda: get_secret("KALSHI_RSA_KEY_PATH", "") or ""
     )
     kalshi_environment: str = field(
         default_factory=lambda: os.getenv("KALSHI_ENVIRONMENT", "prod")
@@ -138,6 +142,9 @@ class RiskControlConfig:
     )
     min_edge: float = field(
         default_factory=lambda: float(os.getenv("MIN_EDGE_TO_TRADE", "0.02"))
+    )
+    consecutive_failure_limit: int = field(
+        default_factory=lambda: int(os.getenv("CONSECUTIVE_FAILURE_LIMIT", "5"))
     )
 
 

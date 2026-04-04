@@ -18,6 +18,7 @@ import httpx
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding
 
+from core.secrets import get_secret
 from execution.clients.base import BaseExecutionClient, OrderResult
 from execution.models import OrderLeg
 
@@ -47,13 +48,15 @@ class KalshiExecutionClient(BaseExecutionClient):
     ) -> None:
         super().__init__(db_connection, platform_label="kalshi")
 
-        self.api_key = api_key or os.getenv("KALSHI_API_KEY", "")
+        self.api_key = api_key or get_secret("KALSHI_API_KEY", "") or ""
         self.api_base = api_base or os.getenv(
             "KALSHI_API_BASE", "https://api.elections.kalshi.com/trade-api/v2"
         )
 
-        # Load RSA key
-        key_path = rsa_key_path or os.getenv("KALSHI_RSA_KEY_PATH", "")
+        # Load RSA key. Key path is a filesystem pointer, not a secret, so
+        # it stays in env vars. The key material itself lives on disk with
+        # mode 0600 and is optionally mounted from a Secret Manager volume.
+        key_path = rsa_key_path or get_secret("KALSHI_RSA_KEY_PATH", "") or ""
         self._private_key = None
         if key_path:
             try:

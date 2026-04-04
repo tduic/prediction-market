@@ -190,7 +190,7 @@ class OrderRouter:
         execution_mode: str = "simultaneous",
         abort_on_partial: bool = False,
         expiry_s: int = 300,
-    ) -> None:
+    ) -> list:
         """
         Route multiple orders with specified execution mode.
 
@@ -225,6 +225,8 @@ class OrderRouter:
             logger.error(
                 "Error routing orders for signal %s: %s", signal_id, exc_info=e
             )
+
+        return results
 
     async def _execute_simultaneous(
         self,
