@@ -253,7 +253,7 @@ class ReconciliationEngine:
             )
             await self._log_system_event(
                 "RECONCILIATION_HALT",
-                f"Exchange discrepancy exceeded {self.halt_threshold_pct*100:.1f}%",
+                f"Exchange discrepancy exceeded {self.halt_threshold_pct * 100:.1f}%",
                 combined_report,
             )
             # Only alert on the transition (not every periodic check) — the
@@ -516,9 +516,19 @@ class ReconciliationEngine:
                     continue
 
                 p = report[platform]
-                local_val = p.get("local") or p.get("local_count") or 0.0
-                exchange_val = p.get("exchange") or p.get("exchange_count")
-                discrepancy = p.get("discrepancy") or 0.0
+                local_val = (
+                    p["local"]
+                    if p.get("local") is not None
+                    else (p["local_count"] if p.get("local_count") is not None else 0.0)
+                )
+                exchange_val = (
+                    p["exchange"]
+                    if p.get("exchange") is not None
+                    else p.get("exchange_count")
+                )
+                discrepancy = (
+                    p["discrepancy"] if p.get("discrepancy") is not None else 0.0
+                )
                 status = p.get("status", "ERROR")
 
                 await self.db.execute(
