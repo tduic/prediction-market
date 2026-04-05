@@ -139,7 +139,18 @@ class DailyLossCircuitBreaker:
         if self._tripped:
             return True
 
-        daily_loss = await self._compute_daily_loss()
+        try:
+            daily_loss = await self._compute_daily_loss()
+        except Exception as e:
+            logger.error(
+                "Failed to compute daily loss — halting as safe default: %s", e
+            )
+            await self._trip(
+                reason=f"DB error during daily-loss query: {e}",
+                context={"trip_type": "db_error", "error": str(e)},
+            )
+            return True
+
         limit = self._daily_loss_limit()
 
         if daily_loss >= limit:
@@ -250,22 +261,22 @@ class DailyLossCircuitBreaker:
 
         Sums ``actual_pnl`` from ``trade_outcomes`` where the row is dated
         today (UTC) and pnl is negative.
+
+        Raises:
+            Exception: Re-raised if the DB query fails so that ``should_halt``
+                can apply the safe-by-default halt policy on DB errors.
         """
-        try:
-            cursor = await self.db.execute(
-                """
-                SELECT COALESCE(SUM(actual_pnl), 0)
-                FROM trade_outcomes
-                WHERE DATE(created_at) = ? AND actual_pnl < 0
-                """,
-                (self._today(),),
-            )
-            row = await cursor.fetchone()
-            raw = row[0] if row and row[0] is not None else 0.0
-            return abs(float(raw))
-        except Exception as e:
-            logger.error("Failed to compute daily loss: %s", e)
-            return 0.0
+        cursor = await self.db.execute(
+            """
+            SELECT COALESCE(SUM(actual_pnl), 0)
+            FROM trade_outcomes
+            WHERE DATE(created_at) = ? AND actual_pnl < 0
+            """,
+            (self._today(),),
+        )
+        row = await cursor.fetchone()
+        raw = row[0] if row and row[0] is not None else 0.0
+        return abs(float(raw))
 
     async def _maybe_rollover(self) -> None:
         """Auto-reset at UTC day boundary."""

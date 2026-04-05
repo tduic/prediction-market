@@ -231,7 +231,7 @@ class OrderRouter:
 
         except Exception as e:
             logger.error(
-                "Error routing orders for signal %s: %s", signal_id, exc_info=e
+                "Error routing orders for signal %s: %s", signal_id, e, exc_info=True
             )
 
         return results
@@ -350,4 +350,4 @@ class OrderRouter:
             )
             await self.db_connection.commit()
         except Exception as e:
-            logger.error("Error logging order event: %s", exc_info=e)
+            logger.error("Error logging order event: %s", e, exc_info=True)
