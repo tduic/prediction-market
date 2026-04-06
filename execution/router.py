@@ -266,9 +266,9 @@ class OrderRouter:
                     OrderResult(
                         order_id=f"FAILED-leg{idx}",
                         leg_index=idx,
-                        platform=legs[idx].platform.lower()
-                        if idx < len(legs)
-                        else "unknown",
+                        platform=(
+                            legs[idx].platform.lower() if idx < len(legs) else "unknown"
+                        ),
                         status="REJECTED",
                         submission_latency_ms=0,
                         error_message=str(res),
