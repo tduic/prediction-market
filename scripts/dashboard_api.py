@@ -21,6 +21,8 @@ from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
+from core.config import get_config
+
 # ---------------------------------------------------------------------------
 # Module-level DB path (set by configure() or create_dashboard_app())
 # ---------------------------------------------------------------------------
@@ -85,7 +87,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
 
     @app.get("/api/overview")
     async def get_overview() -> Dict[str, Any]:
-        PAPER_CAPITAL = 10_000  # Default paper trading capital
+        PAPER_CAPITAL = get_config().risk_controls.starting_capital
 
         snapshot = await get_latest_snapshot()
         if snapshot:
@@ -148,7 +150,9 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
                     COALESCE(SUM(actual_pnl), 0) as total_pnl,
                     COALESCE(SUM(fees_total), 0) as total_fees,
                     COALESCE(AVG(edge_captured_pct), 0) as avg_edge_capture,
-                    COALESCE(AVG(signal_to_fill_ms), 0) as avg_execution_time_ms
+                    COALESCE(AVG(signal_to_fill_ms), 0) as avg_execution_time_ms,
+                    COALESCE(SUM(actual_pnl * actual_pnl), 0) as sum_pnl_sq,
+                    COUNT(actual_pnl) as pnl_count
                 FROM trade_outcomes
                 WHERE created_at >= ?
                 GROUP BY strategy
@@ -165,20 +169,15 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
                 win_rate = (win_count / trade_count) if trade_count > 0 else 0
 
                 sharpe_ratio = 0
-                if trade_count > 0:
-                    cursor2 = await db.execute(
-                        "SELECT actual_pnl FROM trade_outcomes WHERE strategy = ? AND created_at >= ?",
-                        (row_dict["strategy"], cutoff_date.isoformat()),
-                    )
-                    pnl_rows = await cursor2.fetchall()
-                    pnl_values = [
-                        r["actual_pnl"] for r in pnl_rows if r["actual_pnl"] is not None
-                    ]
-                    if len(pnl_values) > 1:
-                        mean_pnl = statistics.mean(pnl_values)
-                        stdev_pnl = statistics.stdev(pnl_values)
-                        if stdev_pnl > 0:
-                            sharpe_ratio = mean_pnl / stdev_pnl
+                pnl_count = row_dict.get("pnl_count", 0) or 0
+                if pnl_count > 1:
+                    mean_pnl = row_dict.get("avg_pnl", 0) or 0
+                    sum_sq = row_dict.get("sum_pnl_sq", 0) or 0
+                    variance = (sum_sq / pnl_count) - (mean_pnl**2)
+                    if variance > 0:
+                        import math
+
+                        sharpe_ratio = mean_pnl / math.sqrt(variance)
 
                 strategies.append(
                     {
@@ -324,7 +323,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
 
     @app.get("/api/risk")
     async def get_risk() -> Dict[str, Any]:
-        PAPER_CAPITAL = 10_000
+        PAPER_CAPITAL = get_config().risk_controls.starting_capital
         db = await get_db()
         try:
             snapshot = await get_latest_snapshot()

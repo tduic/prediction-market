@@ -101,7 +101,6 @@ async def _seed_position_in_db(
 
 
 class TestPositionDataclass:
-
     def test_buy_pnl_profit(self):
         pos = Position("p1", "m1", "poly", "BUY", 100.0, 0.40, 0.0)
         pos.update_price(0.60)
@@ -133,7 +132,6 @@ class TestPositionDataclass:
 
 
 class TestTrackFill:
-
     @pytest.mark.asyncio
     async def test_creates_in_memory_position(self, state):
         pid = await state.track_fill("ord1", "mkt1", "polymarket", "BUY", 50.0, 0.45)
@@ -160,7 +158,6 @@ class TestTrackFill:
 
 
 class TestUpdatePnl:
-
     @pytest.mark.asyncio
     async def test_updates_matching_positions(self, state):
         await state.track_fill("o1", "mkt_A", "poly", "BUY", 100, 0.50)
@@ -181,7 +178,6 @@ class TestUpdatePnl:
 
 
 class TestClosePosition:
-
     @pytest.mark.asyncio
     async def test_close_buy_position(self, db, state):
         # Seed in DB and in-memory
@@ -248,7 +244,6 @@ class TestClosePosition:
 
 
 class TestLoadPositionsFromDb:
-
     @pytest.mark.asyncio
     async def test_loads_open_positions(self, db, state):
         await _seed_position_in_db(db, "pos1", "mkt1", "BUY", 0.50, 100)
@@ -295,7 +290,6 @@ class TestLoadPositionsFromDb:
 
 
 class TestExposureHelpers:
-
     @pytest.mark.asyncio
     async def test_net_exposure_buy_only(self, state):
         await state.track_fill("o1", "mkt1", "poly", "BUY", 100, 0.50)

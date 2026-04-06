@@ -126,7 +126,6 @@ def _make_position(pid, mkt, side, qty, entry_price):
 
 
 class TestCheckResolutions:
-
     @pytest.mark.asyncio
     async def test_no_open_positions(self, monitor):
         summary = await monitor.check_resolutions()
@@ -225,7 +224,6 @@ class TestCheckResolutions:
 
 
 class TestForceClosePosition:
-
     @pytest.mark.asyncio
     async def test_force_close_success(self, db, state, monitor):
         await _seed_market(db, "mkt_fc", status="open")
@@ -268,7 +266,6 @@ class TestForceClosePosition:
 
 
 class TestStalePositions:
-
     @pytest.mark.asyncio
     async def test_no_stale_positions(self, db, monitor):
         now = datetime.now(timezone.utc).isoformat()

@@ -212,9 +212,7 @@ async def main() -> int:
     source_w = max(len(r[1]) for r in rows)
     for name, source, masked in rows:
         marker = "✓" if "<MISSING>" not in masked else "✗"
-        print(
-            f"  {marker} {name.ljust(name_w)}  " f"[{source.ljust(source_w)}]  {masked}"
-        )
+        print(f"  {marker} {name.ljust(name_w)}  [{source.ljust(source_w)}]  {masked}")
 
     if not secrets_ok:
         print()
