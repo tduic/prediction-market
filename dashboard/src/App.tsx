@@ -42,8 +42,8 @@ function App() {
   const pnlResult = useApi<StrategyPnlPoint[]>('/api/strategies/pnl-series', REFRESH_INTERVAL, { days })
   const equityResult = useApi<EquityCurvePoint[]>('/api/equity-curve', REFRESH_INTERVAL, { days: equityDays })
   const tradesResult = useApi<Trade[]>('/api/trades', REFRESH_INTERVAL, { days })
-  const feeResult = useApi<FeeBreakdown>('/api/fees', REFRESH_INTERVAL, { days })
-  const riskResult = useApi<RiskMetrics>('/api/risk', REFRESH_INTERVAL, { days })
+  const feeResult = useApi<FeeBreakdown>('/api/fees', REFRESH_INTERVAL)
+  const riskResult = useApi<RiskMetrics>('/api/risk', REFRESH_INTERVAL)
 
   // Get unique strategies for trade log filter
   const strategies = Array.from(

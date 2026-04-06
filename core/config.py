@@ -174,8 +174,9 @@ class MatchingConfig:
         default_factory=lambda: float(os.getenv("SIMILARITY_THRESHOLD", "0.85"))
     )
     auto_trade_verified_only: bool = field(
-        default_factory=lambda: os.getenv("AUTO_TRADE_VERIFIED_ONLY", "true").lower()
-        == "true"
+        default_factory=lambda: (
+            os.getenv("AUTO_TRADE_VERIFIED_ONLY", "true").lower() == "true"
+        )
     )
 
 

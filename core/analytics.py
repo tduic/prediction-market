@@ -672,7 +672,7 @@ class StrategyScorecard:
 
             self.logger.info(
                 f"Daily P&L series: {len(series)} days, "
-                f"total_pnl={cumulative:.4f}, avg_daily={cumulative/len(series):.4f if series else 0}"
+                f"total_pnl={cumulative:.4f}, avg_daily={cumulative / len(series):.4f if series else 0}"
             )
 
             return series

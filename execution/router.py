@@ -255,7 +255,27 @@ class OrderRouter:
 
         tasks = [self.route_order(leg, idx, signal_id) for idx, leg in enumerate(legs)]
 
-        results = await asyncio.gather(*tasks, return_exceptions=False)
+        raw = await asyncio.gather(*tasks, return_exceptions=True)
+        results: list[OrderResult] = []
+        for idx, res in enumerate(raw):
+            if isinstance(res, Exception):
+                logger.error(
+                    "Simultaneous leg %d raised exception: %s", idx, res, exc_info=res
+                )
+                results.append(
+                    OrderResult(
+                        order_id=f"FAILED-leg{idx}",
+                        leg_index=idx,
+                        platform=legs[idx].platform.lower()
+                        if idx < len(legs)
+                        else "unknown",
+                        status="REJECTED",
+                        submission_latency_ms=0,
+                        error_message=str(res),
+                    )
+                )
+            else:
+                results.append(res)
         return results
 
     async def _execute_sequential(

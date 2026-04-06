@@ -420,7 +420,10 @@ class ReconciliationEngine:
         cursor = await self.db.execute(
             """
             SELECT COUNT(*) FROM positions
-            WHERE status = 'open' AND strategy LIKE ?
+            WHERE status = 'open'
+              AND signal_id IN (
+                  SELECT DISTINCT signal_id FROM orders WHERE platform LIKE ?
+              )
             """,
             (f"%{platform}%",),
         )

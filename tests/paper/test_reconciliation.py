@@ -103,12 +103,31 @@ async def _insert_filled_order(
     await db.commit()
 
 
-async def _insert_position(db, pid, strategy, status="open"):
+async def _insert_position(
+    db, pid, strategy, status="open", platform: str | None = None
+):
+    """Insert a position and a matching order so the platform join resolves correctly."""
+    signal_id = f"sig_{pid}"
     await db.execute(
         """INSERT INTO positions (id, market_id, side, entry_price, entry_size,
                                   signal_id, strategy, status, opened_at, updated_at)
            VALUES (?, 'mkt1', 'BUY', 0.5, 10, ?, ?, ?, ?, ?)""",
-        (pid, f"sig_{pid}", strategy, status, NOW, NOW),
+        (pid, signal_id, strategy, status, NOW, NOW),
+    )
+    # Insert a matching order so _count_open_positions can resolve platform via the join.
+    # Derive platform from the strategy name when not explicitly provided.
+    if platform is None:
+        if "polymarket" in strategy.lower():
+            platform = "polymarket"
+        elif "kalshi" in strategy.lower():
+            platform = "kalshi"
+        else:
+            platform = "unknown"
+    await db.execute(
+        """INSERT INTO orders (id, signal_id, platform, market_id, side, order_type,
+                               requested_price, requested_size, status, submitted_at, updated_at)
+           VALUES (?, ?, ?, 'mkt1', 'buy', 'limit', 0.5, 10, 'filled', ?, ?)""",
+        (f"ord_{pid}", signal_id, platform, NOW, NOW),
     )
     await db.commit()
 
@@ -117,7 +136,6 @@ async def _insert_position(db, pid, strategy, status="open"):
 
 
 class TestReconcileBalances:
-
     @pytest.mark.asyncio
     async def test_zero_local_balance_ok(self, engine):
         report = await engine.reconcile_balances()
@@ -168,7 +186,6 @@ class TestReconcileBalances:
 
 
 class TestReconcilePositions:
-
     @pytest.mark.asyncio
     async def test_zero_positions(self, engine):
         report = await engine.reconcile_positions()
@@ -193,7 +210,6 @@ class TestReconcilePositions:
 
 
 class TestRunReconciliationCheck:
-
     @pytest.mark.asyncio
     async def test_no_halt_when_balanced(self, engine):
         engine.polymarket_client.get_balance = AsyncMock(return_value=0.0)
@@ -246,7 +262,6 @@ class TestRunReconciliationCheck:
 
 
 class TestEstimatePortfolioValue:
-
     @pytest.mark.asyncio
     async def test_default_is_starting_capital(self, engine):
         value = await engine._estimate_portfolio_value()
