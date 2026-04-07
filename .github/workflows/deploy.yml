@@ -91,6 +91,7 @@ jobs:
             --exclude='node_modules' \
             /tmp/predictor-staging/ "$APP_DIR/"
           sudo chown -R predictor:predictor "$APP_DIR"
+          sudo chmod g+w /data/predictor
 
           echo "=== Installing Python dependencies ==="
           sudo -u predictor "$VENV/bin/pip" install --quiet --upgrade pip
@@ -126,13 +127,13 @@ jobs:
             --zone="$ZONE" \
             --project="$PROJECT_ID" \
             --command="$(cat <<'REMOTE_SCRIPT'
-          if [ -f /data/predictor/setup-claude.sh ]; then
-            bash /data/predictor/setup-claude.sh
-          elif [ -f /data/predictor/prediction-market/vm-setup.sh ]; then
+          # Always run vm-setup.sh when present — it regenerates setup-claude.sh
+          # with the latest config and then runs it. Fall back to the existing
+          # setup-claude.sh only if vm-setup.sh is absent.
+          if [ -f /data/predictor/prediction-market/vm-setup.sh ]; then
             bash /data/predictor/prediction-market/vm-setup.sh
-            if [ -f /data/predictor/setup-claude.sh ]; then
-              bash /data/predictor/setup-claude.sh
-            fi
+          elif [ -f /data/predictor/setup-claude.sh ]; then
+            bash /data/predictor/setup-claude.sh
           else
             echo "No Claude setup script found, skipping."
           fi
