@@ -10,6 +10,7 @@ Or embedded in paper_trading_session.py as a background asyncio task:
 """
 
 import argparse
+import math
 import statistics
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -173,10 +174,10 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
                 if pnl_count > 1:
                     mean_pnl = row_dict.get("avg_pnl", 0) or 0
                     sum_sq = row_dict.get("sum_pnl_sq", 0) or 0
-                    variance = (sum_sq / pnl_count) - (mean_pnl**2)
+                    # Sample variance (Bessel's correction, N-1) — matches
+                    # statistics.stdev() used in /api/risk for consistency.
+                    variance = (sum_sq - pnl_count * mean_pnl**2) / (pnl_count - 1)
                     if variance > 0:
-                        import math
-
                         sharpe_ratio = mean_pnl / math.sqrt(variance)
 
                 strategies.append(
