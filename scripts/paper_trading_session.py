@@ -1454,9 +1454,9 @@ async def detect_violations_and_trade(
     paper_kalshi = PaperExecutionClient(db, platform_label="paper_kalshi")
 
     trades = []
-    now = datetime.now(timezone.utc).isoformat()
 
     for match in matches:
+        now = datetime.now(timezone.utc).isoformat()
         p_price = match["poly_price"]
         k_price = match["kalshi_price"]
         spread = abs(p_price - k_price)
@@ -1705,7 +1705,8 @@ async def detect_single_platform_opportunities(
 
     # Get all markets with their latest prices
     cursor = await db.execute("""SELECT m.id, m.platform, m.title,
-                  mp.yes_price, mp.no_price, mp.spread
+                  mp.yes_price, mp.no_price, mp.spread,
+                  mp.volume_24h, mp.liquidity
            FROM markets m
            JOIN market_prices mp ON mp.market_id = m.id
            WHERE m.status = 'open'
@@ -1728,11 +1729,12 @@ async def detect_single_platform_opportunities(
                     "yes_price": row[3],
                     "no_price": row[4],
                     "spread": row[5] or 0.02,
+                    "volume_24h": row[6] or 0,
+                    "liquidity": row[7] or 0,
                 }
             )
 
     trades = []
-    now = datetime.now(timezone.utc).isoformat()
     opportunities = []
 
     for m in markets:
@@ -1785,6 +1787,7 @@ async def detect_single_platform_opportunities(
         )
 
     for opp in opportunities:
+        now = datetime.now(timezone.utc).isoformat()
         m = opp["market"]
         strategy = opp["strategy"]
         side = opp["side"]
@@ -1924,8 +1927,9 @@ async def detect_single_platform_opportunities(
                        (id, signal_id, strategy, violation_id, market_id_a,
                         predicted_edge, predicted_pnl, actual_pnl, fees_total,
                         edge_captured_pct, signal_to_fill_ms, holding_period_ms,
+                        spread_at_signal, volume_at_signal, liquidity_at_signal,
                         resolved_at, created_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         f"trade_{uuid.uuid4().hex[:12]}",
                         signal_id,
@@ -1943,6 +1947,9 @@ async def detect_single_platform_opportunities(
                         ),
                         result.submission_latency_ms + (result.fill_latency_ms or 0),
                         5000,
+                        m["spread"],
+                        m["volume_24h"],
+                        m["liquidity"],
                         now,
                         now,
                     ),
