@@ -69,3 +69,4 @@ deploy/*-key.json
 *-key.json
 gha-creds-*.json
 new-key.json
+.fuse_hidden*
