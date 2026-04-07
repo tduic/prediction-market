@@ -257,10 +257,10 @@ class DailyLossCircuitBreaker:
 
     async def _compute_daily_loss(self) -> float:
         """
-        Return today's realized losses as a positive float.
+        Return today's realized net losses as a positive float.
 
-        Sums ``actual_pnl`` from ``trade_outcomes`` where the row is dated
-        today (UTC) and pnl is negative.
+        Sums ``actual_pnl - fees_total`` from ``trade_outcomes`` dated
+        today (UTC). Returns 0.0 if net P&L is positive (no loss).
 
         Raises:
             Exception: Re-raised if the DB query fails so that ``should_halt``
@@ -268,15 +268,15 @@ class DailyLossCircuitBreaker:
         """
         cursor = await self.db.execute(
             """
-            SELECT COALESCE(SUM(actual_pnl), 0)
+            SELECT COALESCE(SUM(actual_pnl - COALESCE(fees_total, 0)), 0)
             FROM trade_outcomes
-            WHERE DATE(created_at) = ? AND actual_pnl < 0
+            WHERE DATE(created_at) = ?
             """,
             (self._today(),),
         )
         row = await cursor.fetchone()
-        raw = row[0] if row and row[0] is not None else 0.0
-        return abs(float(raw))
+        net_pnl = float(row[0]) if row and row[0] is not None else 0.0
+        return max(0.0, -net_pnl)
 
     async def _maybe_rollover(self) -> None:
         """Auto-reset at UTC day boundary."""

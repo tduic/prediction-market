@@ -137,11 +137,14 @@ class CalibrationModel(BaseModel):
         else:
             adjusted = raw_prob
 
-        # Apply bias adjustment if available
+        # Apply bias adjustments conditionally based on probability regime
         if category in self.bias_adjustments:
             biases = self.bias_adjustments[category]
             if biases.get("apply_adjustment", False):
-                adjusted += biases.get("adjustment_amount", 0.0)
+                if adjusted < 0.3 or adjusted > 0.7:
+                    adjusted += biases.get("tail_bias", 0.0)
+                if abs(adjusted - round(adjusted * 4) / 4) < 0.02:
+                    adjusted += biases.get("round_bias", 0.0)
 
         return float(np.clip(adjusted, 0.0, 1.0))
 
@@ -223,5 +226,4 @@ class CalibrationModel(BaseModel):
             "tail_bias": tail_error,
             "round_bias": round_error,
             "apply_adjustment": abs(tail_error) > 0.05 or abs(round_error) > 0.05,
-            "adjustment_amount": (tail_error + round_error) / 2,
         }
