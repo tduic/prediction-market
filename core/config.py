@@ -284,12 +284,14 @@ class Config:
             )
 
         # Spread validation
-        if (
-            self.constraint_engine.min_net_spread_single_platform
-            <= self.constraint_engine.fee_rate_polymarket
-        ):
+        max_fee_rate = max(
+            self.constraint_engine.fee_rate_polymarket,
+            self.constraint_engine.fee_rate_kalshi,
+        )
+        if self.constraint_engine.min_net_spread_single_platform <= max_fee_rate:
             raise ValueError(
-                "MIN_NET_SPREAD_SINGLE_PLATFORM must be > FEE_RATE_POLYMARKET"
+                "MIN_NET_SPREAD_SINGLE_PLATFORM must be > "
+                "max(FEE_RATE_POLYMARKET, FEE_RATE_KALSHI)"
             )
         if self.constraint_engine.min_net_spread_cross_platform <= max(
             self.constraint_engine.fee_rate_polymarket,

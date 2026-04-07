@@ -392,6 +392,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
 
             cursor = await db.execute(
                 "SELECT actual_pnl FROM trade_outcomes WHERE actual_pnl IS NOT NULL"
+                " ORDER BY created_at DESC LIMIT 500"
             )
             pnl_rows = await cursor.fetchall()
             pnl_values = [r["actual_pnl"] for r in pnl_rows]

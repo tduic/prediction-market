@@ -310,8 +310,6 @@ class ReconciliationEngine:
 
         while True:
             try:
-                await asyncio.sleep(self.check_interval_s)
-
                 should_continue, report = await self.run_reconciliation_check()
 
                 if not should_continue:
@@ -328,8 +326,7 @@ class ReconciliationEngine:
                     e,
                     exc_info=True,
                 )
-                # Continue checking despite errors
-                await asyncio.sleep(self.check_interval_s)
+            await asyncio.sleep(self.check_interval_s)
 
     # ── Private helpers ──────────────────────────────────────────────────
 
