@@ -119,7 +119,15 @@ jobs:
           REMOTE_SCRIPT
           )"
 
-      # ── 6. Post-deploy health check ───────────────────────────────────
+      # ── 6. Restore Claude setup ──────────────────────────────────────
+      - name: Restore Claude setup on VM
+        run: |
+          gcloud compute ssh "$VM_NAME" \
+            --zone="$ZONE" \
+            --project="$PROJECT_ID" \
+            --command="bash /data/predictor/setup-claude.sh"
+
+      # ── 7. Post-deploy health check ───────────────────────────────────
       - name: Health check
         run: |
           echo "Checking service health..."
@@ -136,7 +144,7 @@ jobs:
 
           echo "Deploy successful — service is running."
 
-      # ── 7. Discord notification ───────────────────────────────────────
+      # ── 8. Discord notification ───────────────────────────────────────
       - name: Notify Discord (success)
         if: success()
         env:
