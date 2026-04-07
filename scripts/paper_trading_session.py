@@ -75,7 +75,7 @@ def assign_strategy(spread: float, pair_type: str) -> str:
         return "P1_cross_market_arb"
     elif spread > 0.10:
         return "P5_information_latency"
-    elif spread >= 0.10:
+    elif spread >= 0.05:
         return "P3_calibration_bias"
     elif pair_type == "complement":
         return "P4_liquidity_timing"
