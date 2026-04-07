@@ -130,6 +130,9 @@ jobs:
             bash /data/predictor/setup-claude.sh
           elif [ -f /data/predictor/prediction-market/vm-setup.sh ]; then
             bash /data/predictor/prediction-market/vm-setup.sh
+            if [ -f /data/predictor/setup-claude.sh ]; then
+              bash /data/predictor/setup-claude.sh
+            fi
           else
             echo "No Claude setup script found, skipping."
           fi
