@@ -578,7 +578,11 @@ class TestOrderEventsInsert:
 
         # Now test the corrected order_events INSERT
         detail_payload = json.dumps(
-            {"signal_id": signal_id, "leg_index": 0, "detail": "Submitted to paper_polymarket"}
+            {
+                "signal_id": signal_id,
+                "leg_index": 0,
+                "detail": "Submitted to paper_polymarket",
+            }
         )
         await db.execute(
             """
