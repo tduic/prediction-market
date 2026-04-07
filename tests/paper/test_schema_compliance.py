@@ -509,3 +509,95 @@ class TestFullCascade:
         )
         row = await cursor.fetchone()
         assert row[0] == "P1_cross_market_arb"
+
+
+@pytest.mark.asyncio
+class TestOrderEventsInsert:
+    """order_events INSERT must use the real schema columns."""
+
+    async def test_insert_with_correct_schema(self, db):
+        """Verifies the fixed _log_order_event column mapping against real schema.
+
+        order_events has FK(order_id) → orders(id), so we must create the full
+        chain: market → market_pairs → violations → signals → orders first.
+        """
+        import json
+
+        now = datetime.now(timezone.utc).isoformat()
+
+        # Set up FK chain
+        await _insert_market(db, "evt_mkt_a")
+        await _insert_market(db, "evt_mkt_b", "kalshi")
+
+        pair_id = "evt_mkt_a_evt_mkt_b"
+        await db.execute(
+            """INSERT INTO market_pairs
+               (id, market_id_a, market_id_b, pair_type, similarity_score,
+                match_method, active, created_at, updated_at)
+               VALUES (?, 'evt_mkt_a', 'evt_mkt_b', 'cross_platform', 0.90,
+                       'inverted_index', 1, ?, ?)""",
+            (pair_id, now, now),
+        )
+        violation_id = f"viol_{uuid.uuid4().hex[:12]}"
+        await db.execute(
+            """INSERT INTO violations
+               (id, pair_id, violation_type, price_a_at_detect, price_b_at_detect,
+                raw_spread, net_spread, status, detected_at, updated_at)
+               VALUES (?, ?, 'cross_platform', 0.45, 0.55, 0.10, 0.08,
+                       'detected', ?, ?)""",
+            (violation_id, pair_id, now, now),
+        )
+        signal_id = f"sig_{uuid.uuid4().hex[:12]}"
+        await db.execute(
+            """INSERT INTO signals
+               (id, violation_id, strategy, signal_type, market_id_a, market_id_b,
+                model_edge, kelly_fraction, position_size_a, position_size_b,
+                total_capital_at_risk, status, fired_at, updated_at)
+               VALUES (?, ?, 'P1_cross_market_arb', 'arb_pair', 'evt_mkt_a', 'evt_mkt_b',
+                       0.10, 0.20, 5.0, 5.0, 10.0, 'fired', ?, ?)""",
+            (signal_id, violation_id, now, now),
+        )
+        order_id = f"PAPER-{uuid.uuid4().hex[:12]}"
+        await db.execute(
+            """INSERT INTO orders
+               (id, signal_id, platform, platform_order_id,
+                market_id, side, order_type,
+                requested_price, requested_size,
+                filled_price, filled_size, slippage, fee_paid,
+                status, retry_count, submitted_at, filled_at,
+                submission_latency_ms, fill_latency_ms,
+                strategy, updated_at)
+               VALUES (?, ?, 'paper_polymarket', ?,
+                       'evt_mkt_a', 'buy', 'limit',
+                       0.45, 5.0, 0.45, 5.0, 0.0, 0.05,
+                       'filled', 0, ?, ?, 100, 200,
+                       'P1_cross_market_arb', ?)""",
+            (order_id, signal_id, order_id, now, now, now),
+        )
+        await db.commit()
+
+        # Now test the corrected order_events INSERT
+        detail_payload = json.dumps(
+            {"signal_id": signal_id, "leg_index": 0, "detail": "Submitted to paper_polymarket"}
+        )
+        await db.execute(
+            """
+            INSERT INTO order_events
+            (order_id, event_type, detail, occurred_at)
+            VALUES (?, ?, ?, datetime('now'))
+            """,
+            (order_id, "ACCEPTED", detail_payload),
+        )
+        await db.commit()
+
+        cursor = await db.execute(
+            "SELECT order_id, event_type, detail FROM order_events WHERE order_id = ?",
+            (order_id,),
+        )
+        row = await cursor.fetchone()
+        assert row is not None, "order_events row not written"
+        assert row["order_id"] == order_id
+        assert row["event_type"] == "ACCEPTED"
+        parsed = json.loads(row["detail"])
+        assert parsed["signal_id"] == signal_id
+        assert parsed["leg_index"] == 0

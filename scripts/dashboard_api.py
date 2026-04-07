@@ -452,6 +452,28 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
         finally:
             await close_db(db)
 
+    @app.get("/api/positions")
+    async def get_positions(
+        status: Optional[str] = Query(None),
+        limit: int = Query(200, ge=1, le=1000),
+    ) -> List[Dict[str, Any]]:
+        db = await get_db()
+        try:
+            if status:
+                cursor = await db.execute(
+                    "SELECT * FROM positions WHERE status = ? ORDER BY updated_at DESC LIMIT ?",
+                    (status, limit),
+                )
+            else:
+                cursor = await db.execute(
+                    "SELECT * FROM positions ORDER BY updated_at DESC LIMIT ?",
+                    (limit,),
+                )
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+        finally:
+            await close_db(db)
+
     @app.get("/health")
     async def health_check() -> Dict[str, str]:
         return {"status": "ok"}

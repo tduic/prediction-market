@@ -359,14 +359,19 @@ class OrderRouter:
             status: The order status
             details: Additional details
         """
+        import json
+
+        detail_payload = json.dumps(
+            {"signal_id": signal_id, "leg_index": leg_index, "detail": details}
+        )
         try:
             await self.db_connection.execute(
                 """
                 INSERT INTO order_events
-                (signal_id, order_id, leg_index, status, details, timestamp_utc)
-                VALUES (?, ?, ?, ?, ?, datetime('now'))
+                (order_id, event_type, detail, occurred_at)
+                VALUES (?, ?, ?, datetime('now'))
                 """,
-                (signal_id, order_id, leg_index, status, details),
+                (order_id, status, detail_payload),
             )
             await self.db_connection.commit()
         except Exception as e:
