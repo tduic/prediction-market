@@ -306,6 +306,7 @@ sudo tee /data/predictor/setup-claude.sh > /dev/null << 'EOF'
 #!/bin/bash
 set -euo pipefail
 LOG=/data/predictor/setup.log
+sudo touch "$LOG" && sudo chmod 666 "$LOG"
 echo "=== setup-claude.sh started $(date) ===" | tee -a "$LOG"
 
 export NVM_DIR=/data/predictor/.nvm
