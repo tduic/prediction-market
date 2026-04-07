@@ -91,7 +91,6 @@ jobs:
             --exclude='node_modules' \
             /tmp/predictor-staging/ "$APP_DIR/"
           sudo chown -R predictor:predictor "$APP_DIR"
-          sudo chmod g+w /data/predictor
 
           echo "=== Installing Python dependencies ==="
           sudo -u predictor "$VENV/bin/pip" install --quiet --upgrade pip
