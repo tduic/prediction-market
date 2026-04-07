@@ -64,3 +64,8 @@ dashboard/dist/
 # Deployment config and credentials
 deploy/config.env
 deploy/*-key.json
+
+# Service account key files (must never be committed)
+*-key.json
+gha-creds-*.json
+new-key.json
