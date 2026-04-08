@@ -162,6 +162,15 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
             )
             rows = await cursor.fetchall()
 
+            signals_cursor = await db.execute("""
+                SELECT strategy, COUNT(*) as cnt
+                FROM signals
+                WHERE fired_at >= datetime('now', '-24 hours')
+                GROUP BY strategy
+                """)
+            signals_rows = await signals_cursor.fetchall()
+            signals_24h_map = {r["strategy"]: r["cnt"] for r in signals_rows}
+
             strategies = []
             for row in rows:
                 row_dict = dict(row)
@@ -196,6 +205,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
                         "avg_execution_time_ms": round(
                             row_dict.get("avg_execution_time_ms", 0) or 0, 0
                         ),
+                        "signals_24h": signals_24h_map.get(row_dict.get("strategy"), 0),
                     }
                 )
 
@@ -449,6 +459,42 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
                 "total_fees": round(total_fees, 2),
                 "by_platform": fees_by_platform,
                 "by_strategy": fees_by_strategy,
+            }
+        finally:
+            await close_db(db)
+
+    @app.get("/api/circuit-breaker")
+    async def get_circuit_breaker() -> Dict[str, Any]:
+        db = await get_db()
+        try:
+            cursor = await db.execute(
+                "SELECT event_type, detail, occurred_at FROM system_events WHERE event_type IN ('CIRCUIT_BREAKER_TRIPPED','CIRCUIT_BREAKER_RESET') AND DATE(occurred_at) = DATE('now') ORDER BY id DESC LIMIT 1"
+            )
+            event_row = await cursor.fetchone()
+            if event_row and event_row["event_type"] == "CIRCUIT_BREAKER_TRIPPED":
+                tripped = True
+                reason = event_row["detail"]
+                tripped_at = event_row["occurred_at"]
+            else:
+                tripped = False
+                reason = None
+                tripped_at = None
+            cursor = await db.execute(
+                "SELECT COALESCE(SUM(actual_pnl - COALESCE(fees_total,0)),0) FROM trade_outcomes WHERE DATE(created_at) = DATE('now')"
+            )
+            pnl_row = await cursor.fetchone()
+            net_pnl = pnl_row[0] if pnl_row else 0.0
+            daily_loss = max(0.0, -net_pnl)
+            cfg = get_config().risk_controls
+            daily_loss_limit_pct = cfg.max_daily_loss_pct
+            daily_loss_limit = cfg.starting_capital * daily_loss_limit_pct
+            return {
+                "tripped": tripped,
+                "reason": reason,
+                "tripped_at": tripped_at,
+                "daily_loss": daily_loss,
+                "daily_loss_limit": daily_loss_limit,
+                "daily_loss_limit_pct": daily_loss_limit_pct,
             }
         finally:
             await close_db(db)

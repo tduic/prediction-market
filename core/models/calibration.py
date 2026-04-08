@@ -160,46 +160,50 @@ class CalibrationModel(BaseModel):
         Returns:
             (interpolation function, bias dict)
         """
-        # Bin by deciles
-        cat_data = cat_data.copy()
-        cat_data["decile"] = pd.qcut(
-            cat_data["final_market_price"], q=self.DECILES, duplicates="drop"
-        )
-
-        # Compute bin statistics
-        bin_means = []
-        bin_outcomes = []
-
-        for decile in cat_data["decile"].unique():
-            bin_data = cat_data[cat_data["decile"] == decile]
-            mean_price = bin_data["final_market_price"].mean()
-            mean_outcome = bin_data["resolved_outcome"].mean()
-
-            bin_means.append(mean_price)
-            bin_outcomes.append(mean_outcome)
-
-        sort_idx = np.argsort(bin_means)
-        bin_means = np.array(bin_means)[sort_idx]
-        bin_outcomes = np.array(bin_outcomes)[sort_idx]
-
-        # Create interpolation function
         try:
-            curve = interp1d(
-                bin_means,
-                bin_outcomes,
-                kind="linear",
-                fill_value="extrapolate",
-                bounds_error=False,
+            # Bin by deciles
+            cat_data = cat_data.copy()
+            cat_data["decile"] = pd.qcut(
+                cat_data["final_market_price"], q=self.DECILES, duplicates="drop"
             )
-        except ValueError:
-            # Fallback if insufficient data
-            def curve(x):
-                return x
 
-        # Identify systematic biases
-        biases = self._detect_biases(bin_means, bin_outcomes)
+            # Compute bin statistics
+            bin_means = []
+            bin_outcomes = []
 
-        return curve, biases
+            for decile in cat_data["decile"].unique():
+                bin_data = cat_data[cat_data["decile"] == decile]
+                mean_price = bin_data["final_market_price"].mean()
+                mean_outcome = bin_data["resolved_outcome"].mean()
+
+                bin_means.append(mean_price)
+                bin_outcomes.append(mean_outcome)
+
+            sort_idx = np.argsort(bin_means)
+            bin_means = np.array(bin_means)[sort_idx]
+            bin_outcomes = np.array(bin_outcomes)[sort_idx]
+
+            # Create interpolation function
+            try:
+                curve = interp1d(
+                    bin_means,
+                    bin_outcomes,
+                    kind="linear",
+                    fill_value="extrapolate",
+                    bounds_error=False,
+                )
+            except ValueError:
+                # Fallback if insufficient data
+                def curve(x):
+                    return x
+
+            # Identify systematic biases
+            biases = self._detect_biases(bin_means, bin_outcomes)
+
+            return curve, biases
+        except ValueError as e:
+            logger.warning("pd.qcut failed for category, using identity curve: %s", e)
+            return (lambda x: x), {}
 
     def _detect_biases(self, prices: np.ndarray, outcomes: np.ndarray) -> dict:
         """
