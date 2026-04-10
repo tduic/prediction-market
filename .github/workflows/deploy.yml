@@ -119,7 +119,31 @@ jobs:
           REMOTE_SCRIPT
           )"
 
-      # ── 6. Restore Claude setup ──────────────────────────────────────
+      # ── 6. Write secrets to VM ──────────────────────────────────────────────
+      - name: Write secrets to VM
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          python3 -c "
+          import os
+          content = (
+            'export ANTHROPIC_API_KEY=' + os.environ['ANTHROPIC_API_KEY'] + '\n' +
+            'export GH_TOKEN=' + os.environ['GH_TOKEN'] + '\n' +
+            'export DISCORD_WEBHOOK_URL=' + os.environ['DISCORD_WEBHOOK_URL'] + '\n'
+          )
+          open('/tmp/predictor.env', 'w').write(content)
+          "
+          gcloud compute scp /tmp/predictor.env \
+            "$VM_NAME:/tmp/predictor.env" \
+            --zone="$ZONE" --project="$PROJECT_ID" --quiet
+          gcloud compute ssh "$VM_NAME" \
+            --zone="$ZONE" --project="$PROJECT_ID" \
+            --command="sudo mv /tmp/predictor.env /data/predictor/.env && sudo chmod 600 /data/predictor/.env"
+          rm -f /tmp/predictor.env
+
+      # ── 7. Restore Claude setup ──────────────────────────────────────
       - name: Restore Claude setup on VM
         run: |
           gcloud compute ssh "$VM_NAME" \
@@ -139,7 +163,7 @@ jobs:
           REMOTE_SCRIPT
           )"
 
-      # ── 7. Post-deploy health check ───────────────────────────────────
+      # ── 8. Post-deploy health check ───────────────────────────────────
       - name: Health check
         run: |
           echo "Checking service health..."
@@ -156,7 +180,7 @@ jobs:
 
           echo "Deploy successful — service is running."
 
-      # ── 8. Discord notification ───────────────────────────────────────
+      # ── 9. Discord notification ───────────────────────────────────────
       - name: Notify Discord (success)
         if: success()
         env:

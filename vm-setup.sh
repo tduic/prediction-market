@@ -4,12 +4,13 @@
 set -euo pipefail
 
 # ── Credentials ───────────────────────────────────────────────────────────────
-sudo tee /data/predictor/.env > /dev/null << 'EOF'
-export ANTHROPIC_API_KEY=REDACTED_ANTHROPIC_KEY
-export GH_TOKEN=REDACTED_GH_TOKEN
-export DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/REDACTED_DISCORD_WEBHOOK
-EOF
-sudo chmod 600 /data/predictor/.env
+# .env is written by the deploy workflow from GitHub Actions secrets.
+# Never add plaintext secrets here.
+if [ ! -f /data/predictor/.env ]; then
+  sudo touch /data/predictor/.env
+  sudo chmod 600 /data/predictor/.env
+  echo "Warning: /data/predictor/.env is empty. Run a deploy to populate secrets." >&2
+fi
 
 # ── Combined memory file ───────────────────────────────────────────────────────
 sudo mkdir -p /data/predictor/.claude
