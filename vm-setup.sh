@@ -319,7 +319,6 @@ if [ ! -f "$NVM_DIR/nvm.sh" ]; then
     | NVM_DIR=/data/predictor/.nvm bash >> "$LOG" 2>&1
   export NVM_DIR=/data/predictor/.nvm
 fi
-fi
 source "$NVM_DIR/nvm.sh"
 
 nvm ls 20 &>/dev/null || nvm install 20 >> "$LOG" 2>&1
@@ -345,6 +344,17 @@ export NVM_DIR=/data/predictor/.nvm
 [ -s "$NVM_DIR/nvm.sh" ] && source "$NVM_DIR/nvm.sh"
 [ -f /data/predictor/.env ] && source /data/predictor/.env
 BASHRC
+
+# Self-heal KALSHI_RSA_KEY_PATH in /data/predictor/.env.
+# Kalshi market fetch fails with "Is a directory: '.'" when this is unset.
+if [ -f /data/predictor/.env ] && ! sudo grep -q '^KALSHI_RSA_KEY_PATH=' /data/predictor/.env; then
+  echo "KALSHI_RSA_KEY_PATH=/data/predictor/kalshi_private_key.pem" \
+    | sudo tee -a /data/predictor/.env > /dev/null
+  sudo chown predictor:predictor /data/predictor/.env
+  sudo chmod 600 /data/predictor/.env
+  echo "Re-added KALSHI_RSA_KEY_PATH to /data/predictor/.env" | tee -a "$LOG"
+  sudo systemctl restart predictor 2>/dev/null || true
+fi
 
 source /data/predictor/.env
 
