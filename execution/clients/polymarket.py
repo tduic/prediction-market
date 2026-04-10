@@ -156,7 +156,12 @@ class PolymarketExecutionClient(BaseExecutionClient):
             logger.error("Failed to configure proxy: %s", e, exc_info=True)
             raise
 
-    async def submit_order(self, leg: OrderLeg) -> OrderResult:
+    async def submit_order(
+        self,
+        leg: OrderLeg,
+        signal_id: str | None = None,
+        strategy: str | None = None,
+    ) -> OrderResult:
         """Submit order to Polymarket, poll for fill. Returns unified OrderResult."""
         await self._acquire_rate_limit()
         start_time = time.time()
@@ -202,7 +207,7 @@ class PolymarketExecutionClient(BaseExecutionClient):
                         submission_latency_ms=submission_latency_ms,
                         error_message=error_msg,
                     )
-                    await self.write_order(leg, result)
+                    await self.write_order(leg, result, signal_id=signal_id, strategy=strategy)
                     return result
             else:
                 order_id = str(api_result) if api_result else ""
@@ -217,7 +222,7 @@ class PolymarketExecutionClient(BaseExecutionClient):
                 status="pending",
                 submission_latency_ms=submission_latency_ms,
             )
-            await self.write_order(leg, pending_result)
+            await self.write_order(leg, pending_result, signal_id=signal_id, strategy=strategy)
 
             # Poll for fill
             fill_result = await self._poll_for_fill(
@@ -235,7 +240,7 @@ class PolymarketExecutionClient(BaseExecutionClient):
                 submission_latency_ms=submission_latency_ms,
                 error_message=str(e),
             )
-            await self.write_order(leg, result)
+            await self.write_order(leg, result, signal_id=signal_id, strategy=strategy)
             return result
 
     async def _poll_for_fill(

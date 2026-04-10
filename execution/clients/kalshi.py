@@ -114,7 +114,12 @@ class KalshiExecutionClient(BaseExecutionClient):
             "Content-Type": "application/json",
         }
 
-    async def submit_order(self, leg: OrderLeg) -> OrderResult:
+    async def submit_order(
+        self,
+        leg: OrderLeg,
+        signal_id: str | None = None,
+        strategy: str | None = None,
+    ) -> OrderResult:
         """Submit order to Kalshi, then poll for fill. Returns unified OrderResult."""
         await self._acquire_rate_limit()
         start_time = time.time()
@@ -161,7 +166,7 @@ class KalshiExecutionClient(BaseExecutionClient):
                     submission_latency_ms=submission_latency_ms,
                     error_message=error_msg,
                 )
-                await self.write_order(leg, result)
+                await self.write_order(leg, result, signal_id=signal_id, strategy=strategy)
                 return result
 
             order_data = response.json()
@@ -175,7 +180,7 @@ class KalshiExecutionClient(BaseExecutionClient):
                 status="pending",
                 submission_latency_ms=submission_latency_ms,
             )
-            await self.write_order(leg, pending_result)
+            await self.write_order(leg, pending_result, signal_id=signal_id, strategy=strategy)
 
             # Poll for fill
             fill_result = await self._poll_for_fill(
@@ -192,7 +197,7 @@ class KalshiExecutionClient(BaseExecutionClient):
                 submission_latency_ms=submission_latency_ms,
                 error_message="Request timeout",
             )
-            await self.write_order(leg, result)
+            await self.write_order(leg, result, signal_id=signal_id, strategy=strategy)
             return result
         except Exception as e:
             submission_latency_ms = int((time.time() - start_time) * 1000)
@@ -204,7 +209,7 @@ class KalshiExecutionClient(BaseExecutionClient):
                 submission_latency_ms=submission_latency_ms,
                 error_message=str(e),
             )
-            await self.write_order(leg, result)
+            await self.write_order(leg, result, signal_id=signal_id, strategy=strategy)
             return result
 
     async def _poll_for_fill(

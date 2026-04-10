@@ -45,7 +45,12 @@ class BaseExecutionClient:
         self.db = db_connection
         self.platform_label = platform_label
 
-    async def submit_order(self, leg: OrderLeg) -> OrderResult:
+    async def submit_order(
+        self,
+        leg: OrderLeg,
+        signal_id: str | None = None,
+        strategy: str | None = None,
+    ) -> OrderResult:
         """Submit an order. Subclasses must implement."""
         raise NotImplementedError
 

@@ -217,7 +217,7 @@ class MockExecutionClient:
                 "[MOCK] Could not seed order book from DB for %s: %s", market_id, e
             )
 
-    async def submit_order(self, leg: OrderLeg) -> MockOrderResult:
+    async def submit_order(self, leg: OrderLeg, signal_id: str | None = None, strategy: str | None = None) -> MockOrderResult:
         """
         Simulate order submission with realistic latency and fill behavior.
 
