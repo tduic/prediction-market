@@ -313,8 +313,12 @@ echo "=== setup-claude.sh started $(date) ===" | tee -a "$LOG"
 export NVM_DIR=/data/predictor/.nvm
 if [ ! -f "$NVM_DIR/nvm.sh" ]; then
   echo "Installing nvm..." | tee -a "$LOG"
+  sudo mkdir -p "$NVM_DIR" && sudo chmod 777 "$NVM_DIR"
+  unset NVM_DIR
   curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh \
     | NVM_DIR=/data/predictor/.nvm bash >> "$LOG" 2>&1
+  export NVM_DIR=/data/predictor/.nvm
+fi
 fi
 source "$NVM_DIR/nvm.sh"
 
