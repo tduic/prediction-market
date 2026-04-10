@@ -17,6 +17,7 @@ import argparse
 import asyncio
 import json
 import logging
+import os
 import re
 import sys
 import time
@@ -57,6 +58,51 @@ from core.logging_config import configure_from_env  # noqa: E402
 print("[startup] All imports complete.", flush=True)
 
 logger = logging.getLogger(__name__)
+
+
+def _make_execution_clients(db, execution_mode: str):
+    """
+    Return (poly_client, kalshi_client) for the given execution mode.
+
+    - "live"         → real PolymarketExecutionClient + KalshiExecutionClient
+    - "paper" / any  → PaperExecutionClient (simulated fills, no real orders)
+    """
+    if execution_mode == "live":
+        from execution.clients.kalshi import KalshiExecutionClient
+        from execution.clients.polymarket import PolymarketExecutionClient
+
+        poly_client = PolymarketExecutionClient(db)
+        kalshi_client = KalshiExecutionClient(db)
+        logger.info("Execution clients: LIVE (Polymarket + Kalshi)")
+    else:
+        from execution.clients.paper import PaperExecutionClient
+
+        poly_client = PaperExecutionClient(db, platform_label="paper_polymarket")
+        kalshi_client = PaperExecutionClient(db, platform_label="paper_kalshi")
+        logger.info("Execution clients: PAPER (simulated)")
+    return poly_client, kalshi_client
+
+
+def _make_single_execution_client(db, execution_mode: str, platform: str):
+    """
+    Return a single execution client for single-platform strategies.
+
+    In live mode, returns the appropriate live client; otherwise paper.
+    """
+    if execution_mode == "live":
+        if platform == "polymarket":
+            from execution.clients.polymarket import PolymarketExecutionClient
+
+            return PolymarketExecutionClient(db)
+        else:
+            from execution.clients.kalshi import KalshiExecutionClient
+
+            return KalshiExecutionClient(db)
+    else:
+        from execution.clients.paper import PaperExecutionClient
+
+        return PaperExecutionClient(db, platform_label=f"paper_{platform}")
+
 
 # ── Strategy assignment ──────────────────────────────────────────────────────
 
@@ -1094,11 +1140,11 @@ class ArbitrageEngine:
             if m.get("kalshi_price"):
                 self.prices[m["kalshi_id"]] = m["kalshi_price"]
 
-        # Paper execution clients
-        from execution.clients.paper import PaperExecutionClient
-
-        self._paper_poly = PaperExecutionClient(db, platform_label="paper_polymarket")
-        self._paper_kalshi = PaperExecutionClient(db, platform_label="paper_kalshi")
+        # Execution clients (live or paper depending on EXECUTION_MODE)
+        execution_mode = os.getenv("EXECUTION_MODE", "paper")
+        self._poly_client, self._kalshi_client = _make_execution_clients(
+            db, execution_mode
+        )
 
         logger.info(
             "ArbitrageEngine initialized: %d pairs, min_spread=%.4f",
@@ -1175,12 +1221,12 @@ class ArbitrageEngine:
             buy_platform, sell_platform = "polymarket", "kalshi"
             buy_id, sell_id = match["poly_id"], match["kalshi_id"]
             buy_price, sell_price = p_price, k_price
-            buy_client, sell_client = self._paper_poly, self._paper_kalshi
+            buy_client, sell_client = self._poly_client, self._kalshi_client
         else:
             buy_platform, sell_platform = "kalshi", "polymarket"
             buy_id, sell_id = match["kalshi_id"], match["poly_id"]
             buy_price, sell_price = k_price, p_price
-            buy_client, sell_client = self._paper_kalshi, self._paper_poly
+            buy_client, sell_client = self._kalshi_client, self._poly_client
 
         edge = spread
         size = round(min(10.0, 100.0 * edge), 1)
@@ -1447,11 +1493,10 @@ async def detect_violations_and_trade(
     For each matched pair, check for price discrepancies.
     If spread exceeds threshold, generate a signal and execute paper trade.
     """
-    from execution.clients.paper import PaperExecutionClient
     from execution.models import OrderLeg
 
-    paper_poly = PaperExecutionClient(db, platform_label="paper_polymarket")
-    paper_kalshi = PaperExecutionClient(db, platform_label="paper_kalshi")
+    execution_mode = os.getenv("EXECUTION_MODE", "paper")
+    paper_poly, paper_kalshi = _make_execution_clients(db, execution_mode)
 
     trades = []
 
@@ -1698,10 +1743,11 @@ async def detect_single_platform_opportunities(
     - P4_liquidity_timing: Wide bid/ask spread indicates market maker opportunity
     - P5_mean_reversion: Price moved sharply, bet on reversion
     """
-    from execution.clients.paper import PaperExecutionClient
     from execution.models import OrderLeg
 
-    paper_client = PaperExecutionClient(db, platform_label="paper_single")
+    execution_mode = os.getenv("EXECUTION_MODE", "paper")
+    # Cache clients by platform to avoid re-initializing per trade
+    _clients: dict = {}
 
     # Get all markets with their latest prices
     cursor = await db.execute("""SELECT m.id, m.platform, m.title,
@@ -1867,16 +1913,20 @@ async def detect_single_platform_opportunities(
         except Exception as e:
             logger.debug("Signal insert error: %s", e)
 
-        # Execute paper trade
+        # Get (or create) execution client for this market's platform
+        platform = m["platform"]
+        if platform not in _clients:
+            _clients[platform] = _make_single_execution_client(db, execution_mode, platform)
+
         leg = OrderLeg(
             market_id=m["id"],
-            platform=m["platform"],
+            platform=platform,
             side=side,
             size=size,
             limit_price=price,
             order_type="LIMIT",
         )
-        result = await paper_client.submit_order(
+        result = await _clients[platform].submit_order(
             leg, signal_id=signal_id, strategy=strategy
         )
 
