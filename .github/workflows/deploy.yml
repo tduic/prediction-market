@@ -129,9 +129,9 @@ jobs:
           python3 -c "
           import os
           content = (
-            'export ANTHROPIC_API_KEY=' + os.environ['ANTHROPIC_API_KEY'] + '\n' +
-            'export GH_TOKEN=' + os.environ['GH_TOKEN'] + '\n' +
-            'export DISCORD_WEBHOOK_URL=' + os.environ['DISCORD_WEBHOOK_URL'] + '\n'
+            'ANTHROPIC_API_KEY=' + os.environ['ANTHROPIC_API_KEY'] + '\n' +
+            'GH_TOKEN=' + os.environ['GH_TOKEN'] + '\n' +
+            'DISCORD_WEBHOOK_URL=' + os.environ['DISCORD_WEBHOOK_URL'] + '\n'
           )
           open('/tmp/predictor.env', 'w').write(content)
           "
@@ -140,7 +140,7 @@ jobs:
             --zone="$ZONE" --project="$PROJECT_ID" --quiet
           gcloud compute ssh "$VM_NAME" \
             --zone="$ZONE" --project="$PROJECT_ID" \
-            --command="sudo mv /tmp/predictor.env /data/predictor/.env && sudo chmod 600 /data/predictor/.env"
+            --command="sudo mv /tmp/predictor.env /data/predictor/.env && sudo chown predictor:predictor /data/predictor/.env && sudo chmod 600 /data/predictor/.env"
           rm -f /tmp/predictor.env
 
       # ── 7. Restore Claude setup ──────────────────────────────────────
