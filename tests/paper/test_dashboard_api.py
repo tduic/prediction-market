@@ -7,7 +7,6 @@ All endpoints are tested for shape, type, and sensible defaults.
 """
 
 import sys
-import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -18,7 +17,6 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from httpx import AsyncClient, ASGITransport  # noqa: E402
 from scripts.dashboard_api import create_dashboard_app  # noqa: E402
-
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -113,8 +111,16 @@ class TestOverviewEndpoint:
         resp = await client.get("/api/overview")
         assert resp.status_code == 200
         data = resp.json()
-        for key in ("total_capital", "cash", "deployed", "open_positions",
-                    "unrealized_pnl", "realized_pnl_total", "total_fees", "net_return_pct"):
+        for key in (
+            "total_capital",
+            "cash",
+            "deployed",
+            "open_positions",
+            "unrealized_pnl",
+            "realized_pnl_total",
+            "total_fees",
+            "net_return_pct",
+        ):
             assert key in data, f"Missing key: {key}"
 
     async def test_empty_db_returns_defaults(self, app_and_client):
@@ -128,6 +134,7 @@ class TestOverviewEndpoint:
     async def test_reflects_trade_outcomes(self, app_and_client):
         _, client, db_path = app_and_client
         import aiosqlite
+
         async with aiosqlite.connect(db_path) as file_db:
             file_db.row_factory = aiosqlite.Row
             await _seed_trade_outcome(file_db, pnl=50.0, fees=1.0)
@@ -141,9 +148,12 @@ class TestOverviewEndpoint:
     async def test_snapshot_takes_precedence(self, app_and_client):
         _, client, db_path = app_and_client
         import aiosqlite
+
         async with aiosqlite.connect(db_path) as file_db:
             file_db.row_factory = aiosqlite.Row
-            await _seed_pnl_snapshot(file_db, realized_pnl=200.0, capital=10200.0, fees=5.0)
+            await _seed_pnl_snapshot(
+                file_db, realized_pnl=200.0, capital=10200.0, fees=5.0
+            )
 
         resp = await client.get("/api/overview")
         data = resp.json()
@@ -169,9 +179,12 @@ class TestStrategiesEndpoint:
     async def test_strategy_row_shape(self, app_and_client):
         _, client, db_path = app_and_client
         import aiosqlite
+
         async with aiosqlite.connect(db_path) as file_db:
             file_db.row_factory = aiosqlite.Row
-            await _seed_trade_outcome(file_db, strategy="P3_calibration_bias", pnl=10.0, fees=0.5)
+            await _seed_trade_outcome(
+                file_db, strategy="P3_calibration_bias", pnl=10.0, fees=0.5
+            )
 
         resp = await client.get("/api/strategies")
         rows = resp.json()
@@ -184,9 +197,12 @@ class TestStrategiesEndpoint:
         """?days=1 vs ?days=30 — with fresh data, both return the same row."""
         _, client, db_path = app_and_client
         import aiosqlite
+
         async with aiosqlite.connect(db_path) as file_db:
             file_db.row_factory = aiosqlite.Row
-            await _seed_trade_outcome(file_db, strategy="P1_cross_market_arb", pnl=5.0, fees=0.1)
+            await _seed_trade_outcome(
+                file_db, strategy="P1_cross_market_arb", pnl=5.0, fees=0.1
+            )
 
         resp_30 = await client.get("/api/strategies?days=30")
         resp_1 = await client.get("/api/strategies?days=1")
@@ -214,6 +230,7 @@ class TestTradesEndpoint:
     async def test_trade_row_shape(self, app_and_client):
         _, client, db_path = app_and_client
         import aiosqlite
+
         async with aiosqlite.connect(db_path) as file_db:
             file_db.row_factory = aiosqlite.Row
             await _seed_trade_outcome(file_db, pnl=7.5)
@@ -228,6 +245,7 @@ class TestTradesEndpoint:
     async def test_strategy_filter(self, app_and_client):
         _, client, db_path = app_and_client
         import aiosqlite
+
         async with aiosqlite.connect(db_path) as file_db:
             file_db.row_factory = aiosqlite.Row
             await _seed_trade_outcome(file_db, strategy="P3_calibration_bias", pnl=3.0)
@@ -248,7 +266,13 @@ class TestRiskEndpoint:
         resp = await client.get("/api/risk")
         assert resp.status_code == 200
         data = resp.json()
-        for key in ("max_drawdown_pct", "max_drawdown", "concentration_pct", "daily_var", "sharpe_overall"):
+        for key in (
+            "max_drawdown_pct",
+            "max_drawdown",
+            "concentration_pct",
+            "daily_var",
+            "sharpe_overall",
+        ):
             assert key in data, f"Missing key: {key}"
 
     async def test_empty_db_returns_zeros(self, app_and_client):
@@ -307,7 +331,12 @@ class TestCircuitBreakerEndpoint:
         resp = await client.get("/api/circuit-breaker")
         assert resp.status_code == 200
         data = resp.json()
-        for key in ("tripped", "daily_loss", "daily_loss_limit", "daily_loss_limit_pct"):
+        for key in (
+            "tripped",
+            "daily_loss",
+            "daily_loss_limit",
+            "daily_loss_limit_pct",
+        ):
             assert key in data, f"Missing key: {key}"
 
     async def test_not_tripped_by_default(self, app_and_client):

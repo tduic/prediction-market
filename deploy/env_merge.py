@@ -4,6 +4,7 @@ Merge KEY=VALUE pairs from /tmp/predictor_updates.env into /data/predictor/.env.
 Updates existing keys in-place; appends new ones.
 Preserves keys not in the update file (e.g. EXECUTION_MODE set manually on VM).
 """
+
 import os
 import re
 
