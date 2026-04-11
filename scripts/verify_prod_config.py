@@ -79,6 +79,10 @@ REQUIRED_SECRETS = [
     "KALSHI_RSA_KEY_PATH",
 ]
 
+# These are filesystem paths (not secret values) — env storage is correct;
+# --require-gcp should not fail for them.
+ENV_OK_SECRETS = {"KALSHI_RSA_KEY_PATH"}
+
 
 def _mask(value: str | None) -> str:
     if not value:
@@ -118,7 +122,7 @@ def _check_secrets(require_gcp: bool) -> tuple[bool, list[tuple[str, str, str]]]
 
         if not value:
             all_ok = False
-        if require_gcp and source != "gcp":
+        if require_gcp and source != "gcp" and name not in ENV_OK_SECRETS:
             all_ok = False
 
     return all_ok, rows
