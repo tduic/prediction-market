@@ -166,6 +166,7 @@ jobs:
 
       # ── 8. Post-deploy health check ───────────────────────────────────
       - name: Health check
+        if: always()
         run: |
           echo "Checking service health..."
           STATUS=$(gcloud compute ssh "$VM_NAME" \

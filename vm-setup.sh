@@ -356,7 +356,10 @@ if [ -f /data/predictor/.env ] && ! sudo grep -q '^KALSHI_RSA_KEY_PATH=' /data/p
   sudo systemctl restart predictor 2>/dev/null || true
 fi
 
-source /data/predictor/.env
+# Source .env — use sudo cat in case running as non-predictor user
+set -a
+eval "$(sudo cat /data/predictor/.env 2>/dev/null || true)"
+set +a
 
 EXISTING=$(crontab -l 2>/dev/null || true)
 UPDATED="$EXISTING"
