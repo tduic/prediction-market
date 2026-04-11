@@ -71,7 +71,7 @@ class ReconciliationEngine:
                     "exchange": float | None,
                     "discrepancy": float,
                     "discrepancy_pct": float,
-                    "status": "OK" | "WARNING" | "ERROR"
+                    "status": "OK" | "DISCREPANCY" | "ERROR"
                 },
                 "kalshi": {...},
                 "timestamp": ISO8601 string
@@ -392,7 +392,7 @@ class ReconciliationEngine:
 
         # Determine status
         if discrepancy_pct > self.halt_threshold_pct:
-            status = "WARNING"
+            status = "DISCREPANCY"
         else:
             status = "OK"
 
@@ -546,7 +546,7 @@ class ReconciliationEngine:
                         float(discrepancy),
                         status,
                         json.dumps(p),
-                        "halt" if status == "WARNING" else None,
+                        "halt" if status == "DISCREPANCY" else None,
                         now,
                     ),
                 )
