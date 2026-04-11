@@ -1146,11 +1146,51 @@ class ArbitrageEngine:
             db, execution_mode
         )
 
+        # Track pairs that need an initial sweep (prices seeded from match data)
+        self._needs_initial_sweep = True
+
         logger.info(
             "ArbitrageEngine initialized: %d pairs, min_spread=%.4f",
             len(self._pairs),
             min_spread,
         )
+
+    async def initial_sweep(self) -> None:
+        """Check all seeded pairs for opportunities at startup.
+
+        Prices are seeded from match data before any websocket tick arrives.
+        Without this sweep, pairs already above the spread threshold at launch
+        are invisible until a price delta triggers on_price_update.
+        """
+        if not self._needs_initial_sweep:
+            return
+        self._needs_initial_sweep = False
+
+        swept = 0
+        for match in self._pairs.values():
+            pair_id = f"{match['poly_id']}_{match['kalshi_id']}"
+            if pair_id in self.open_positions:
+                continue
+            p_price = self.prices.get(match["poly_id"])
+            k_price = self.prices.get(match["kalshi_id"])
+            if p_price is None or k_price is None:
+                continue
+            spread = abs(p_price - k_price)
+            if spread < self.min_spread:
+                continue
+            async with self._trade_lock:
+                if pair_id in self.open_positions:
+                    continue
+                self.open_positions.add(pair_id)
+                trade = await self._execute_arb_trade(
+                    match, p_price, k_price, spread, pair_id
+                )
+                if trade:
+                    self.trades.append(trade)
+                    swept += 1
+
+        if swept:
+            logger.info("Initial sweep found %d arb opportunities", swept)
 
     async def on_price_update(self, market_id: str, new_price: float):
         """Called by websocket handlers on every price tick.
@@ -1821,9 +1861,22 @@ async def detect_single_platform_opportunities(
                 }
             )
 
-    # Sort by signal strength and take top N
-    opportunities.sort(key=lambda x: x["signal_strength"], reverse=True)
-    opportunities = opportunities[:max_trades]
+    # Reserve slots per strategy so P3's high signal_strength can't crowd out P4.
+    # P3 gets up to 75% of max_trades; P4 gets up to 25% (min 2 slots).
+    p3_cap = max(1, int(max_trades * 0.75))
+    p4_cap = max(2, max_trades - p3_cap)
+
+    p3 = sorted(
+        [o for o in opportunities if o["strategy"] == "P3_calibration_bias"],
+        key=lambda x: x["signal_strength"],
+        reverse=True,
+    )[:p3_cap]
+    p4 = sorted(
+        [o for o in opportunities if o["strategy"] == "P4_liquidity_timing"],
+        key=lambda x: x["signal_strength"],
+        reverse=True,
+    )[:p4_cap]
+    opportunities = p3 + p4
 
     if opportunities:
         logger.info(
@@ -2468,6 +2521,8 @@ async def main():
                 logger.warning("Initial snapshot failed (will retry later): %s", e)
 
             arb_engine = ArbitrageEngine(db, matches, min_spread=args.min_spread)
+            await arb_engine.initial_sweep()
+
             scheduled = ScheduledStrategyRunner(
                 db, interval=args.interval, max_trades_per_cycle=20
             )

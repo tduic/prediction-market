@@ -7,6 +7,7 @@ python-dateutil==2.8.2
 httpx==0.27.0
 httpx-socks>=0.9.0            # SOCKS5 proxy support for Polymarket EU routing
 beautifulsoup4>=4.12.0
+websockets>=12.0              # WebSocket streaming for Polymarket + Kalshi price feeds
 
 # ── Dashboard (FastAPI + static file serving) ───────────────────
 fastapi>=0.115.0
