@@ -207,7 +207,9 @@ class PolymarketExecutionClient(BaseExecutionClient):
                         submission_latency_ms=submission_latency_ms,
                         error_message=error_msg,
                     )
-                    await self.write_order(leg, result, signal_id=signal_id, strategy=strategy)
+                    await self.write_order(
+                        leg, result, signal_id=signal_id, strategy=strategy
+                    )
                     return result
             else:
                 order_id = str(api_result) if api_result else ""
@@ -222,7 +224,9 @@ class PolymarketExecutionClient(BaseExecutionClient):
                 status="pending",
                 submission_latency_ms=submission_latency_ms,
             )
-            await self.write_order(leg, pending_result, signal_id=signal_id, strategy=strategy)
+            await self.write_order(
+                leg, pending_result, signal_id=signal_id, strategy=strategy
+            )
 
             # Poll for fill
             fill_result = await self._poll_for_fill(

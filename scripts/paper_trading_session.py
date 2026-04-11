@@ -1916,7 +1916,9 @@ async def detect_single_platform_opportunities(
         # Get (or create) execution client for this market's platform
         platform = m["platform"]
         if platform not in _clients:
-            _clients[platform] = _make_single_execution_client(db, execution_mode, platform)
+            _clients[platform] = _make_single_execution_client(
+                db, execution_mode, platform
+            )
 
         leg = OrderLeg(
             market_id=m["id"],
