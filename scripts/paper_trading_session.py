@@ -104,6 +104,35 @@ def _make_single_execution_client(db, execution_mode: str, platform: str):
         return PaperExecutionClient(db, platform_label=f"paper_{platform}")
 
 
+# ── Strategy helpers ─────────────────────────────────────────────────────────
+
+_MONTH_PAT = (
+    r"(january|february|march|april|may|june|july|august|september|"
+    r"october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|oct|nov|dec)"
+)
+_STRIP_SUFFIX = re.compile(
+    rf"\s+(?:{_MONTH_PAT}|20\d{{2}}|q[1-4]|h[1-2]|"
+    r"\$?[\d,]+\.?\d*[km%]?(?:\s*[-–to]+\s*\$?[\d,]+\.?\d*[km%]?)?)\s*$",
+    re.IGNORECASE,
+)
+
+
+def _p2_title_root(title: str) -> str:
+    """Strip trailing date/value suffixes to find the shared event root.
+
+    Used to group series markets (e.g. "Will GDP grow in Q1?" / "...Q2?")
+    so we can detect over-sum inconsistency across the series.
+    """
+    t = title.lower().strip().rstrip("?.,!")
+    # Iteratively strip up to 3 trailing tokens (e.g. "March 2025 $50k")
+    for _ in range(3):
+        new_t = _STRIP_SUFFIX.sub("", t)
+        if new_t == t:
+            break
+        t = new_t.rstrip("?.,! ")
+    return t
+
+
 # ── Strategy assignment ──────────────────────────────────────────────────────
 
 STRATEGIES = [
@@ -1861,11 +1890,63 @@ async def detect_single_platform_opportunities(
                 }
             )
 
-    # Reserve slots per strategy so P3's high signal_strength can't crowd out P4.
-    # P3 gets up to 75% of max_trades; P4 gets up to 25% (min 2 slots).
-    p3_cap = max(1, int(max_trades * 0.75))
-    p4_cap = max(2, max_trades - p3_cap)
+        # Strategy: Information latency — wide bid-ask spread combined with an
+        # extreme price indicates that market makers haven't caught up to recent
+        # information. The directional signal is already in the price; the edge
+        # is the spread compression that occurs as information propagates.
+        if m["spread"] >= 0.08 and (price < 0.25 or price > 0.75):
+            side = "BUY" if price < 0.50 else "SELL"
+            edge = round(m["spread"] * 0.30, 4)  # capture ~30% of the spread
+            opportunities.append(
+                {
+                    "market": m,
+                    "strategy": "P5_information_latency",
+                    "side": side,
+                    "edge": max(edge, 0.005),
+                    "signal_strength": m["spread"],
+                }
+            )
 
+    # Strategy: Structured event inconsistency — group same-platform markets by
+    # title root (stripping date/value suffixes). When the YES prices of a
+    # mutually-exclusive series sum > 1.05, sell the most overpriced member.
+    _p2_groups: dict[tuple, list[dict]] = defaultdict(list)
+    for m in markets:
+        root = _p2_title_root(m["title"])
+        if len(root) >= 25:
+            _p2_groups[(m["platform"], root)].append(m)
+
+    for (_plat, _root), group in _p2_groups.items():
+        if len(group) < 2 or len(group) > 10:
+            continue
+        total_yes = sum(m["yes_price"] for m in group)
+        if total_yes <= 1.05:
+            continue
+        expected = 1.0 / len(group)
+        best = max(group, key=lambda m: m["yes_price"] - expected)
+        edge = round((total_yes - 1.0) / len(group), 4)
+        opportunities.append(
+            {
+                "market": best,
+                "strategy": "P2_structured_event",
+                "side": "SELL",
+                "edge": max(edge, 0.005),
+                "signal_strength": total_yes - 1.0,
+            }
+        )
+
+    # Reserve slots per strategy to prevent any single strategy crowding others.
+    # P2: 15%, P3: 50%, P4: 25%, P5: remainder (min 1 each).
+    p2_cap = max(1, int(max_trades * 0.15))
+    p3_cap = max(1, int(max_trades * 0.50))
+    p4_cap = max(2, int(max_trades * 0.25))
+    p5_cap = max(1, max_trades - p2_cap - p3_cap - p4_cap)
+
+    p2 = sorted(
+        [o for o in opportunities if o["strategy"] == "P2_structured_event"],
+        key=lambda x: x["signal_strength"],
+        reverse=True,
+    )[:p2_cap]
     p3 = sorted(
         [o for o in opportunities if o["strategy"] == "P3_calibration_bias"],
         key=lambda x: x["signal_strength"],
@@ -1876,7 +1957,12 @@ async def detect_single_platform_opportunities(
         key=lambda x: x["signal_strength"],
         reverse=True,
     )[:p4_cap]
-    opportunities = p3 + p4
+    p5 = sorted(
+        [o for o in opportunities if o["strategy"] == "P5_information_latency"],
+        key=lambda x: x["signal_strength"],
+        reverse=True,
+    )[:p5_cap]
+    opportunities = p2 + p3 + p4 + p5
 
     if opportunities:
         logger.info(
