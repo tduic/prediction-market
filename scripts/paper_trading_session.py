@@ -59,6 +59,11 @@ print("[startup] All imports complete.", flush=True)
 
 logger = logging.getLogger(__name__)
 
+# Circuit-breaker: if actual_pnl > size * this ratio the DB write is skipped.
+# P1 false-positive trades book ~40% of size; 10% catches fakes without blocking
+# any legitimate arb (typical real spread is 2–5%).
+_PNL_SANITY_CAP_RATIO = 0.10
+
 
 def _make_execution_clients(db, execution_mode: str):
     """
@@ -1148,8 +1153,16 @@ class ArbitrageEngine:
         # Live price cache: market_id -> price
         self.prices: dict[str, float] = {}
 
-        # Open positions: pair_id -> True (prevents duplicate trades)
-        self.open_positions: set[str] = set()
+        # recently_fired: pair_ids that have been traded (prevents duplicate trades).
+        # NOTE: this set grows monotonically — it is NOT a live "open positions" count.
+        # Renamed from open_positions which was semantically misleading.
+        self.recently_fired: set[str] = set()
+
+        # Telemetry fields surfaced in stats() and the STATUS log line.
+        self.last_arb_fired_at: float | None = None
+        self._ticks_since_last_fire: int = 0
+        self._last_tick_at: dict[str, float] = {}  # market_id -> time.time()
+        self._market_platform: dict[str, str] = {}  # market_id -> "polymarket"/"kalshi"
 
         # Build pair indexes for O(1) lookup on price update
         # poly_id -> list of (kalshi_id, match_dict)
@@ -1163,6 +1176,8 @@ class ArbitrageEngine:
             self._pairs[pair_id] = m
             self._poly_to_pairs[m["poly_id"]].append(m)
             self._kalshi_to_pairs[m["kalshi_id"]].append(m)
+            self._market_platform[m["poly_id"]] = "polymarket"
+            self._market_platform[m["kalshi_id"]] = "kalshi"
             # Seed prices from match data
             if m.get("poly_price"):
                 self.prices[m["poly_id"]] = m["poly_price"]
@@ -1198,7 +1213,7 @@ class ArbitrageEngine:
         swept = 0
         for match in self._pairs.values():
             pair_id = f"{match['poly_id']}_{match['kalshi_id']}"
-            if pair_id in self.open_positions:
+            if pair_id in self.recently_fired:
                 continue
             p_price = self.prices.get(match["poly_id"])
             k_price = self.prices.get(match["kalshi_id"])
@@ -1208,14 +1223,16 @@ class ArbitrageEngine:
             if spread < self.min_spread:
                 continue
             async with self._trade_lock:
-                if pair_id in self.open_positions:
+                if pair_id in self.recently_fired:
                     continue
-                self.open_positions.add(pair_id)
+                self.recently_fired.add(pair_id)
                 trade = await self._execute_arb_trade(
                     match, p_price, k_price, spread, pair_id
                 )
                 if trade:
                     self.trades.append(trade)
+                    self.last_arb_fired_at = time.time()
+                    self._ticks_since_last_fire = 0
                     swept += 1
 
         if swept:
@@ -1229,10 +1246,13 @@ class ArbitrageEngine:
         """
         old_price = self.prices.get(market_id)
         self.prices[market_id] = new_price
+        self._last_tick_at[market_id] = time.time()
 
         # Skip if price didn't change meaningfully
         if old_price is not None and abs(new_price - old_price) < 0.001:
             return
+
+        self._ticks_since_last_fire += 1
 
         # Find all pairs involving this market
         affected = []
@@ -1245,7 +1265,7 @@ class ArbitrageEngine:
             pair_id = f"{match['poly_id']}_{match['kalshi_id']}"
 
             # Skip if we already have a position on this pair
-            if pair_id in self.open_positions:
+            if pair_id in self.recently_fired:
                 continue
 
             p_price = self.prices.get(match["poly_id"])
@@ -1260,15 +1280,17 @@ class ArbitrageEngine:
             # Execute immediately under lock (prevent concurrent trades on same pair)
             async with self._trade_lock:
                 # Double-check after acquiring lock
-                if pair_id in self.open_positions:
+                if pair_id in self.recently_fired:
                     continue
-                self.open_positions.add(pair_id)
+                self.recently_fired.add(pair_id)
 
                 trade = await self._execute_arb_trade(
                     match, p_price, k_price, spread, pair_id
                 )
                 if trade:
                     self.trades.append(trade)
+                    self.last_arb_fired_at = time.time()
+                    self._ticks_since_last_fire = 0
 
     async def _execute_arb_trade(
         self,
@@ -1399,6 +1421,19 @@ class ArbitrageEngine:
             total_fees = (buy_result.fee_paid or 0) + (sell_result.fee_paid or 0)
             actual_pnl = round(actual_spread * size - total_fees, 4)
 
+            _pnl_cap = size * _PNL_SANITY_CAP_RATIO
+            if actual_pnl > _pnl_cap:
+                logger.warning(
+                    "PNL_SANITY_CAP blocked pair=%s actual_pnl=%.4f > cap=%.4f "
+                    "(size=%.1f spread=%.4f). Likely false-positive pair — skipping DB write.",
+                    pair_id,
+                    actual_pnl,
+                    _pnl_cap,
+                    size,
+                    spread,
+                )
+                return None
+
             pos_id = f"pos_{uuid.uuid4().hex[:12]}"
             try:
                 await self.db.execute(
@@ -1491,11 +1526,30 @@ class ArbitrageEngine:
 
     def stats(self) -> dict:
         total_pnl = sum(t.get("actual_pnl", 0) for t in self.trades)
+        eligible = sum(
+            1
+            for m in self._pairs.values()
+            if (p := self.prices.get(m["poly_id"])) is not None
+            and (k := self.prices.get(m["kalshi_id"])) is not None
+            and abs(p - k) >= self.min_spread
+        )
+        now = time.time()
+        tick_age: dict[str, int] = {}
+        for market_id, ts in self._last_tick_at.items():
+            platform = self._market_platform.get(market_id, "unknown")
+            age_ms = int((now - ts) * 1000)
+            # Keep the freshest (smallest age) tick per platform
+            if platform not in tick_age or tick_age[platform] > age_ms:
+                tick_age[platform] = age_ms
         return {
-            "total_trades": len(self.trades),
-            "open_positions": len(self.open_positions),
+            "pairs_monitored": len(self._pairs),
+            "pairs_eligible_now": eligible,
+            "recently_fired": len(self.recently_fired),
+            "last_arb_fired_at": self.last_arb_fired_at,
+            "ticks_since_last_fire": self._ticks_since_last_fire,
             "total_pnl": total_pnl,
             "prices_tracked": len(self.prices),
+            "ws_last_tick_age_ms_by_platform": tick_age,
         }
 
 
@@ -1706,6 +1760,17 @@ async def detect_violations_and_trade(
             actual_spread = sell_result.filled_price - buy_result.filled_price
             total_fees = (buy_result.fee_paid or 0) + (sell_result.fee_paid or 0)
             actual_pnl = round(actual_spread * size - total_fees, 4)
+
+            _pnl_cap = size * _PNL_SANITY_CAP_RATIO
+            if actual_pnl > _pnl_cap:
+                logger.warning(
+                    "PNL_SANITY_CAP blocked dual-platform arb actual_pnl=%.4f > cap=%.4f "
+                    "(size=%.1f). Likely false-positive pair — skipping DB write.",
+                    actual_pnl,
+                    _pnl_cap,
+                    size,
+                )
+                return None
 
             pos_id = f"pos_{uuid.uuid4().hex[:12]}"
             try:
@@ -2084,6 +2149,20 @@ async def detect_single_platform_opportunities(
             )
             total_fees = result.fee_paid or 0
 
+            _pnl_cap = size * _PNL_SANITY_CAP_RATIO
+            if actual_pnl > _pnl_cap:
+                logger.warning(
+                    "PNL_SANITY_CAP blocked strategy=%s market=%s actual_pnl=%.4f > cap=%.4f "
+                    "(size=%.1f edge=%.4f). Synthetic exit too large — skipping DB write.",
+                    strategy,
+                    m["id"],
+                    actual_pnl,
+                    _pnl_cap,
+                    size,
+                    edge,
+                )
+                continue
+
             pos_id = f"pos_{uuid.uuid4().hex[:12]}"
             try:
                 await db.execute(
@@ -2433,6 +2512,62 @@ async def run_trading_cycle(
     return len(all_trades)
 
 
+async def take_phase0_baseline_snapshot(db: aiosqlite.Connection) -> None:
+    """Write a baseline row to phase0_baseline (Phase 0.4).
+
+    Captures pair count and per-strategy PnL at T0 so every later phase
+    can compare against this reference. Safe to call multiple times — each
+    call appends a new point-in-time row.
+    """
+    now = datetime.now(timezone.utc).isoformat()
+
+    cursor = await db.execute("SELECT COUNT(*) FROM market_pairs")
+    total_pairs = (await cursor.fetchone())[0]
+
+    cursor = await db.execute("SELECT COUNT(*) FROM market_pairs WHERE active=1")
+    active_pairs = (await cursor.fetchone())[0]
+
+    pnl_by_strategy: dict[str, float] = {}
+    cursor = await db.execute(
+        "SELECT strategy, SUM(actual_pnl) FROM trade_outcomes GROUP BY strategy"
+    )
+    for row in await cursor.fetchall():
+        pnl_by_strategy[row[0]] = row[1] or 0.0
+
+    cursor = await db.execute("SELECT COUNT(*) FROM trade_outcomes")
+    total_trade_count = (await cursor.fetchone())[0]
+    total_realized_pnl = sum(pnl_by_strategy.values())
+
+    await db.execute(
+        """INSERT INTO phase0_baseline
+           (snapshot_timestamp, pair_count, active_pair_count,
+            p1_realized_pnl, p2_realized_pnl, p3_realized_pnl,
+            p4_realized_pnl, p5_realized_pnl, total_realized_pnl,
+            total_trade_count, notes)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'phase0')""",
+        (
+            now,
+            total_pairs,
+            active_pairs,
+            pnl_by_strategy.get("P1_cross_market_arb", 0.0),
+            pnl_by_strategy.get("P2_structured_event", 0.0),
+            pnl_by_strategy.get("P3_calibration_bias", 0.0),
+            pnl_by_strategy.get("P4_liquidity_timing", 0.0),
+            pnl_by_strategy.get("P5_information_latency", 0.0),
+            total_realized_pnl,
+            total_trade_count,
+        ),
+    )
+    await db.commit()
+    logger.info(
+        "Phase 0 baseline: %d pairs (%d active) total_pnl=%.2f trades=%d",
+        total_pairs,
+        active_pairs,
+        total_realized_pnl,
+        total_trade_count,
+    )
+
+
 async def main():
     configure_from_env()
 
@@ -2480,6 +2615,17 @@ async def main():
         help="Port for the analytics dashboard (default: 8000)",
     )
     args = parser.parse_args()
+
+    # Allow env var to override --min-spread without requiring a code change.
+    # Set MIN_SPREAD_CROSS_PLATFORM=99.0 in .env to pause all P1 arb until
+    # the matcher is fixed (Phase 0.3 / Phase 1).
+    _env_min_spread = os.getenv("MIN_SPREAD_CROSS_PLATFORM")
+    if _env_min_spread is not None:
+        args.min_spread = float(_env_min_spread)
+        logger.info(
+            "  P1 min_spread overridden by MIN_SPREAD_CROSS_PLATFORM env: %.4f",
+            args.min_spread,
+        )
 
     cfg = get_config()
 
@@ -2680,13 +2826,21 @@ async def main():
                         break
                     except asyncio.TimeoutError:
                         stats = arb_engine.stats()
+                        _last_fire = (
+                            f"{time.time() - stats['last_arb_fired_at']:.0f}s ago"
+                            if stats["last_arb_fired_at"]
+                            else "never"
+                        )
                         logger.info(
-                            "STATUS: arb_trades=%d open_positions=%d pnl=$%.2f "
-                            "prices=%d | scheduled_trades=%d",
-                            stats["total_trades"],
-                            stats["open_positions"],
+                            "STATUS: pairs=%d eligible=%d muted=%d pnl=$%.2f "
+                            "prices=%d | last_fire=%s ticks_since=%d | scheduled=%d",
+                            stats["pairs_monitored"],
+                            stats["pairs_eligible_now"],
+                            stats["recently_fired"],
                             stats["total_pnl"],
                             stats["prices_tracked"],
+                            _last_fire,
+                            stats["ticks_since_last_fire"],
                             scheduled.total_trades,
                         )
                         # Write dashboard snapshot every status cycle

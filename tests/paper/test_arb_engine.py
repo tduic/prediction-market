@@ -136,7 +136,7 @@ class TestOnPriceUpdate:
         assert len(engine.trades) == 1
 
         pair_id = "poly_A_kal_A"
-        assert pair_id in engine.open_positions
+        assert pair_id in engine.recently_fired
 
     async def test_different_pairs_independent(self, db, matches):
         """Trading one pair does not block trading another."""
@@ -234,8 +234,9 @@ class TestFlushAndStats:
         await _seed_markets_for_engine(db, matches)
         engine = ArbitrageEngine(db, matches, min_spread=0.03)
         stats = engine.stats()
-        assert "total_trades" in stats
-        assert "open_positions" in stats
+        assert "pairs_monitored" in stats
+        assert "pairs_eligible_now" in stats
+        assert "recently_fired" in stats
         assert "total_pnl" in stats
         assert "prices_tracked" in stats
         assert stats["prices_tracked"] > 0
@@ -274,7 +275,7 @@ class TestInitialSweep:
         await _seed_markets_for_engine(db, matches)
         engine = ArbitrageEngine(db, matches, min_spread=0.03)
         await engine.initial_sweep()
-        assert len(engine.open_positions) > 0
+        assert len(engine.recently_fired) > 0
 
     async def test_on_price_update_skips_swept_pairs(self, db, matches):
         """After sweep, price update on already-traded pair does not generate another trade."""
