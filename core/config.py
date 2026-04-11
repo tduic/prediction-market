@@ -302,6 +302,13 @@ class Config:
                 "max(FEE_RATE_POLYMARKET, FEE_RATE_KALSHI)"
             )
 
+        # min_edge_to_signal validation
+        if self.model_service.min_edge_to_signal <= 0:
+            raise ValueError(
+                f"MIN_EDGE_TO_SIGNAL must be > 0, "
+                f"got {self.model_service.min_edge_to_signal}"
+            )
+
 
 def load_config() -> Config:
     """Load configuration from environment variables."""
