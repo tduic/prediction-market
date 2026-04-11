@@ -36,12 +36,28 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import os
 import sys
 from pathlib import Path
 
 # Ensure project root importable when running from scripts/
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
+
+# Load .env from the persistent disk if present (VM deployments)
+_env_file = Path("/data/predictor/.env")
+if _env_file.exists():
+    try:
+        from dotenv import load_dotenv
+
+        load_dotenv(_env_file, override=False)
+    except ImportError:
+        # Manual parse fallback if python-dotenv not available
+        for _line in _env_file.read_text().splitlines():
+            _line = _line.strip()
+            if _line and not _line.startswith("#") and "=" in _line:
+                _k, _, _v = _line.partition("=")
+                os.environ.setdefault(_k.strip(), _v.strip())
 
 from core.alerting import (  # noqa: E402
     DiscordWebhookTransport,
