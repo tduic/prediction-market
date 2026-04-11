@@ -1,0 +1,32 @@
+[Unit]
+Description=Predictor market refresh (re-fetch and re-match all markets)
+Documentation=https://github.com/tyjodu/prediction-market
+After=network-online.target redis.service
+Wants=network-online.target
+Requires=redis.service
+
+[Service]
+Type=oneshot
+User=predictor
+Group=predictor
+
+WorkingDirectory=/data/predictor/prediction-market
+
+EnvironmentFile=/data/predictor/.env
+Environment="SECRETS_BACKEND=gcp"
+Environment="GCP_PROJECT_ID=predictor-trading-2026"
+Environment="ALERT_DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/REDACTED_DISCORD_WEBHOOK"
+
+# Re-fetch all markets, re-match, write to DB, then exit.
+# The running predictor.service will pick up fresh pairs on next restart.
+ExecStart=/data/predictor/venv/bin/python \
+    scripts/paper_trading_session.py \
+    --refresh \
+    --once
+
+# Give the refresh plenty of time (match phase is ~100 min on first run)
+TimeoutStartSec=7200
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=predictor-refresh

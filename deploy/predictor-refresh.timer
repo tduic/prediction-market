@@ -1,0 +1,14 @@
+[Unit]
+Description=Weekly Predictor market refresh
+Documentation=https://github.com/tyjodu/prediction-market
+
+[Timer]
+# Run every Sunday at 03:00 UTC (low-traffic window)
+OnCalendar=Sun *-*-* 03:00:00
+# If the VM was off when the timer fired, run it once it comes back up
+Persistent=true
+# Spread the start by up to 5 minutes to avoid thundering herd on shared infra
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

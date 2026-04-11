@@ -98,7 +98,10 @@ jobs:
 
           echo "=== Reloading systemd and restarting service ==="
           sudo cp "$APP_DIR/deploy/predictor.service" /etc/systemd/system/predictor.service
+          sudo cp "$APP_DIR/deploy/predictor-refresh.service" /etc/systemd/system/predictor-refresh.service
+          sudo cp "$APP_DIR/deploy/predictor-refresh.timer" /etc/systemd/system/predictor-refresh.timer
           sudo systemctl daemon-reload
+          sudo systemctl enable --now predictor-refresh.timer
           sudo systemctl restart predictor
 
           echo "=== Waiting for service to stabilize ==="
