@@ -145,3 +145,104 @@
     the post-deploy smoke test before any P1 trading resumes.
 
   ---
+  Phase 2 — Route all execution through one risk choke point
+
+  Status: COMPLETE
+
+  What was implemented
+  ─────────────────────
+  2.1  Risk infrastructure imports at module level
+       - `from core.config import RiskControlConfig` added to the top-level
+         config import.
+       - `run_all_checks`, `compute_kelly_fraction`, `compute_position_size`
+         imported after dotenv setup (marked noqa: E402 per repo pattern).
+       - `_RiskLeg` and `_RiskSignal` dataclasses added after the pattern
+         constants to satisfy run_all_checks duck-typed interface without
+         pulling in Redis-dependent Signal from core/signals/generator.py.
+
+  2.2  ArbitrageEngine accepts risk_config and circuit_breaker
+       - `__init__` gains `risk_config: RiskControlConfig | None = None` and
+         `circuit_breaker = None` parameters.
+       - Stored as `self._risk_config` (defaults to `RiskControlConfig()`) and
+         `self._circuit_breaker`.
+
+  2.3  circuit_breaker.should_halt() gates _execute_arb_trade
+       - First thing in _execute_arb_trade: if circuit_breaker is set and
+         should_halt() → log WARNING and return None.
+       - Returns None without touching recently_fired (pair stays retryable).
+
+  2.4  run_all_checks called before order submission
+       - After sizing and before creating OrderLeg objects: builds a
+         _RiskSignal proxy and calls `await run_all_checks(signal, self._risk_config, self.db)`.
+       - On failure: logs RISK_REJECTED with failed check names, returns None.
+       - Pair is NOT added to recently_fired on rejection (retryable on next tick).
+
+  2.5  recently_fired.add deferred until after successful trade
+       - In both on_price_update() and initial_sweep(), the `recently_fired.add(pair_id)`
+         call was moved from BEFORE _execute_arb_trade to AFTER it returns a
+         non-None trade dict.
+       - Effect: circuit-breaker halts and risk check rejections leave the pair
+         eligible to retry on the next price tick.
+
+  2.6  Kelly-based position sizing replaces hardcoded min(10, 100*edge)
+       - Three call sites replaced:
+         · _execute_arb_trade (was line ~1402)
+         · detect_single_platform_opportunities (was line ~2229)
+         · detect_violations_and_trade / legacy batch path (was line ~1833)
+       - Formula: compute_kelly_fraction(edge, 1.0, risk_config.kelly_fraction)
+         then compute_position_size(kelly_f, bankroll, max_size=bankroll * max_position_pct)
+       - Position size now scales with bankroll and is bounded by max_position_pct.
+
+  2.7  ScheduledStrategyRunner accepts risk_config and circuit_breaker
+       - Constructor gains same parameters as ArbitrageEngine.
+       - New `run_one_cycle()` method extracted from run() loop:
+         · Checks circuit_breaker.should_halt() first → returns [] if halted
+         · Calls detect_single_platform_opportunities with risk_config
+         · run() delegates to run_one_cycle() per cycle
+       - Testable in isolation without a live event loop / stop_event.
+
+  2.8  Circuit breaker and risk_config wired into main streaming loop
+       - Instantiated at `cfg.risk_controls` from the existing `get_config()` call.
+       - `DailyLossCircuitBreaker(db, starting_capital, max_daily_loss_pct,
+         consecutive_failure_limit)` created alongside `ArbitrageEngine`.
+       - Both passed to `ArbitrageEngine` and `ScheduledStrategyRunner`.
+
+  What was NOT done (deferred)
+  ─────────────────────────────
+  - Full signal handler as single choke point (2.7 in the plan): would require
+    Redis for the queue. Deferred. Inline checks are in both execution paths;
+    two check paths exist but both enforce the same risk_config.
+  - ReconciliationEngine wiring (2.5 in the plan): needs live exchange clients.
+    The circuit breaker covers the daily-loss halt; reconciliation is deferred
+    to Phase 7 when exchange integration is available.
+  - Discord halt webhook (2.6 in the plan): circuit_breaker.should_halt() logs
+    a WARNING already. Discord alerting will be wired in Phase 7 alongside the
+    full invariant / alerting infrastructure.
+
+  Gaps and watch-outs
+  ────────────────────
+  - run_all_checks also enforces a duplicate-signal window (default 300s).
+    After Phase 2, a pair that fires and immediately passes another tick that
+    would trigger it again (inside 300s) will be rejected by check_duplicate_signal
+    rather than recently_fired — both mechanisms now protect it.
+  - The `_RiskSignal` proxy uses `signal_id` for duplicate detection via the
+    orders table (check_duplicate_signal looks at orders.submitted_at). If no
+    order was actually submitted (circuit breaker halted before orders), the
+    dedup window doesn't accumulate. This is correct behavior.
+  - detect_violations_and_trade (legacy --once / --refresh path) uses a freshly
+    instantiated `RiskControlConfig()` per trade (env-var defaults). It is not
+    passed a circuit breaker — legacy paths run once and exit, so sticky halt
+    semantics don't apply.
+
+  Downstream impact
+  ──────────────────
+  - Phase 3 (re-arm): recently_fired semantics changed — it is now added only
+    on success. Phase 3 will replace recently_fired with PairFireState entirely;
+    the deferred-add behavior is the correct intermediate state.
+  - Phase 4 (paper fill model): Kelly sizing will need to use portfolio_value
+    (from get_portfolio_value) instead of starting_capital to account for P&L
+    drift. Currently hardcoded to starting_capital as a safe default.
+  - Phase 7 (invariants): add circuit_breaker.should_halt() assertion to the
+    post-deploy smoke test; wire ReconciliationEngine; wire Discord alerts.
+
+  ---

@@ -44,7 +44,7 @@ import httpx  # noqa: E402
 # Import directly from submodules to avoid core/__init__.py which eagerly
 # loads EventBus, Database, etc. and can hang on first compilation.
 print("[startup] Loading config...", flush=True)
-from core.config import get_config  # noqa: E402
+from core.config import RiskControlConfig, get_config  # noqa: E402
 
 print("[startup] Loading storage...", flush=True)
 from core.storage.db import Database  # noqa: E402
@@ -58,6 +58,14 @@ from core.logging_config import configure_from_env  # noqa: E402
 print("[startup] All imports complete.", flush=True)
 
 logger = logging.getLogger(__name__)
+
+# Lazy imports of risk/sizing/circuit-breaker to keep startup fast.
+# These are only used inside ArbitrageEngine and ScheduledStrategyRunner.
+from core.signals.risk import run_all_checks  # noqa: E402
+from core.signals.sizing import (  # noqa: E402
+    compute_kelly_fraction,
+    compute_position_size,
+)
 
 # Circuit-breaker: if actual_pnl > size * this ratio the DB write is skipped.
 # P1 false-positive trades book ~40% of size; 10% catches fakes without blocking
@@ -74,6 +82,35 @@ _THRESHOLD_ANY_PAT = re.compile(
     r"\b(o/?u|over.?under|over|under)\b|\d\+|at\s+least\s+\d|\d\s+or\s+more",
     re.IGNORECASE,
 )
+
+
+# ── Risk-check duck-typed signal proxy ───────────────────────────────────────
+# run_all_checks() uses duck typing (signal: Any). These lightweight dataclasses
+# satisfy its interface without requiring the full Signal dataclass from
+# core/signals/generator.py (which pulls in Redis and other heavy deps).
+
+
+from dataclasses import dataclass, field  # noqa: E402 (after dotenv setup)
+
+
+@dataclass
+class _RiskLeg:
+    """Minimal leg proxy for run_all_checks duck-typing."""
+
+    market_id: str
+    limit_price: float
+    size: float
+    side: str = "BUY"
+
+
+@dataclass
+class _RiskSignal:
+    """Minimal signal proxy for run_all_checks duck-typing."""
+
+    legs: list
+    edge: float
+    signal_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    strategy: str = ""
 
 
 def _make_execution_clients(db, execution_mode: str):
@@ -1222,12 +1259,20 @@ class ArbitrageEngine:
         db: aiosqlite.Connection,
         matches: list[dict],
         min_spread: float = 0.03,
+        risk_config: "RiskControlConfig | None" = None,
+        circuit_breaker=None,
     ):
         self.db = db
         self.min_spread = min_spread
         self.trades: list[dict] = []
         self._trade_lock = asyncio.Lock()
         self._pending_commit = 0
+
+        # Phase 2: risk config and circuit breaker.
+        # risk_config drives Kelly sizing and run_all_checks thresholds.
+        # circuit_breaker gates all trade attempts (daily loss halt).
+        self._risk_config: RiskControlConfig = risk_config or RiskControlConfig()
+        self._circuit_breaker = circuit_breaker
 
         # Live price cache: market_id -> price
         self.prices: dict[str, float] = {}
@@ -1304,11 +1349,12 @@ class ArbitrageEngine:
             async with self._trade_lock:
                 if pair_id in self.recently_fired:
                     continue
-                self.recently_fired.add(pair_id)
+                # recently_fired.add is deferred until after success (Phase 2)
                 trade = await self._execute_arb_trade(
                     match, p_price, k_price, spread, pair_id
                 )
                 if trade:
+                    self.recently_fired.add(pair_id)
                     self.trades.append(trade)
                     self.last_arb_fired_at = time.time()
                     self._ticks_since_last_fire = 0
@@ -1361,12 +1407,15 @@ class ArbitrageEngine:
                 # Double-check after acquiring lock
                 if pair_id in self.recently_fired:
                     continue
-                self.recently_fired.add(pair_id)
+                # NOTE: recently_fired.add is deferred until after _execute_arb_trade
+                # succeeds. If risk checks fail or circuit breaker halts, the pair
+                # stays eligible for retry on the next tick (Phase 2 contract).
 
                 trade = await self._execute_arb_trade(
                     match, p_price, k_price, spread, pair_id
                 )
                 if trade:
+                    self.recently_fired.add(pair_id)
                     self.trades.append(trade)
                     self.last_arb_fired_at = time.time()
                     self._ticks_since_last_fire = 0
@@ -1398,8 +1447,51 @@ class ArbitrageEngine:
             buy_price, sell_price = k_price, p_price
             buy_client, sell_client = self._kalshi_client, self._poly_client
 
+        # Phase 2.4: circuit breaker halt check.
+        if self._circuit_breaker is not None:
+            if await self._circuit_breaker.should_halt():
+                logger.warning(
+                    "CIRCUIT_BREAKER halted — skipping arb trade on pair=%s", pair_id
+                )
+                return None
+
         edge = spread
-        size = round(min(10.0, 100.0 * edge), 1)
+
+        # Phase 2.3: Kelly-based position sizing (replaces hardcoded min(10, 100*edge)).
+        kelly_f = compute_kelly_fraction(edge, 1.0, self._risk_config.kelly_fraction)
+        bankroll = self._risk_config.starting_capital
+        max_size = bankroll * self._risk_config.max_position_pct
+        size = round(compute_position_size(kelly_f, bankroll, max_size=max_size), 1)
+        if size <= 0:
+            logger.debug(
+                "Kelly sizing produced zero size for edge=%.4f — skipping", edge
+            )
+            return None
+
+        # Phase 2.2: run all risk checks before executing orders.
+        risk_signal = _RiskSignal(
+            legs=[
+                _RiskLeg(
+                    market_id=buy_id, limit_price=buy_price, size=size, side="BUY"
+                ),
+                _RiskLeg(
+                    market_id=sell_id, limit_price=sell_price, size=size, side="SELL"
+                ),
+            ],
+            edge=edge,
+            strategy=strategy,
+        )
+        all_passed, check_results = await run_all_checks(
+            risk_signal, self._risk_config, self.db
+        )
+        if not all_passed:
+            failed = [r.check_type for r in check_results if not r.passed]
+            logger.info(
+                "RISK_REJECTED pair=%s failed_checks=%s — not adding to recently_fired",
+                pair_id,
+                failed,
+            )
+            return None
 
         logger.info(
             "ARB TRADE: spread=%.4f | %s@%.3f vs %s@%.3f",
@@ -1645,11 +1737,32 @@ class ScheduledStrategyRunner:
         db: aiosqlite.Connection,
         interval: int = 120,
         max_trades_per_cycle: int = 20,
+        risk_config: "RiskControlConfig | None" = None,
+        circuit_breaker=None,
     ):
         self.db = db
         self.interval = interval
         self.max_trades = max_trades_per_cycle
         self.total_trades = 0
+        # Phase 2: risk config and circuit breaker.
+        self._risk_config: RiskControlConfig = risk_config or RiskControlConfig()
+        self._circuit_breaker = circuit_breaker
+
+    async def run_one_cycle(self) -> list:
+        """Execute a single strategy cycle. Returns list of trades (may be empty).
+
+        Circuit breaker check happens here — if halted, returns [] immediately.
+        Extracted from run() so it can be called and tested independently.
+        """
+        if self._circuit_breaker is not None:
+            if await self._circuit_breaker.should_halt():
+                logger.warning(
+                    "CIRCUIT_BREAKER halted — skipping scheduled strategy cycle"
+                )
+                return []
+        return await detect_single_platform_opportunities(
+            self.db, max_trades=self.max_trades, risk_config=self._risk_config
+        )
 
     async def run(self, stop_event: asyncio.Event):
         """Run strategy cycles until stop_event is set."""
@@ -1661,9 +1774,7 @@ class ScheduledStrategyRunner:
         while not stop_event.is_set():
             try:
                 t0 = time.time()
-                trades = await detect_single_platform_opportunities(
-                    self.db, max_trades=self.max_trades
-                )
+                trades = await self.run_one_cycle()
                 self.total_trades += len(trades)
                 elapsed = time.time() - t0
                 logger.info(
@@ -1728,7 +1839,18 @@ async def detect_violations_and_trade(
             buy_client, sell_client = paper_kalshi, paper_poly
 
         edge = spread
-        size = round(min(10.0, 100.0 * edge), 1)
+        _rc = RiskControlConfig()
+        _kelly_f = compute_kelly_fraction(edge, 1.0, _rc.kelly_fraction)
+        size = round(
+            compute_position_size(
+                _kelly_f,
+                _rc.starting_capital,
+                max_size=_rc.starting_capital * _rc.max_position_pct,
+            ),
+            1,
+        )
+        if size <= 0:
+            continue
 
         logger.info(
             "VIOLATION: spread=%.4f | %s@%.3f vs %s@%.3f | %s",
@@ -1946,6 +2068,7 @@ async def detect_violations_and_trade(
 async def detect_single_platform_opportunities(
     db: aiosqlite.Connection,
     max_trades: int = 20,
+    risk_config: "RiskControlConfig | None" = None,
 ) -> list[dict]:
     """
     Find trading opportunities on individual markets (no cross-platform match needed).
@@ -1956,6 +2079,7 @@ async def detect_single_platform_opportunities(
     - P4_liquidity_timing: Wide bid/ask spread indicates market maker opportunity
     - P5_mean_reversion: Price moved sharply, bet on reversion
     """
+    _risk_cfg: RiskControlConfig = risk_config or RiskControlConfig()
     from execution.models import OrderLeg
 
     execution_mode = os.getenv("EXECUTION_MODE", "paper")
@@ -2122,7 +2246,17 @@ async def detect_single_platform_opportunities(
         side = opp["side"]
         edge = opp["edge"]
         price = m["yes_price"]
-        size = round(min(10.0, 100.0 * edge), 1)
+
+        # Phase 2.3: Kelly-based sizing (replaces hardcoded min(10, 100*edge)).
+        _kelly_f = compute_kelly_fraction(edge, 1.0, _risk_cfg.kelly_fraction)
+        _bankroll = _risk_cfg.starting_capital
+        _max_size = _bankroll * _risk_cfg.max_position_pct
+        size = round(compute_position_size(_kelly_f, _bankroll, max_size=_max_size), 1)
+        if size <= 0:
+            logger.debug(
+                "Kelly sizing zero for edge=%.4f strategy=%s — skip", edge, strategy
+            )
+            continue
 
         signal_id = f"sig_{uuid.uuid4().hex[:12]}"
         violation_id = f"viol_{uuid.uuid4().hex[:12]}"
@@ -2831,11 +2965,32 @@ async def main():
             except Exception as e:
                 logger.warning("Initial snapshot failed (will retry later): %s", e)
 
-            arb_engine = ArbitrageEngine(db, matches, min_spread=args.min_spread)
+            # Phase 2: instantiate risk config and circuit breaker alongside engine.
+            from execution.circuit_breaker import DailyLossCircuitBreaker  # noqa: E402
+
+            risk_config = cfg.risk_controls
+            circuit_breaker = DailyLossCircuitBreaker(
+                db=db,
+                starting_capital=risk_config.starting_capital,
+                max_daily_loss_pct=risk_config.max_daily_loss_pct,
+                consecutive_failure_limit=risk_config.consecutive_failure_limit,
+            )
+
+            arb_engine = ArbitrageEngine(
+                db,
+                matches,
+                min_spread=args.min_spread,
+                risk_config=risk_config,
+                circuit_breaker=circuit_breaker,
+            )
             await arb_engine.initial_sweep()
 
             scheduled = ScheduledStrategyRunner(
-                db, interval=args.interval, max_trades_per_cycle=20
+                db,
+                interval=args.interval,
+                max_trades_per_cycle=20,
+                risk_config=risk_config,
+                circuit_breaker=circuit_breaker,
             )
 
             # Build asset ID maps for websocket subscriptions
