@@ -239,3 +239,57 @@ class TestFlushAndStats:
         assert "total_pnl" in stats
         assert "prices_tracked" in stats
         assert stats["prices_tracked"] > 0
+
+
+@pytest.mark.asyncio
+class TestInitialSweep:
+    async def test_sweep_trades_pairs_above_threshold(self, db, matches):
+        """initial_sweep() fires trades for pairs already above min_spread at startup."""
+        # poly_A=0.50, kal_A=0.55 → spread=0.05 > 0.03 threshold
+        await _seed_markets_for_engine(db, matches)
+        engine = ArbitrageEngine(db, matches, min_spread=0.03)
+        await engine.initial_sweep()
+        # poly_A/kal_A (0.05) and poly_C/kal_C (0.05) exceed 0.03 threshold
+        assert len(engine.trades) >= 1
+
+    async def test_sweep_skips_pairs_below_threshold(self, db, matches):
+        """initial_sweep() does not fire trades when all spreads are below threshold."""
+        await _seed_markets_for_engine(db, matches)
+        engine = ArbitrageEngine(db, matches, min_spread=0.10)
+        await engine.initial_sweep()
+        # poly_A=0.05, poly_B=0.02, poly_C=0.05 — all below 0.10
+        assert len(engine.trades) == 0
+
+    async def test_sweep_runs_only_once(self, db, matches):
+        """Calling initial_sweep() a second time is a no-op (idempotent)."""
+        await _seed_markets_for_engine(db, matches)
+        engine = ArbitrageEngine(db, matches, min_spread=0.03)
+        await engine.initial_sweep()
+        count_after_first = len(engine.trades)
+        await engine.initial_sweep()
+        assert len(engine.trades) == count_after_first
+
+    async def test_sweep_marks_positions_open(self, db, matches):
+        """Pairs traded during sweep are added to open_positions (prevents double-trade)."""
+        await _seed_markets_for_engine(db, matches)
+        engine = ArbitrageEngine(db, matches, min_spread=0.03)
+        await engine.initial_sweep()
+        assert len(engine.open_positions) > 0
+
+    async def test_on_price_update_skips_swept_pairs(self, db, matches):
+        """After sweep, price update on already-traded pair does not generate another trade."""
+        await _seed_markets_for_engine(db, matches)
+        engine = ArbitrageEngine(db, matches, min_spread=0.03)
+        await engine.initial_sweep()
+        trades_after_sweep = len(engine.trades)
+
+        # Trigger price update on poly_A — should be blocked by open_positions
+        await _simulate_price_update(engine, db, "poly_A", 0.40)
+        assert len(engine.trades) == trades_after_sweep
+
+    async def test_sweep_skips_missing_prices(self, db):
+        """Pairs with missing prices are skipped gracefully during sweep."""
+        match = _make_match("poly_X", "kal_X", None, None)
+        engine = ArbitrageEngine(db, [match], min_spread=0.03)
+        await engine.initial_sweep()
+        assert len(engine.trades) == 0
