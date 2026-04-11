@@ -73,8 +73,12 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
     async def close_db(db: aiosqlite.Connection) -> None:
         await db.close()
 
-    async def get_latest_snapshot() -> Optional[Dict[str, Any]]:
-        db = await get_db()
+    async def get_latest_snapshot(
+        db: Optional[aiosqlite.Connection] = None,
+    ) -> Optional[Dict[str, Any]]:
+        own_db = db is None
+        if own_db:
+            db = await get_db()
         try:
             cursor = await db.execute(
                 "SELECT * FROM pnl_snapshots ORDER BY snapshotted_at DESC LIMIT 1"
@@ -82,7 +86,8 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
             row = await cursor.fetchone()
             return dict(row) if row else None
         finally:
-            await close_db(db)
+            if own_db:
+                await close_db(db)
 
     # ── endpoints ────────────────────────────────────────────────────────
 
@@ -337,7 +342,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
         PAPER_CAPITAL = get_config().risk_controls.starting_capital
         db = await get_db()
         try:
-            snapshot = await get_latest_snapshot()
+            snapshot = await get_latest_snapshot(db)
             if snapshot:
                 total_capital = snapshot.get("total_capital", 0) or PAPER_CAPITAL
             else:
