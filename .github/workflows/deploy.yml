@@ -128,48 +128,15 @@ jobs:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
         run: |
-          # Write the update file locally (one KEY=VALUE per line)
-          cat > /tmp/predictor_updates.env << EOF
-          ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-          GH_TOKEN=${GH_TOKEN}
-          DISCORD_WEBHOOK_URL=${DISCORD_WEBHOOK_URL}
-          ALERT_DISCORD_WEBHOOK_URL=${DISCORD_WEBHOOK_URL}
-          SECRETS_BACKEND=gcp
-          GCP_PROJECT_ID=predictor-trading-2026
-          KALSHI_RSA_KEY_PATH=/data/predictor/kalshi.pem
-          POLYMARKET_PROXY=socks5://10.164.0.2:1080
-          EOF
-          sed -i 's/^[[:space:]]*//' /tmp/predictor_updates.env
+          printf 'ANTHROPIC_API_KEY=%s\nGH_TOKEN=%s\nDISCORD_WEBHOOK_URL=%s\nALERT_DISCORD_WEBHOOK_URL=%s\nSECRETS_BACKEND=gcp\nGCP_PROJECT_ID=predictor-trading-2026\nKALSHI_RSA_KEY_PATH=/data/predictor/kalshi.pem\nPOLYMARKET_PROXY=socks5://10.164.0.2:1080\n' \
+            "$ANTHROPIC_API_KEY" "$GH_TOKEN" "$DISCORD_WEBHOOK_URL" "$DISCORD_WEBHOOK_URL" \
+            > /tmp/predictor_updates.env
 
           gcloud compute scp /tmp/predictor_updates.env \
             "$VM_NAME:/tmp/predictor_updates.env" \
             --zone="$ZONE" --project="$PROJECT_ID" --quiet
 
-          # Merge updates into existing .env on VM using a temp script file
-          cat > /tmp/env_merge.py << 'PYEOF'
-          import re, os
-          updates_path = '/tmp/predictor_updates.env'
-          env_path = '/data/predictor/.env'
-          updates = {}
-          for line in open(updates_path).read().splitlines():
-              line = line.strip()
-              if line and '=' in line and not line.startswith('#'):
-                  k, _, v = line.partition('=')
-                  updates[k.strip()] = v.strip()
-          existing = open(env_path).read() if os.path.exists(env_path) else ''
-          for key, val in updates.items():
-              pat = re.compile(r'^' + re.escape(key) + r'=.*$', re.MULTILINE)
-              entry = key + '=' + val
-              if pat.search(existing):
-                  existing = pat.sub(entry, existing)
-              else:
-                  existing = existing.rstrip('\n') + '\n' + entry + '\n'
-          open(env_path, 'w').write(existing)
-          os.remove(updates_path)
-          PYEOF
-          sed -i 's/^[[:space:]]*//' /tmp/env_merge.py
-
-          gcloud compute scp /tmp/env_merge.py \
+          gcloud compute scp deploy/env_merge.py \
             "$VM_NAME:/tmp/env_merge.py" \
             --zone="$ZONE" --project="$PROJECT_ID" --quiet
 
@@ -177,7 +144,7 @@ jobs:
             --zone="$ZONE" --project="$PROJECT_ID" \
             --command="sudo python3 /tmp/env_merge.py && sudo chown predictor:predictor /data/predictor/.env && sudo chmod 600 /data/predictor/.env && sudo rm -f /tmp/env_merge.py"
 
-          rm -f /tmp/predictor_updates.env /tmp/env_merge.py
+          rm -f /tmp/predictor_updates.env
 
       # ── 7. Restore Claude setup ──────────────────────────────────────
       - name: Restore Claude setup on VM
