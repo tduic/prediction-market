@@ -64,6 +64,17 @@ logger = logging.getLogger(__name__)
 # any legitimate arb (typical real spread is 2–5%).
 _PNL_SANITY_CAP_RATIO = 0.10
 
+# Phase 1 matcher: semantic guard patterns.
+# Matches O/U style terminology (over/under, O/U, over-under).
+_OU_PAT = re.compile(r"\b(o/?u|over.?under|over|under)\b", re.IGNORECASE)
+# Matches N+ / "at least N" / "N or more" threshold terminology.
+_N_PLUS_PAT = re.compile(r"\d\+|at\s+least\s+\d|\d\s+or\s+more", re.IGNORECASE)
+# Either threshold type (used for "does this title have threshold terminology?").
+_THRESHOLD_ANY_PAT = re.compile(
+    r"\b(o/?u|over.?under|over|under)\b|\d\+|at\s+least\s+\d|\d\s+or\s+more",
+    re.IGNORECASE,
+)
+
 
 def _make_execution_clients(db, execution_mode: str):
     """
@@ -672,7 +683,12 @@ def extract_numbers(text: str) -> set[str]:
 
 
 def compute_match_score(
-    norm_a: str, norm_b: str, tokens_a: set, tokens_b: set
+    norm_a: str,
+    norm_b: str,
+    tokens_a: set,
+    tokens_b: set,
+    raw_a: str = "",
+    raw_b: str = "",
 ) -> float:
     """
     Score similarity between two pre-normalized, pre-tokenized market titles.
@@ -682,10 +698,40 @@ def compute_match_score(
     2. SequenceMatcher ratio (catches substring alignment) — weight 0.30
     3. Number consistency (dates, thresholds must match) — weight 0.20
 
+    raw_a / raw_b: original (un-normalized) titles. When provided, used for
+    Phase 1 semantic guards (O/U vs N+ mismatch detection) that require
+    decimal-preserving number extraction on raw text.
+
     Returns 0-1.
     """
     if not tokens_a or not tokens_b:
         return 0.0
+
+    # Phase 1 semantic guard: reject O/U vs N+ false positives.
+    # normalize_title strips decimal points ("5.5" → "5 5"), so we must check
+    # the raw titles before normalization destroys the distinction.
+    if raw_a and raw_b:
+        a_has_ou = bool(_OU_PAT.search(raw_a))
+        b_has_ou = bool(_OU_PAT.search(raw_b))
+        a_has_nplus = bool(_N_PLUS_PAT.search(raw_a))
+        b_has_nplus = bool(_N_PLUS_PAT.search(raw_b))
+
+        # Hard reject: O/U on one side and N+ on the other.
+        if (a_has_ou and b_has_nplus) or (a_has_nplus and b_has_ou):
+            nums_a = extract_numbers(raw_a)
+            nums_b = extract_numbers(raw_b)
+            # Only reject if the numeric sets are actually different.
+            if nums_a != nums_b:
+                return 0.0
+
+        # Hard reject: both have threshold terminology but different numbers.
+        a_has_thresh = bool(_THRESHOLD_ANY_PAT.search(raw_a))
+        b_has_thresh = bool(_THRESHOLD_ANY_PAT.search(raw_b))
+        if a_has_thresh and b_has_thresh:
+            nums_a = extract_numbers(raw_a)
+            nums_b = extract_numbers(raw_b)
+            if nums_a and nums_b and nums_a != nums_b:
+                return 0.0
 
     # Jaccard on tokens
     intersection = len(tokens_a & tokens_b)
@@ -789,7 +835,9 @@ def _find_matches_sync(
 
         for k_id in candidates:
             k_title_raw, k_price, k_norm, k_tokens = kalshi_data[k_id]
-            score = compute_match_score(p_norm, k_norm, p_tokens, k_tokens)
+            score = compute_match_score(
+                p_norm, k_norm, p_tokens, k_tokens, p_title, k_title_raw
+            )
             comparisons_made += 1
 
             if score > best_score:
@@ -888,11 +936,23 @@ async def find_matches(db: aiosqlite.Connection, threshold: float = 0.80) -> lis
 
 
 async def persist_matches(db: aiosqlite.Connection, matches: list[dict]) -> int:
-    """Save matched pairs to market_pairs table. Returns count saved."""
+    """Save matched pairs to market_pairs table. Returns count saved.
+
+    Pairs with spread > 0.05 at match time are written with active=0 and
+    notes='pending_review' so they never flow into the arb engine until a
+    human (or automated review) verifies the match.
+    """
     now = datetime.now(timezone.utc).isoformat()
     rows = []
     for m in matches:
         pair_id = f"{m['poly_id']}_{m['kalshi_id']}"
+        spread = round(abs(m.get("poly_price", 0.0) - m.get("kalshi_price", 0.0)), 10)
+        if spread > 0.05:
+            active = 0
+            notes = "pending_review"
+        else:
+            active = 1
+            notes = None
         rows.append(
             (
                 pair_id,
@@ -901,7 +961,8 @@ async def persist_matches(db: aiosqlite.Connection, matches: list[dict]) -> int:
                 "cross_platform",
                 m.get("similarity", 0.0),
                 "inverted_index",
-                1,
+                active,
+                notes,
                 now,
                 now,
             )
@@ -910,8 +971,8 @@ async def persist_matches(db: aiosqlite.Connection, matches: list[dict]) -> int:
         await db.executemany(
             """INSERT OR REPLACE INTO market_pairs
                (id, market_id_a, market_id_b, pair_type, similarity_score,
-                match_method, active, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                match_method, active, notes, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             rows,
         )
         await db.commit()
@@ -958,6 +1019,24 @@ async def load_cached_matches(db: aiosqlite.Connection) -> list[dict]:
         "Loaded %d cached matches from DB (%d with prices)", len(rows), len(matches)
     )
     return matches
+
+
+async def mark_existing_pairs_pending_review(db: aiosqlite.Connection) -> int:
+    """Mark all unreviewed market_pairs as pending_review.
+
+    Any pair with notes=NULL has not been human- or system-verified. Deactivate
+    them (active=0, notes='pending_review') so they don't flow into the arb
+    engine until reviewed. Pairs that already have a notes value are left alone.
+
+    Returns the number of pairs deactivated.
+    """
+    cursor = await db.execute("""UPDATE market_pairs
+           SET active = 0, notes = 'pending_review'
+           WHERE notes IS NULL""")
+    await db.commit()
+    count = cursor.rowcount
+    logger.info("Marked %d existing pairs as pending_review", count)
+    return count
 
 
 # ── Websocket price streaming ────────────────────────────────────────────────

@@ -77,3 +77,71 @@
     post-deploy smoke test.
 
   ---
+  Phase 1 — Fix the matcher root cause
+
+  Status: COMPLETE
+
+  What was implemented
+  ─────────────────────
+  1.1  Semantic pattern constants
+       - _OU_PAT: matches over/under, O/U, over, under (case-insensitive).
+       - _N_PLUS_PAT: matches N+, "at least N", "N or more" threshold terms.
+       - _THRESHOLD_ANY_PAT: union of the two above — used for "does this
+         title have any threshold terminology?"
+       Added at module level after _PNL_SANITY_CAP_RATIO.
+
+  1.2  compute_match_score now accepts raw_a="", raw_b="" parameters
+       - When provided, the raw (un-normalized) titles are used to run
+         extract_numbers before normalization strips decimals.
+       - Hard reject (return 0.0) when O/U is on one side and N+ is on the
+         other AND the numeric sets from the raw titles differ. This is the
+         root cause of the "O/U 5.5 rebounds vs 5+ rebounds" false positive:
+         after normalize_title, "5.5" → "5 5", making sets match spuriously.
+       - Hard reject when BOTH sides have any threshold terminology AND their
+         numeric sets differ.
+       - Old callers passing only 4 args are unaffected (raw params default
+         to ""; guard is skipped when raw_a/raw_b are empty strings).
+
+  1.3  _find_matches_sync passes raw titles to compute_match_score
+       - Line ~830: `compute_match_score(p_norm, k_norm, p_tokens, k_tokens,
+         p_title, k_title_raw)` — both raw titles were already in scope.
+       - No other changes to the matching loop.
+
+  1.4  persist_matches marks high-spread pairs as pending_review
+       - `spread = round(abs(poly_price - kalshi_price), 10)` (rounded to
+         avoid float precision traps like 0.55 - 0.50 > 0.05).
+       - spread > 0.05 → active=0, notes='pending_review'.
+       - spread ≤ 0.05 → active=1, notes=None (unchanged behavior).
+       - INSERT OR REPLACE now includes the notes column.
+
+  1.5  mark_existing_pairs_pending_review(db) added
+       - Deactivates all pairs with notes IS NULL (i.e., unreviewed).
+       - Pairs with any existing notes value are left alone.
+       - Returns count of rows deactivated.
+       - load_cached_matches already filters WHERE active=1, so
+         pending_review pairs are automatically excluded from the arb engine.
+
+  Gaps and watch-outs
+  ────────────────────
+  - Quarter discrimination (Q1 vs Q2) is NOT fixed: "Q1"/"Q2" become "q1"/"q2"
+    after normalization and extract_numbers doesn't find word-boundary-delimited
+    numbers inside them. The scorer still gives Q1 vs Q2 ~0.85. This is a known
+    limitation; fixing it would require a dedicated quarter-aware normalization
+    step or a separate token-level check.
+  - _PNL_SANITY_CAP_RATIO (Phase 0) is still the safety net; Phase 1 reduces
+    false-positive matches entering the engine but doesn't eliminate all paths
+    where a bad match could slip through.
+  - mark_existing_pairs_pending_review must be called once against the live DB
+    to retroactively deactivate unreviewed historical pairs. Not wired into
+    startup — call manually before re-enabling P1 trades (lowering
+    MIN_SPREAD_CROSS_PLATFORM below 99.0).
+
+  Downstream impact
+  ──────────────────
+  - Phase 2 (risk choke point): no overlap with Phase 1 changes.
+  - Phase 3 (re-arm): recently_fired still in place; Phase 3 will replace it
+    with PairFireState. No Phase 1 changes affect that path.
+  - Phase 7 (invariants): add call to mark_existing_pairs_pending_review in
+    the post-deploy smoke test before any P1 trading resumes.
+
+  ---
