@@ -1,5 +1,5 @@
 [Unit]
-Description=Predictor Trading System (paper mode)
+Description=Predictor Trading System
 Documentation=https://github.com/tyjodu/prediction-market
 After=network-online.target redis.service
 Wants=network-online.target
@@ -23,7 +23,6 @@ Environment="ALERT_DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/REDACTED
 # Python venv binary
 ExecStart=/data/predictor/venv/bin/python \
     scripts/paper_trading_session.py \
-    --refresh \
     --stream \
     --dashboard \
     --dashboard-port 8000
