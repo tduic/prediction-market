@@ -246,3 +246,408 @@
     post-deploy smoke test; wire ReconciliationEngine; wire Discord alerts.
 
   ---
+  Phase 3 — Re-arm state machine
+
+  Status: COMPLETE
+
+  What was implemented
+  ─────────────────────
+  3.1  PairFireState dataclass
+       - Added after _RiskSignal at module level in paper_trading_session.py.
+       - Fields: last_fired_at: float, armed: bool,
+         last_spread_seen_below: float | None = None.
+       - Exported at module level so tests can import it directly.
+
+  3.2  RiskControlConfig new fields
+       - arb_cooldown_s: float (default 60.0, env: ARB_COOLDOWN_S)
+       - arb_rearm_hysteresis: float (default 0.005, env: ARB_REARM_HYSTERESIS)
+       - Added to core/config.py after consecutive_failure_limit.
+
+  3.3  ArbitrageEngine.fired_state replaces recently_fired set
+       - self.recently_fired: set[str] removed from __init__.
+       - self.fired_state: dict[str, PairFireState] = {} added in its place.
+       - Tracks last_fired_at and armed status per pair.
+
+  3.4  recently_fired backward-compatibility property
+       - @property recently_fired returns set(self.fired_state.keys()).
+       - stats()["recently_fired"] and all external callers work unchanged.
+
+  3.5  _is_eligible(pair_id) method
+       - Returns True if pair has never fired (not in fired_state).
+       - Returns False if not armed (waiting for spread reversion).
+       - Returns False if time.time() - last_fired_at < arb_cooldown_s.
+       - Never-fired pairs are always eligible regardless of cooldown.
+
+  3.6  _check_rearm(pair_id, spread) method
+       - No-op if pair not in fired_state or already armed.
+       - Sets state.armed = True when spread < min_spread - arb_rearm_hysteresis.
+       - Called on every tick (before the min_spread guard) so re-arm happens
+         even when the spread itself is below the trading threshold.
+
+  3.7  on_price_update and initial_sweep updated
+       - Both use _check_rearm before the spread check, then _is_eligible
+         instead of the old recently_fired membership test.
+       - Double-checked under lock (re-arm and eligibility re-evaluated after
+         lock acquisition to prevent TOCTOU).
+       - Exception safety: try/except around _execute_arb_trade; exceptions are
+         logged and swallowed — pair is NOT added to fired_state on failure.
+       - fired_state[pair_id] set to PairFireState(last_fired_at=time.time(),
+         armed=False) only after a successful trade return.
+
+  3.8  periodic_scan() async method
+       - Iterates all _pairs with the same check_rearm / is_eligible / lock
+         pattern as on_price_update.
+       - Catches pairs whose spread opened while both prices drifted
+         simultaneously (no single tick would trigger on_price_update).
+       - Respects cooldown: pairs in fired_state with armed=False or within
+         the cooldown window are skipped.
+
+  Gaps and watch-outs
+  ────────────────────
+  - periodic_scan() is defined but not yet wired into a timer loop. Caller
+    must invoke it periodically (e.g., from ScheduledStrategyRunner or a
+    separate asyncio.create_task). Wire in Phase 7 or the main streaming loop.
+  - arb_cooldown_s=0.0 with arb_rearm_hysteresis=0.0 gives true immediate
+    re-fire behavior; useful for tests but not for production. Both env vars
+    should be explicitly set in .env.
+  - last_spread_seen_below on PairFireState is unused in this phase. Reserved
+    for Phase 5 (strategy hygiene) to detect price oscillation patterns.
+  - The recently_fired property returns ALL pairs that have ever fired
+    (including re-armed pairs that are now eligible again). stats()["recently_fired"]
+    counts all fired pairs, not just currently-muted ones. This is acceptable
+    for the STATUS log; a separate "muted_pairs" counter could be added if needed.
+
+  Downstream impact
+  ──────────────────
+  - Phase 4 (paper fill model): no overlap. Kelly sizing still uses
+    starting_capital; Phase 4 will switch to live portfolio_value.
+  - Phase 5 (strategy hygiene): last_spread_seen_below is a stub for
+    detecting oscillating pairs. Phase 5 may populate it.
+  - Phase 7 (invariants): wire periodic_scan() into the main streaming loop
+    or ScheduledStrategyRunner. Add assertion that all fired_state entries
+    have last_fired_at > 0 to the post-deploy smoke test.
+
+  ---
+  Phase 4 — Realistic paper fill model
+
+  Status: COMPLETE
+
+  What was implemented
+  ─────────────────────
+  4.1/4.2  Removed synthetic exit price from detect_single_platform_opportunities
+       - Previously set exit_price = price ± edge (fictional).
+       - Now positions are written with status='open', exit_price=NULL,
+         realized_pnl=NULL, closed_at=NULL, pnl_model='realistic'.
+
+  4.3/4.4  mark_and_close_positions(db, holding_period_s) standalone function
+       - Queries positions WHERE status='open' AND opened_at <= cutoff.
+       - For each expired position: fetches latest market_prices.yes_price,
+         computes realized_pnl, UPDATEs status='closed'.
+       - Positions with no price data are left open (stale handling).
+       - Returns count of positions closed.
+
+  4.5  Slippage model in PaperExecutionClient
+       - New params: slippage_bps: float = 0.0 (backward compat), fee_rate: float | None.
+       - BUY: filled = market * (1 + slippage_factor * uniform(0,1)), capped at 0.99.
+       - SELL: filled = market * (1 - slippage_factor * uniform(0,1)), floored at 0.01.
+
+  4.6  Fee rate configurable via fee_rate param on PaperExecutionClient.
+
+  4.7  pnl_model column and migration 007_phase4_fill_model.sql
+       - ALTER TABLE positions ADD COLUMN pnl_model TEXT DEFAULT 'realistic'.
+       - Existing closed positions back-tagged as pnl_model='synthetic'.
+
+  4.8  RiskControlConfig: slippage_bps=10.0, strategy_holding_period_s=300.
+
+  4.9  ScheduledStrategyRunner.run_one_cycle() calls mark_and_close_positions
+       before each new cycle.
+
+  What was NOT done (deferred)
+  ─────────────────────────────
+  - Dashboard split (synthetic vs realistic PnL) — deferred to Phase 7.
+  - Backfill recomputation of existing synthetic positions — deferred.
+  - P1 arb (_execute_arb_trade) unchanged — two-sided arb PnL is realized at fill.
+  - Stop-loss and resolution-based exits — deferred to Phase 5/7.
+  - Partial-fill probability — not implemented.
+
+  Gaps and watch-outs
+  ────────────────────
+  - With slippage_bps=0 (current default), fills are at exact market price.
+    Set SLIPPAGE_BPS=10 in .env for realistic slippage.
+  - Orphaned positions (no price ever) accumulate as open forever.
+    Wire cleanup in Phase 7.
+  - PnL sanity cap no longer guards single-platform strategies (no realized_pnl
+    at open). Cap still guards P1 arb.
+
+  Downstream impact
+  ──────────────────
+  - Phase 5 (strategy hygiene): P3/P4/P5 now produce realistic open positions.
+    Win rate will drop to plausible values. Phase 5 should improve signal
+    quality against this new baseline.
+  - Phase 7 (invariants): add open-position age assertion; wire dashboard split.
+
+  ---
+  Phase 5 — Strategy hygiene
+
+  Status: COMPLETE
+
+  What was implemented
+  ─────────────────────
+  5.1  Cross-strategy dedup (_cross_strategy_dedup)
+       - Keeps only the highest signal_strength entry per market_id across all
+         strategies before quota allocation.
+       - Prevents the same market from being traded simultaneously under two
+         different strategy labels.
+       - Important overlap: P3's trigger zone (|price−0.50|>0.20) encompasses
+         P5's trigger zone (price<0.25 or >0.75) entirely, and partially covers
+         P4's lower zone (0.15–0.30) and upper zone (0.70–0.85). P3 therefore
+         always beats P4/P5 in dedup when both fire. P4-only prices: 0.30–0.35
+         and 0.65–0.70. P5 has no exclusive price range.
+
+  5.2  Consecutive-cycle dedup
+       - Skips any market_id that has an open position OR a recent closed
+         position (within strategy_replay_cooldown_s) unless yes_price has
+         moved ≥ strategy_replay_min_move (default 1%) since entry.
+       - Prevents re-entering the same position in every scan cycle.
+
+  5.3  Z-score normalization (_normalize_signal_strengths)
+       - Adds signal_strength_normalized field to each opportunity.
+       - Computed per strategy bucket; single-item buckets → 0.0.
+       - Downstream: not yet used for routing/sizing but available for Phase 7
+         invariant logging.
+
+  5.4  Per-strategy enable flags
+       - strategy_p2_enabled, strategy_p3_enabled, strategy_p4_enabled,
+         strategy_p5_enabled added to RiskControlConfig (default True).
+       - Filtered before dedup so disabled strategies are invisible to all
+         downstream stages.
+
+  5.5  (not in original plan — no step 5.5 was specified)
+
+  5.6  Per-strategy kill-switch
+       - _get_strategy_rolling_pnl(db, strategy, window_s) counts closed
+         realistic positions and sums realized_pnl for a given window.
+       - If count ≥ strategy_killswitch_min_trades and pnl < 0, the strategy
+         is disabled for this cycle with a WARNING log.
+       - Config: strategy_killswitch_window_s=604800 (7 days),
+         strategy_killswitch_min_trades=5.
+
+  New config fields (RiskControlConfig)
+       - strategy_replay_cooldown_s=300
+       - strategy_replay_min_move=0.01
+       - strategy_p2_enabled=True
+       - strategy_p3_enabled=True
+       - strategy_p4_enabled=True
+       - strategy_p5_enabled=True
+       - strategy_killswitch_window_s=604800
+       - strategy_killswitch_min_trades=5
+
+  Test helpers updated
+       - test_phase2_risk_choke._risk_config() and test_phase4_fill_model._risk_config()
+         both updated with all Phase 5 fields to prevent AttributeError when
+         run_one_cycle() invokes detect_single_platform_opportunities.
+
+  Test regressions fixed (test_single_platform_strategies.py)
+       - P4 zone tests: prices moved to P4-exclusive range (0.30–0.35 / 0.65–0.70)
+         where P3 does not fire (distance ≤ 0.20).
+         · test_lower_zone_buy: 0.20 → 0.32
+         · test_upper_zone_sell: 0.75 → 0.68
+       - P5 zone tests: P5's price range is a strict subset of both P3 and P4
+         zones, so P5 can only be observed when both are disabled via risk_config.
+         · test_wide_spread_low_price_buy, test_wide_spread_high_price_sell,
+           test_edge_is_30_pct_of_spread: pass
+           RiskControlConfig(strategy_p3_enabled=False, strategy_p4_enabled=False)
+       - test_all_strategies_represented: restructured as two calls:
+         (a) default config verifies P3 + P4 + P2; (b) post-first-call with P3/P4
+         disabled verifies P5 (P5 market seeded after first call to avoid 5.2 dedup).
+
+  What was NOT done (deferred)
+  ─────────────────────────────
+  - signal_strength_normalized is computed but not yet used for sizing.
+    Kelly fraction still uses raw edge. Wire in Phase 7.
+  - P5's structural overlap with P3/P4 means it fires far less often in practice.
+    Consider widening P5's spread threshold or narrowing P3's zone in production.
+  - Kill-switch reset mechanism not implemented: once triggered it only clears
+    on the next cycle (new pnl sum). Persistent flags would need a separate table.
+
+  Gaps and watch-outs
+  ────────────────────
+  - The 5.2 consecutive-cycle dedup relies on the positions table having FK-valid
+    signal_id rows. Tests that call detect_ standalone (without _seed_signals)
+    bypass this correctly because the DB starts empty.
+  - 5.2 dedup uses entry_price from positions.entry_price (the filled price, not
+    the signal price). Slippage can make this slightly different from yes_price.
+    The move threshold comparison (abs(cp - ep) / ep) is therefore approximate.
+  - Kill-switch uses pnl_model='realistic' to exclude synthetic back-fill. If
+    pnl_model is NULL (old rows), they are excluded from the count — correct.
+
+  Downstream impact
+  ──────────────────
+  - Phase 6 (pre-live gating): strategy enable flags and kill-switch provide two
+    of the three levers needed for live gating; Phase 6 adds execution_mode guard.
+  - Phase 7 (invariants): wire signal_strength_normalized into the daily PnL
+    snapshot; add per-strategy kill-switch state to the STATUS log.
+
+  ---
+  Phase 6 — Pre-live gating and safety arming
+
+  Status: COMPLETE
+
+  What was implemented
+  ─────────────────────
+  New module: core/live_gate.py
+
+  6.1  Sentinel file guard
+       - SENTINEL_PATH = Path("/etc/predictor/ARMED_FOR_LIVE")
+       - check_live_gate(execution_mode) raises LiveGateError if mode is 'live'
+         and the sentinel file does not exist.
+       - Error message includes the full path and the sudo command to create it.
+       - Non-live modes (paper, mock, shadow) are no-ops.
+
+  6.2  Daily confirmation code
+       - check_live_gate also requires LIVE_CONFIRMATION_CODE env var to equal
+         today's ISO date (YYYY-MM-DD) when mode is 'live'.
+       - If confirmation_code is not passed as an argument, os.getenv() is used.
+       - Wrong date: error shows both expected and actual values.
+       - Forces manual env update each day; stale deploys with old dates fail fast.
+
+  6.3  Stricter live risk config
+       - get_effective_risk_config(execution_mode) → RiskControlConfig
+       - Live defaults: max_position_pct=0.02 (vs paper 0.05), max_daily_loss_pct=0.01
+         (vs paper 0.02), min_edge=0.05 (vs paper 0.02).
+       - Each value overridable via LIVE_MAX_POSITION_PCT, LIVE_MAX_DAILY_LOSS_PCT,
+         LIVE_MIN_EDGE_TO_TRADE env vars.
+       - All other RiskControlConfig fields use standard env-var defaults.
+       - shadow/mock/paper all return standard RiskControlConfig().
+
+  6.4  Shadow execution mode
+       - "shadow" added as a valid EXECUTION_MODE (config validation updated).
+       - _make_execution_clients and _make_single_execution_client treat "shadow"
+         as "paper": PaperExecutionClient is returned with a SHADOW log message.
+       - No sentinel file or confirmation code required for shadow.
+       - Intended use: run against real WS data for ≥1 week before flipping to live.
+
+  Startup wiring
+       - check_live_gate(cfg.execution.execution_mode) called in main() immediately
+         after get_config(). Fails fast before DB init for live mode without gate.
+
+  What was NOT done (deferred)
+  ─────────────────────────────
+  - get_effective_risk_config is not yet called at runtime — it exists but is not
+    wired into ScheduledStrategyRunner or ArbitrageEngine. They still pull risk
+    config from get_config().risk_controls. Wire in Phase 7 alongside the
+    invariant checks.
+  - Shadow mode does not suppress DB writes (positions still written to paper DB).
+    If true no-DB-write shadow mode is needed, add an execution_mode check at the
+    write sites or a flag on PaperExecutionClient.
+  - No Discord alert for live gate failure — LiveGateError logged at startup is
+    sufficient pre-live; post-live alerting belongs in Phase 7.
+
+  Gaps and watch-outs
+  ────────────────────
+  - /etc/predictor/ARMED_FOR_LIVE must be owned by root and not world-writable.
+    The deploy script must not touch this path.
+  - LIVE_CONFIRMATION_CODE must be set fresh each day. Add to deploy runbook.
+  - Live credentials (POLYMARKET_PRIVATE_KEY, KALSHI_API_KEY, etc.) are still
+    validated at Config.__post_init__ when mode is live — those checks remain.
+
+  Downstream impact
+  ──────────────────
+  - Phase 7 (invariants): wire get_effective_risk_config into the runtime risk
+    checks so live mode automatically enforces tighter limits per trade.
+  - Phase 7: add SENTINEL_PATH existence assertion to smoke test.
+
+  ---
+  Phase 7 — Invariants, alerting, and continuous verification
+
+  Status: COMPLETE (core items)
+
+  What was implemented
+  ─────────────────────
+  New module: core/invariants.py
+  New migration: 008_phase7_invariants.sql
+
+  7.1  Invariant assertion module
+       Five invariant checks, each returning InvariantResult(name, passed, message):
+
+       check_pnl_sanity(db)
+         - Fails if any closed position has realized_pnl > entry_size * 1.001.
+         - Physical impossibility: max profit on a binary is the full stake.
+
+       check_position_duration(db)
+         - Fails if any closed position has closed_at <= opened_at.
+         - Instant open/close is a coding error in mark_and_close_positions.
+
+       check_orphan_positions(db)
+         - LEFT JOIN positions → signals; fails if any position lacks a signal row.
+         - Catches FK bypass during migrations or bulk loads.
+
+       check_fee_ratio(db)
+         - Fails if sum(fees_paid) / sum(entry_size * entry_price) > 20%.
+         - Catches bps-vs-fraction confusion in fee calculation.
+
+       check_engine_state(arb_engine)
+         - Synchronous; fails if len(fired_state) > len(_pairs).
+         - Ghost entries in fired_state indicate a memory leak.
+
+       check_all_invariants(db, arb_engine=None, mode="warn", alert_manager=None)
+         - Runs all checks concurrently (asyncio.gather for DB checks).
+         - mode="warn": logs + persists failures, never raises.
+         - mode="halt": raises InvariantViolation on first failure.
+         - On failure: inserts into invariant_violations table.
+         - On failure: calls alert_manager.send() with severity=CRITICAL.
+
+       Rule: start with mode="warn" for at least one week before promoting to "halt."
+
+  7.3  Discord alerting on invariant violation
+       - check_all_invariants accepts alert_manager parameter.
+       - Wired to get_alert_manager() when called from run_one_cycle.
+       - (Currently run_one_cycle calls without alert_manager — wire in next deploy.)
+       - Existing AlertManager (core/alerting.py) handles dedup + rate limiting.
+
+  7.5  Dashboard endpoints
+       /api/pnl-split
+         - Returns {realistic: {trade_count, total_pnl, total_fees},
+                    synthetic: {trade_count, total_pnl, total_fees}}.
+         - Groups closed positions by pnl_model column (Phase 4 addition).
+         - NULL pnl_model treated as 'synthetic' for backward compat.
+
+       /api/invariants
+         - Returns {violation_count: int, recent_violations: [...]}.
+         - Queries invariant_violations table, ordered by violated_at DESC.
+         - Limit param (1–100, default 20).
+
+  Scheduler wiring
+       - ScheduledStrategyRunner.run_one_cycle() calls check_all_invariants(db,
+         mode="warn") before detect_single_platform_opportunities.
+       - Invariants run every strategy cycle (~every 120s in production).
+
+  What was NOT done (deferred)
+  ─────────────────────────────
+  7.2  Golden-path integration test (WS feed playback) — deferred; requires
+       a recorded tick stream and event-time compression infrastructure.
+  7.4  Post-deploy smoke test script — deferred; needs production deploy runbook.
+  - get_effective_risk_config not yet wired into runtime risk checks.
+  - alert_manager not yet passed to check_all_invariants in run_one_cycle.
+    Wire after confirming no spurious violations from warn-mode week.
+  - invariant_violations table not cleared automatically — ops must archive.
+
+  Gaps and watch-outs
+  ────────────────────
+  - check_pnl_sanity only covers closed positions. Open positions can have
+    unrealized_pnl = None (not yet marked to market). The check will miss
+    inflated unrealized PnL; add once mark-to-market is more frequent.
+  - check_position_duration uses ISO string comparison. If timezones differ
+    between opened_at and closed_at, the comparison can be incorrect. All
+    timestamps should use UTC-aware isoformat (enforced in mark_and_close).
+  - Fee ratio check aggregates across ALL strategies. Add per-strategy
+    breakdown once there's enough trade volume to make it meaningful.
+
+  Downstream impact
+  ──────────────────
+  - Wire alert_manager=get_alert_manager() in run_one_cycle after confirm
+    no spurious violations in production warn mode.
+  - Promote mode="halt" for check_pnl_sanity and check_orphan_positions
+    first (tightest invariants); leave duration/fee checks in warn mode longer.
+
+  ---

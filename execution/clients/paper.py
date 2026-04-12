@@ -43,8 +43,17 @@ class PaperExecutionClient(BaseExecutionClient):
         self,
         db_connection: aiosqlite.Connection,
         platform_label: str = "paper_polymarket",
+        slippage_bps: float = 0.0,
+        fee_rate: float | None = None,
     ) -> None:
         super().__init__(db_connection, platform_label=platform_label)
+
+        # Slippage: adverse price movement applied at fill time.
+        # 0 = no slippage (backward compat default). Set via RiskControlConfig.slippage_bps.
+        self.slippage_bps = slippage_bps
+
+        # Override platform fee rate. None = use FEE_RATES dict default.
+        self._fee_rate_override = fee_rate
 
         # Simulated latency range (realistic but no actual network call)
         self.min_latency_ms = 80
@@ -153,13 +162,25 @@ class PaperExecutionClient(BaseExecutionClient):
             self.min_fill_latency_ms, self.max_fill_latency_ms
         )
 
-        filled_price = market_price
+        # Apply slippage: adverse price movement (BUY pays more, SELL receives less)
+        slippage_factor = self.slippage_bps / 10000.0
+        if slippage_factor > 0:
+            adverse = market_price * slippage_factor * random.uniform(0, 1)
+            if leg.side.upper() == "BUY":
+                filled_price = min(round(market_price + adverse, 6), 0.99)
+            else:
+                filled_price = max(round(market_price - adverse, 6), 0.01)
+        else:
+            filled_price = market_price
         filled_size = leg.size
         slippage = abs(filled_price - (leg.limit_price or filled_price))
 
-        # Use platform-specific fee rate
-        base_platform = self.platform_label.replace("paper_", "")
-        fee_rate = FEE_RATES.get(base_platform, 0.02)
+        # Use override fee rate if provided, else platform default
+        if self._fee_rate_override is not None:
+            fee_rate = self._fee_rate_override
+        else:
+            base_platform = self.platform_label.replace("paper_", "")
+            fee_rate = FEE_RATES.get(base_platform, 0.02)
         fee_paid = round(filled_size * filled_price * fee_rate, 4)
 
         self.total_filled += 1

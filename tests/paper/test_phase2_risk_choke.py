@@ -91,6 +91,18 @@ def _risk_config(**overrides):
         duplicate_signal_window_s=300,
         min_edge=0.02,
         consecutive_failure_limit=5,
+        arb_cooldown_s=60.0,
+        arb_rearm_hysteresis=0.005,
+        slippage_bps=10.0,
+        strategy_holding_period_s=300,
+        strategy_replay_cooldown_s=300,
+        strategy_replay_min_move=0.01,
+        strategy_p2_enabled=True,
+        strategy_p3_enabled=True,
+        strategy_p4_enabled=True,
+        strategy_p5_enabled=True,
+        strategy_killswitch_window_s=604800,
+        strategy_killswitch_min_trades=5,
     )
     defaults.update(overrides)
     cfg = RiskControlConfig.__new__(RiskControlConfig)

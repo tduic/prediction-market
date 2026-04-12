@@ -526,6 +526,72 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
         finally:
             await close_db(db)
 
+    @app.get("/api/pnl-split")
+    async def get_pnl_split() -> Dict[str, Any]:
+        """Realistic vs synthetic PnL totals across all closed positions.
+
+        realistic: positions closed by mark_and_close_positions at real price.
+        synthetic: legacy positions with pre-computed exit_price at open time.
+        """
+        db = await get_db()
+        try:
+            cursor = await db.execute("""SELECT
+                       pnl_model,
+                       COUNT(*) AS trade_count,
+                       COALESCE(SUM(realized_pnl), 0.0) AS total_pnl,
+                       COALESCE(SUM(fees_paid), 0.0) AS total_fees
+                   FROM positions
+                   WHERE status = 'closed'
+                     AND realized_pnl IS NOT NULL
+                   GROUP BY pnl_model""")
+            rows = await cursor.fetchall()
+            result: Dict[str, Any] = {
+                "realistic": {"trade_count": 0, "total_pnl": 0.0, "total_fees": 0.0},
+                "synthetic": {"trade_count": 0, "total_pnl": 0.0, "total_fees": 0.0},
+            }
+            for row in rows:
+                model = row[0] or "synthetic"
+                if model not in result:
+                    result[model] = {
+                        "trade_count": 0,
+                        "total_pnl": 0.0,
+                        "total_fees": 0.0,
+                    }
+                result[model] = {
+                    "trade_count": row[1],
+                    "total_pnl": round(row[2], 4),
+                    "total_fees": round(row[3], 4),
+                }
+            return result
+        finally:
+            await close_db(db)
+
+    @app.get("/api/invariants")
+    async def get_invariants(limit: int = Query(20, ge=1, le=100)) -> Dict[str, Any]:
+        """Invariant violation log: total count and most recent failures."""
+        db = await get_db()
+        try:
+            count_cursor = await db.execute("SELECT COUNT(*) FROM invariant_violations")
+            count_row = await count_cursor.fetchone()
+            violation_count = count_row[0] if count_row else 0
+
+            recent_cursor = await db.execute(
+                """SELECT id, name, message, severity, violated_at
+                   FROM invariant_violations
+                   ORDER BY violated_at DESC
+                   LIMIT ?""",
+                (limit,),
+            )
+            rows = await recent_cursor.fetchall()
+            recent = [dict(row) for row in rows]
+
+            return {
+                "violation_count": violation_count,
+                "recent_violations": recent,
+            }
+        finally:
+            await close_db(db)
+
     @app.get("/health")
     async def health_check() -> Dict[str, str]:
         return {"status": "ok"}

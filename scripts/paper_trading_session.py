@@ -24,7 +24,7 @@ import time
 import typing
 import uuid
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from difflib import SequenceMatcher
 from pathlib import Path
 
@@ -113,12 +113,29 @@ class _RiskSignal:
     strategy: str = ""
 
 
+@dataclass
+class PairFireState:
+    """Per-pair cooldown and re-arm state for ArbitrageEngine.
+
+    After a pair fires, armed=False until the spread reverts below
+    (min_spread - arb_rearm_hysteresis), preventing churn on oscillating
+    prices. The pair also cannot fire again until arb_cooldown_s has elapsed.
+    """
+
+    last_fired_at: float
+    armed: bool
+    last_spread_seen_below: float | None = None
+
+
 def _make_execution_clients(db, execution_mode: str):
     """
     Return (poly_client, kalshi_client) for the given execution mode.
 
-    - "live"         → real PolymarketExecutionClient + KalshiExecutionClient
-    - "paper" / any  → PaperExecutionClient (simulated fills, no real orders)
+    - "live"                → real PolymarketExecutionClient + KalshiExecutionClient
+    - "paper"/"shadow"/any  → PaperExecutionClient (simulated fills, no real orders)
+
+    Shadow mode intentionally uses paper clients: it generates signals and runs
+    all risk checks but never submits real orders.
     """
     if execution_mode == "live":
         from execution.clients.kalshi import KalshiExecutionClient
@@ -132,7 +149,12 @@ def _make_execution_clients(db, execution_mode: str):
 
         poly_client = PaperExecutionClient(db, platform_label="paper_polymarket")
         kalshi_client = PaperExecutionClient(db, platform_label="paper_kalshi")
-        logger.info("Execution clients: PAPER (simulated)")
+        label = (
+            "SHADOW (paper clients, no real orders)"
+            if execution_mode == "shadow"
+            else "PAPER (simulated)"
+        )
+        logger.info("Execution clients: %s", label)
     return poly_client, kalshi_client
 
 
@@ -140,7 +162,8 @@ def _make_single_execution_client(db, execution_mode: str, platform: str):
     """
     Return a single execution client for single-platform strategies.
 
-    In live mode, returns the appropriate live client; otherwise paper.
+    In live mode, returns the appropriate live client. In paper or shadow mode,
+    returns a PaperExecutionClient (shadow uses paper clients by design).
     """
     if execution_mode == "live":
         if platform == "polymarket":
@@ -1277,10 +1300,9 @@ class ArbitrageEngine:
         # Live price cache: market_id -> price
         self.prices: dict[str, float] = {}
 
-        # recently_fired: pair_ids that have been traded (prevents duplicate trades).
-        # NOTE: this set grows monotonically — it is NOT a live "open positions" count.
-        # Renamed from open_positions which was semantically misleading.
-        self.recently_fired: set[str] = set()
+        # fired_state: per-pair cooldown and re-arm state (Phase 3).
+        # Replaced the bare recently_fired set to support cooldown + hysteresis re-arm.
+        self.fired_state: dict[str, PairFireState] = {}
 
         # Telemetry fields surfaced in stats() and the STATUS log line.
         self.last_arb_fired_at: float | None = None
@@ -1323,6 +1345,29 @@ class ArbitrageEngine:
             min_spread,
         )
 
+    @property
+    def recently_fired(self) -> set[str]:
+        """Backward-compatible view of all pairs that have ever fired."""
+        return set(self.fired_state.keys())
+
+    def _is_eligible(self, pair_id: str) -> bool:
+        """Return True if pair_id may fire (never fired, armed, and cooldown elapsed)."""
+        state = self.fired_state.get(pair_id)
+        if state is None:
+            return True  # Never fired → always eligible
+        if not state.armed:
+            return False  # Waiting for spread reversion
+        return (time.time() - state.last_fired_at) >= self._risk_config.arb_cooldown_s
+
+    def _check_rearm(self, pair_id: str, spread: float) -> None:
+        """Re-arm pair if spread has reverted below the hysteresis threshold."""
+        state = self.fired_state.get(pair_id)
+        if state is None or state.armed:
+            return
+        threshold = self.min_spread - self._risk_config.arb_rearm_hysteresis
+        if spread < threshold:
+            state.armed = True
+
     async def initial_sweep(self) -> None:
         """Check all seeded pairs for opportunities at startup.
 
@@ -1337,24 +1382,33 @@ class ArbitrageEngine:
         swept = 0
         for match in self._pairs.values():
             pair_id = f"{match['poly_id']}_{match['kalshi_id']}"
-            if pair_id in self.recently_fired:
-                continue
             p_price = self.prices.get(match["poly_id"])
             k_price = self.prices.get(match["kalshi_id"])
             if p_price is None or k_price is None:
                 continue
             spread = abs(p_price - k_price)
+            self._check_rearm(pair_id, spread)
             if spread < self.min_spread:
                 continue
+            if not self._is_eligible(pair_id):
+                continue
             async with self._trade_lock:
-                if pair_id in self.recently_fired:
+                self._check_rearm(pair_id, spread)
+                if not self._is_eligible(pair_id):
                     continue
-                # recently_fired.add is deferred until after success (Phase 2)
-                trade = await self._execute_arb_trade(
-                    match, p_price, k_price, spread, pair_id
-                )
+                try:
+                    trade = await self._execute_arb_trade(
+                        match, p_price, k_price, spread, pair_id
+                    )
+                except Exception:
+                    logger.exception(
+                        "Unhandled exception in initial_sweep for pair %s", pair_id
+                    )
+                    continue
                 if trade:
-                    self.recently_fired.add(pair_id)
+                    self.fired_state[pair_id] = PairFireState(
+                        last_fired_at=time.time(), armed=False
+                    )
                     self.trades.append(trade)
                     self.last_arb_fired_at = time.time()
                     self._ticks_since_last_fire = 0
@@ -1389,33 +1443,82 @@ class ArbitrageEngine:
         for match in affected:
             pair_id = f"{match['poly_id']}_{match['kalshi_id']}"
 
-            # Skip if we already have a position on this pair
-            if pair_id in self.recently_fired:
-                continue
-
             p_price = self.prices.get(match["poly_id"])
             k_price = self.prices.get(match["kalshi_id"])
             if p_price is None or k_price is None:
                 continue
 
             spread = abs(p_price - k_price)
+            # Always run re-arm check (spread may have reverted below threshold)
+            self._check_rearm(pair_id, spread)
+
             if spread < self.min_spread:
+                continue
+
+            if not self._is_eligible(pair_id):
                 continue
 
             # Execute immediately under lock (prevent concurrent trades on same pair)
             async with self._trade_lock:
-                # Double-check after acquiring lock
-                if pair_id in self.recently_fired:
+                # Re-check under lock (state may have changed)
+                self._check_rearm(pair_id, spread)
+                if not self._is_eligible(pair_id):
                     continue
-                # NOTE: recently_fired.add is deferred until after _execute_arb_trade
-                # succeeds. If risk checks fail or circuit breaker halts, the pair
-                # stays eligible for retry on the next tick (Phase 2 contract).
-
-                trade = await self._execute_arb_trade(
-                    match, p_price, k_price, spread, pair_id
-                )
+                # fired_state updated only on success; risk/CB rejections leave pair
+                # retriable (Phase 2 contract). Exceptions also leave pair unlocked.
+                try:
+                    trade = await self._execute_arb_trade(
+                        match, p_price, k_price, spread, pair_id
+                    )
+                except Exception:
+                    logger.exception(
+                        "Unhandled exception in on_price_update for pair %s", pair_id
+                    )
+                    continue
                 if trade:
-                    self.recently_fired.add(pair_id)
+                    self.fired_state[pair_id] = PairFireState(
+                        last_fired_at=time.time(), armed=False
+                    )
+                    self.trades.append(trade)
+                    self.last_arb_fired_at = time.time()
+                    self._ticks_since_last_fire = 0
+
+    async def periodic_scan(self) -> None:
+        """Scan all tracked pairs for arbitrage opportunities.
+
+        Called on a timer, independent of price-tick events. Catches pairs
+        whose spread opened while both prices drifted simultaneously (no single
+        tick would have triggered on_price_update for the pair).
+        """
+        for match in self._pairs.values():
+            pair_id = f"{match['poly_id']}_{match['kalshi_id']}"
+            p_price = self.prices.get(match["poly_id"])
+            k_price = self.prices.get(match["kalshi_id"])
+            if p_price is None or k_price is None:
+                continue
+            spread = abs(p_price - k_price)
+            self._check_rearm(pair_id, spread)
+            if spread < self.min_spread:
+                continue
+            if not self._is_eligible(pair_id):
+                continue
+            async with self._trade_lock:
+                self._check_rearm(pair_id, spread)
+                if not self._is_eligible(pair_id):
+                    continue
+                try:
+                    trade = await self._execute_arb_trade(
+                        match, p_price, k_price, spread, pair_id
+                    )
+                except Exception:
+                    logger.exception(
+                        "Unhandled exception in periodic_scan for pair %s", pair_id
+                    )
+                    continue
+                if trade:
+                    self.fired_state[pair_id] = PairFireState(
+                        last_fired_at=time.time(), armed=False
+                    )
                     self.trades.append(trade)
                     self.last_arb_fired_at = time.time()
                     self._ticks_since_last_fire = 0
@@ -1749,9 +1852,11 @@ class ScheduledStrategyRunner:
         self._circuit_breaker = circuit_breaker
 
     async def run_one_cycle(self) -> list:
-        """Execute a single strategy cycle. Returns list of trades (may be empty).
+        """Execute a single strategy cycle. Returns list of opened positions.
 
-        Circuit breaker check happens here — if halted, returns [] immediately.
+        Circuit breaker check happens first — if halted, returns [] immediately.
+        After opening new positions, closes any that have exceeded holding_period_s
+        (Phase 4 realistic fill model).
         Extracted from run() so it can be called and tested independently.
         """
         if self._circuit_breaker is not None:
@@ -1760,6 +1865,14 @@ class ScheduledStrategyRunner:
                     "CIRCUIT_BREAKER halted — skipping scheduled strategy cycle"
                 )
                 return []
+        # Mark-to-market pass: close expired open positions at current prices
+        await mark_and_close_positions(
+            self.db, holding_period_s=self._risk_config.strategy_holding_period_s
+        )
+        # Phase 7: run invariant checks before opening new positions
+        from core.invariants import check_all_invariants
+
+        await check_all_invariants(self.db, mode="warn")
         return await detect_single_platform_opportunities(
             self.db, max_trades=self.max_trades, risk_config=self._risk_config
         )
@@ -2062,6 +2175,144 @@ async def detect_violations_and_trade(
     return trades
 
 
+# ── Mark-to-market and time-based exit ────────────────────────────────────
+
+
+async def mark_and_close_positions(
+    db: aiosqlite.Connection,
+    holding_period_s: int = 300,
+) -> int:
+    """Close open positions that have exceeded their holding period.
+
+    Walks all positions with status='open' opened more than holding_period_s
+    ago, queries the latest market price, computes realized_pnl, and closes
+    them. Positions with no current price data are left open (stale handling).
+
+    Returns the number of positions closed.
+    """
+    now_dt = datetime.now(timezone.utc)
+    cutoff = (now_dt - timedelta(seconds=holding_period_s)).isoformat()
+    now = now_dt.isoformat()
+
+    cursor = await db.execute(
+        "SELECT id, market_id, side, entry_price, entry_size, fees_paid "
+        "FROM positions WHERE status='open' AND opened_at <= ?",
+        (cutoff,),
+    )
+    rows = await cursor.fetchall()
+
+    closed = 0
+    for row in rows:
+        pos_id, market_id, side, entry_price, entry_size, fees_paid = row
+
+        price_cursor = await db.execute(
+            "SELECT yes_price FROM market_prices WHERE market_id=? "
+            "ORDER BY polled_at DESC LIMIT 1",
+            (market_id,),
+        )
+        price_row = await price_cursor.fetchone()
+        if price_row is None:
+            logger.debug(
+                "mark_and_close: no price for market %s — leaving open", market_id
+            )
+            continue
+
+        current_price = price_row[0]
+        if side == "BUY":
+            realized_pnl = round(
+                (current_price - entry_price) * entry_size - (fees_paid or 0), 4
+            )
+        else:
+            realized_pnl = round(
+                (entry_price - current_price) * entry_size - (fees_paid or 0), 4
+            )
+
+        await db.execute(
+            """UPDATE positions
+               SET status='closed', exit_price=?, exit_size=?,
+                   realized_pnl=?, current_price=?, closed_at=?, updated_at=?
+             WHERE id=?""",
+            (current_price, entry_size, realized_pnl, current_price, now, now, pos_id),
+        )
+        closed += 1
+        logger.debug(
+            "mark_and_close: closed pos=%s market=%s pnl=%.4f",
+            pos_id,
+            market_id,
+            realized_pnl,
+        )
+
+    if closed:
+        await db.commit()
+        logger.info("mark_and_close_positions: closed %d expired positions", closed)
+
+    return closed
+
+
+# ── Phase 5: Strategy hygiene helpers ────────────────────────────────────────
+
+
+def _cross_strategy_dedup(opportunities: list[dict]) -> list[dict]:
+    """Keep only the highest-signal_strength entry per market_id (5.1).
+
+    A market that qualifies for both P3 and P4 in the same cycle contributes
+    one position — for the strategy most confident about it.
+    """
+    best: dict[str, dict] = {}
+    for opp in opportunities:
+        mid = opp["market"]["id"]
+        if mid not in best or opp["signal_strength"] > best[mid]["signal_strength"]:
+            best[mid] = opp
+    return list(best.values())
+
+
+def _normalize_signal_strengths(opportunities: list[dict]) -> list[dict]:
+    """Z-score normalize signal_strength within each strategy bucket (5.3).
+
+    Adds a signal_strength_normalized key to each opportunity. The original
+    signal_strength is preserved. Single-item buckets receive 0.0.
+    """
+    import statistics
+
+    by_strategy: dict[str, list[dict]] = {}
+    for opp in opportunities:
+        by_strategy.setdefault(opp["strategy"], []).append(opp)
+
+    result = []
+    for opps in by_strategy.values():
+        strengths = [o["signal_strength"] for o in opps]
+        if len(strengths) == 1:
+            result.append({**opps[0], "signal_strength_normalized": 0.0})
+            continue
+        mean = statistics.mean(strengths)
+        stdev = statistics.stdev(strengths)
+        for opp in opps:
+            z = (opp["signal_strength"] - mean) / stdev if stdev > 0 else 0.0
+            result.append({**opp, "signal_strength_normalized": z})
+    return result
+
+
+async def _get_strategy_rolling_pnl(
+    db: aiosqlite.Connection,
+    strategy: str,
+    window_s: int,
+) -> tuple[int, float]:
+    """Return (trade_count, total_pnl) for strategy over the last window_s seconds.
+
+    Only counts realistic-model closed positions (pnl_model='realistic').
+    Used by the per-strategy kill-switch (5.6).
+    """
+    cutoff = (datetime.now(timezone.utc) - timedelta(seconds=window_s)).isoformat()
+    cursor = await db.execute(
+        "SELECT COUNT(*), COALESCE(SUM(realized_pnl), 0.0) "
+        "FROM positions "
+        "WHERE strategy=? AND pnl_model='realistic' AND status='closed' AND closed_at >= ?",
+        (strategy, cutoff),
+    )
+    row = await cursor.fetchone()
+    return row[0], row[1]
+
+
 # ── Single-platform strategies ──────────────────────────────────────────────
 
 
@@ -2203,6 +2454,79 @@ async def detect_single_platform_opportunities(
             }
         )
 
+    # ── Phase 5: Strategy hygiene ─────────────────────────────────────────────
+
+    # 5.4 — Filter strategies disabled via config flags
+    _strategy_enabled = {
+        "P2_structured_event": _risk_cfg.strategy_p2_enabled,
+        "P3_calibration_bias": _risk_cfg.strategy_p3_enabled,
+        "P4_liquidity_timing": _risk_cfg.strategy_p4_enabled,
+        "P5_information_latency": _risk_cfg.strategy_p5_enabled,
+    }
+    opportunities = [
+        o for o in opportunities if _strategy_enabled.get(o["strategy"], True)
+    ]
+
+    # 5.1 — Cross-strategy dedup: same market → keep highest signal_strength only
+    opportunities = _cross_strategy_dedup(opportunities)
+
+    # 5.2 — Consecutive-cycle dedup: skip recently-traded markets unless price moved
+    _cooldown = _risk_cfg.strategy_replay_cooldown_s
+    _min_move = _risk_cfg.strategy_replay_min_move
+    _cutoff = (datetime.now(timezone.utc) - timedelta(seconds=_cooldown)).isoformat()
+    _recent_cursor = await db.execute(
+        "SELECT market_id, entry_price FROM positions "
+        "WHERE (status='open' OR (status='closed' AND closed_at >= ?)) "
+        "ORDER BY opened_at DESC",
+        (_cutoff,),
+    )
+    _recently_traded: dict[str, float] = {}
+    for _row in await _recent_cursor.fetchall():
+        _mid, _ep = _row[0], _row[1]
+        if _mid not in _recently_traded:
+            _recently_traded[_mid] = _ep or 0.0
+
+    _filtered: list[dict] = []
+    for opp in opportunities:
+        mid = opp["market"]["id"]
+        if mid in _recently_traded:
+            ep = _recently_traded[mid]
+            cp = opp["market"]["yes_price"]
+            move = abs(cp - ep) / max(ep, 0.001) if ep else 1.0
+            if move < _min_move:
+                logger.debug(
+                    "5.2 replay-dedup: skip market=%s move=%.4f < min=%.4f",
+                    mid,
+                    move,
+                    _min_move,
+                )
+                continue
+        _filtered.append(opp)
+    opportunities = _filtered
+
+    # 5.6 — Per-strategy kill-switch: disable strategy if rolling PnL is negative
+    # and enough trades have been recorded to be statistically meaningful.
+    _killed_strategies: set[str] = set()
+    for _strat in list({o["strategy"] for o in opportunities}):
+        _count, _pnl = await _get_strategy_rolling_pnl(
+            db, _strat, _risk_cfg.strategy_killswitch_window_s
+        )
+        if _count >= _risk_cfg.strategy_killswitch_min_trades and _pnl < 0:
+            logger.warning(
+                "KILLSWITCH: strategy=%s disabled — rolling_pnl=%.4f over %d trades",
+                _strat,
+                _pnl,
+                _count,
+            )
+            _killed_strategies.add(_strat)
+    opportunities = [
+        o for o in opportunities if o["strategy"] not in _killed_strategies
+    ]
+
+    # 5.3 — Normalize signal_strength within each strategy bucket (z-score)
+    opportunities = _normalize_signal_strengths(opportunities)
+
+    # ── Quota allocation ──────────────────────────────────────────────────────
     # Reserve slots per strategy to prevent any single strategy crowding others.
     # P2: 15%, P3: 50%, P4: 25%, P5: remainder (min 1 each).
     p2_cap = max(1, int(max_trades * 0.15))
@@ -2350,40 +2674,16 @@ async def detect_single_platform_opportunities(
         )
 
         if result.filled_price:
-            # Simulate close at edge-adjusted price
-            if side == "BUY":
-                exit_price = min(price + edge, 0.95)
-            else:
-                exit_price = max(price - edge, 0.05)
-
-            actual_pnl = round(
-                abs(exit_price - result.filled_price) * size - (result.fee_paid or 0),
-                4,
-            )
-            total_fees = result.fee_paid or 0
-
-            _pnl_cap = size * _PNL_SANITY_CAP_RATIO
-            if actual_pnl > _pnl_cap:
-                logger.warning(
-                    "PNL_SANITY_CAP blocked strategy=%s market=%s actual_pnl=%.4f > cap=%.4f "
-                    "(size=%.1f edge=%.4f). Synthetic exit too large — skipping DB write.",
-                    strategy,
-                    m["id"],
-                    actual_pnl,
-                    _pnl_cap,
-                    size,
-                    edge,
-                )
-                continue
-
+            # Phase 4: open position, NO synthetic exit price.
+            # mark_and_close_positions() will close it after holding_period_s
+            # at the then-current market price, giving a realistic realized PnL.
             pos_id = f"pos_{uuid.uuid4().hex[:12]}"
             try:
                 await db.execute(
                     """INSERT INTO positions
                        (id, signal_id, market_id, strategy, side, entry_price,
-                        entry_size, exit_price, exit_size, realized_pnl, fees_paid,
-                        status, opened_at, closed_at, updated_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'closed', ?, ?, ?)""",
+                        entry_size, fees_paid, pnl_model, status, opened_at, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'realistic', 'open', ?, ?)""",
                     (
                         pos_id,
                         signal_id,
@@ -2392,53 +2692,13 @@ async def detect_single_platform_opportunities(
                         side,
                         result.filled_price,
                         size,
-                        exit_price,
-                        size,
-                        actual_pnl,
-                        total_fees,
-                        now,
+                        result.fee_paid or 0,
                         now,
                         now,
                     ),
                 )
             except Exception as e:
                 logger.debug("Position insert error: %s", e)
-
-            try:
-                await db.execute(
-                    """INSERT INTO trade_outcomes
-                       (id, signal_id, strategy, violation_id, market_id_a,
-                        predicted_edge, predicted_pnl, actual_pnl, fees_total,
-                        edge_captured_pct, signal_to_fill_ms, holding_period_ms,
-                        spread_at_signal, volume_at_signal, liquidity_at_signal,
-                        resolved_at, created_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (
-                        f"trade_{uuid.uuid4().hex[:12]}",
-                        signal_id,
-                        strategy,
-                        violation_id,
-                        m["id"],
-                        edge,
-                        round(edge * size, 4),
-                        actual_pnl,
-                        total_fees,
-                        (
-                            round((actual_pnl / (edge * size)) * 100, 1)
-                            if edge * size > 0
-                            else 0
-                        ),
-                        result.submission_latency_ms + (result.fill_latency_ms or 0),
-                        5000,
-                        m["spread"],
-                        m["volume_24h"],
-                        m["liquidity"],
-                        now,
-                        now,
-                    ),
-                )
-            except Exception as e:
-                logger.debug("Trade outcome insert error: %s", e)
 
             trades.append(
                 {
@@ -2447,18 +2707,16 @@ async def detect_single_platform_opportunities(
                     "side": side,
                     "price": result.filled_price,
                     "edge": edge,
-                    "actual_pnl": actual_pnl,
-                    "fees": total_fees,
+                    "pos_id": pos_id,
                 }
             )
 
             logger.info(
-                "  TRADE: pnl=$%.4f fees=$%.4f | %s@%.4f → %.4f",
-                actual_pnl,
-                total_fees,
+                "  OPENED: %s@%.4f edge=%.4f | pos=%s (holding until close)",
                 side,
                 result.filled_price,
-                exit_price,
+                edge,
+                pos_id,
             )
 
             # Batch commit every 50 trades
@@ -2841,6 +3099,11 @@ async def main():
         )
 
     cfg = get_config()
+
+    # Phase 6: pre-live safety gate (no-op for paper/mock/shadow)
+    from core.live_gate import check_live_gate
+
+    check_live_gate(cfg.execution.execution_mode)
 
     mode = "stream" if args.stream else ("refresh+once" if args.refresh else "once")
     logger.info("Paper Trading Session")

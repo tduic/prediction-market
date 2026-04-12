@@ -50,6 +50,7 @@ _ns = {"_STRIP_SUFFIX": _STRIP_SUFFIX, "re": _re}
 exec(compile(_root_src, "<_p2_title_root>", "exec"), _ns)
 _p2_title_root = _ns["_p2_title_root"]
 
+from core.config import RiskControlConfig  # noqa: E402
 from scripts.paper_trading_session import (  # noqa: E402
     detect_single_platform_opportunities,
 )
@@ -141,14 +142,16 @@ class TestP3CalibrationBias:
 @pytest.mark.asyncio
 class TestP4LiquidityTiming:
     async def test_lower_zone_buy(self, db):
-        await _seed_market(db, "m1", "polymarket", "Test market", yes_price=0.20)
+        # 0.32 is in P4's zone (0.15–0.35) but outside P3's zone (distance=0.18 ≤ 0.20)
+        await _seed_market(db, "m1", "polymarket", "Test market", yes_price=0.32)
         trades = await detect_single_platform_opportunities(db, max_trades=10)
         p4 = [t for t in trades if t["strategy"] == "P4_liquidity_timing"]
         assert len(p4) >= 1
         assert p4[0]["side"] == "BUY"
 
     async def test_upper_zone_sell(self, db):
-        await _seed_market(db, "m1", "polymarket", "Test market", yes_price=0.75)
+        # 0.68 is in P4's zone (0.65–0.85) but outside P3's zone (distance=0.18 ≤ 0.20)
+        await _seed_market(db, "m1", "polymarket", "Test market", yes_price=0.68)
         trades = await detect_single_platform_opportunities(db, max_trades=10)
         p4 = [t for t in trades if t["strategy"] == "P4_liquidity_timing"]
         assert len(p4) >= 1
@@ -170,19 +173,29 @@ class TestP4LiquidityTiming:
 @pytest.mark.asyncio
 class TestP5InformationLatency:
     async def test_wide_spread_low_price_buy(self, db):
+        # P5's price zone (< 0.25) is entirely covered by P3 (< 0.30) and partially
+        # by P4 (0.15–0.35). Disable both so P5 signal survives cross-strategy dedup.
         await _seed_market(
             db, "m1", "polymarket", "Test market", yes_price=0.18, spread=0.10
         )
-        trades = await detect_single_platform_opportunities(db, max_trades=10)
+        cfg = RiskControlConfig(strategy_p3_enabled=False, strategy_p4_enabled=False)
+        trades = await detect_single_platform_opportunities(
+            db, max_trades=10, risk_config=cfg
+        )
         p5 = [t for t in trades if t["strategy"] == "P5_information_latency"]
         assert len(p5) >= 1
         assert p5[0]["side"] == "BUY"
 
     async def test_wide_spread_high_price_sell(self, db):
+        # P5's price zone (> 0.75) is entirely covered by P3 (> 0.70) and partially
+        # by P4 (0.65–0.85). Disable both so P5 signal survives cross-strategy dedup.
         await _seed_market(
             db, "m1", "polymarket", "Test market", yes_price=0.82, spread=0.12
         )
-        trades = await detect_single_platform_opportunities(db, max_trades=10)
+        cfg = RiskControlConfig(strategy_p3_enabled=False, strategy_p4_enabled=False)
+        trades = await detect_single_platform_opportunities(
+            db, max_trades=10, risk_config=cfg
+        )
         p5 = [t for t in trades if t["strategy"] == "P5_information_latency"]
         assert len(p5) >= 1
         assert p5[0]["side"] == "SELL"
@@ -208,7 +221,10 @@ class TestP5InformationLatency:
         await _seed_market(
             db, "m1", "polymarket", "Test market", yes_price=0.18, spread=spread
         )
-        trades = await detect_single_platform_opportunities(db, max_trades=10)
+        cfg = RiskControlConfig(strategy_p3_enabled=False, strategy_p4_enabled=False)
+        trades = await detect_single_platform_opportunities(
+            db, max_trades=10, risk_config=cfg
+        )
         p5 = [t for t in trades if t["strategy"] == "P5_information_latency"]
         assert len(p5) >= 1
         assert abs(p5[0]["edge"] - round(spread * 0.30, 4)) < 0.001
@@ -330,11 +346,10 @@ class TestQuotaAllocation:
         assert len(p4) <= max(2, int(max_trades * 0.25))
 
     async def test_all_strategies_represented(self, db):
-        await _seed_market(db, "p3_1", "kalshi", "P3 market alpha", yes_price=0.20)
-        await _seed_market(db, "p4_1", "kalshi", "P4 market alpha", yes_price=0.25)
-        await _seed_market(
-            db, "p5_1", "kalshi", "P5 market alpha", yes_price=0.15, spread=0.10
-        )
+        # P3-only: price=0.10 → distance=0.40>0.20; P4 requires price>0.15 so no P4
+        await _seed_market(db, "p3_1", "kalshi", "P3 market alpha", yes_price=0.10)
+        # P4-only: price=0.32 → in P4 zone (0.15–0.35); distance=0.18≤0.20 so no P3
+        await _seed_market(db, "p4_1", "kalshi", "P4 market alpha", yes_price=0.32)
         for i, month in enumerate(["January", "March", "June"]):
             await _seed_market(
                 db,
@@ -343,12 +358,27 @@ class TestQuotaAllocation:
                 f"Will inflation exceed 3% in {month}",
                 yes_price=0.42,
             )
+        # First call: P3, P4, P2 all present with default config
         trades = await detect_single_platform_opportunities(db, max_trades=20)
         strategies = {t["strategy"] for t in trades}
         assert "P3_calibration_bias" in strategies
         assert "P4_liquidity_timing" in strategies
-        assert "P5_information_latency" in strategies
         assert "P2_structured_event" in strategies
+        # P5 zone (price<0.25 or >0.75) is entirely covered by P3 and partially by P4,
+        # so P5 always loses cross-strategy dedup when those strategies are enabled.
+        # Seed a fresh P5 market AFTER the first call so it has no prior position
+        # and won't be filtered by the consecutive-cycle dedup (5.2).
+        await _seed_market(
+            db, "p5_check", "kalshi", "P5 market alpha", yes_price=0.15, spread=0.10
+        )
+        trades_p5 = await detect_single_platform_opportunities(
+            db,
+            max_trades=20,
+            risk_config=RiskControlConfig(
+                strategy_p3_enabled=False, strategy_p4_enabled=False
+            ),
+        )
+        assert "P5_information_latency" in {t["strategy"] for t in trades_p5}
 
     async def test_empty_db_no_trades(self, db):
         trades = await detect_single_platform_opportunities(db, max_trades=20)
