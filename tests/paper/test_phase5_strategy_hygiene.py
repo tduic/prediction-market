@@ -29,7 +29,6 @@ from scripts.paper_trading_session import (  # noqa: E402
     detect_single_platform_opportunities,
 )
 
-
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 
@@ -100,7 +99,12 @@ async def _seed_market(db, market_id, price, platform="polymarket"):
 
 
 async def _seed_closed_position(
-    db, pos_id, market_id, strategy, realized_pnl, closed_at=None,
+    db,
+    pos_id,
+    market_id,
+    strategy,
+    realized_pnl,
+    closed_at=None,
     entry_price_override=None,
 ):
     """Insert a closed realistic position for kill-switch/dedup tests."""
@@ -123,7 +127,18 @@ async def _seed_closed_position(
         "exit_price, exit_size, realized_pnl, fees_paid, pnl_model, status, "
         "opened_at, closed_at, updated_at) "
         "VALUES (?, ?, ?, ?, 'BUY', ?, 10, ?, 10, ?, 0.05, 'realistic', 'closed', ?, ?, ?)",
-        (pos_id, sig_id, market_id, strategy, entry_price, exit_price, realized_pnl, now, closed_at, now),
+        (
+            pos_id,
+            sig_id,
+            market_id,
+            strategy,
+            entry_price,
+            exit_price,
+            realized_pnl,
+            now,
+            closed_at,
+            now,
+        ),
     )
     await db.commit()
 
@@ -210,7 +225,11 @@ class TestNormalizeSignalStrengths:
             _make_opp("mkt_3", "P3_calibration_bias", 0.40),
         ]
         result = _normalize_signal_strengths(opps)
-        zscores = [o["signal_strength_normalized"] for o in result if o["strategy"] == "P3_calibration_bias"]
+        zscores = [
+            o["signal_strength_normalized"]
+            for o in result
+            if o["strategy"] == "P3_calibration_bias"
+        ]
         assert len(zscores) == 3
         # Highest raw → highest z-score
         assert zscores[2] > zscores[1] > zscores[0]
@@ -230,8 +249,16 @@ class TestNormalizeSignalStrengths:
             _make_opp("mkt_4", "P5_information_latency", 0.90),
         ]
         result = _normalize_signal_strengths(opps)
-        p3_z = [o["signal_strength_normalized"] for o in result if o["strategy"] == "P3_calibration_bias"]
-        p5_z = [o["signal_strength_normalized"] for o in result if o["strategy"] == "P5_information_latency"]
+        p3_z = [
+            o["signal_strength_normalized"]
+            for o in result
+            if o["strategy"] == "P3_calibration_bias"
+        ]
+        p5_z = [
+            o["signal_strength_normalized"]
+            for o in result
+            if o["strategy"] == "P5_information_latency"
+        ]
         # Both groups span the same z-score range independently
         assert abs(p3_z[0] - p5_z[0]) < 0.001  # same z within each pair
 
@@ -335,9 +362,13 @@ class TestConsecutiveCycleDedup:
     async def test_market_with_open_position_is_skipped(self, db):
         """A market already holding an open position is not traded again."""
         await _seed_market(db, "mkt_open", 0.25)
-        await _seed_open_position(db, "pos_open", "mkt_open", "P3_calibration_bias", 0.25)
+        await _seed_open_position(
+            db, "pos_open", "mkt_open", "P3_calibration_bias", 0.25
+        )
 
-        cfg = _risk_config(strategy_replay_cooldown_s=300, strategy_replay_min_move=0.01)
+        cfg = _risk_config(
+            strategy_replay_cooldown_s=300, strategy_replay_min_move=0.01
+        )
         await detect_single_platform_opportunities(db, max_trades=5, risk_config=cfg)
 
         # Only the one pre-existing open position, no new one added
@@ -353,8 +384,12 @@ class TestConsecutiveCycleDedup:
         await _seed_market(db, "mkt_recent", entry_price)  # same price as entry
         closed_at = (datetime.now(timezone.utc) - timedelta(seconds=60)).isoformat()
         await _seed_closed_position(
-            db, "pos_recent", "mkt_recent", "P3_calibration_bias",
-            realized_pnl=0.05, closed_at=closed_at,
+            db,
+            "pos_recent",
+            "mkt_recent",
+            "P3_calibration_bias",
+            realized_pnl=0.05,
+            closed_at=closed_at,
             entry_price_override=entry_price,  # price hasn't moved
         )
 
@@ -378,8 +413,12 @@ class TestConsecutiveCycleDedup:
         await _seed_market(db, "mkt_moved", 0.20)
         closed_at = (datetime.now(timezone.utc) - timedelta(seconds=60)).isoformat()
         await _seed_closed_position(
-            db, "pos_moved", "mkt_moved", "P3_calibration_bias",
-            realized_pnl=0.05, closed_at=closed_at,
+            db,
+            "pos_moved",
+            "mkt_moved",
+            "P3_calibration_bias",
+            realized_pnl=0.05,
+            closed_at=closed_at,
             entry_price_override=entry_price,
         )
 
@@ -402,11 +441,17 @@ class TestConsecutiveCycleDedup:
         # Closed 600 seconds ago, well outside 300s cooldown
         closed_at = (datetime.now(timezone.utc) - timedelta(seconds=600)).isoformat()
         await _seed_closed_position(
-            db, "pos_old", "mkt_old", "P3_calibration_bias",
-            realized_pnl=0.05, closed_at=closed_at,
+            db,
+            "pos_old",
+            "mkt_old",
+            "P3_calibration_bias",
+            realized_pnl=0.05,
+            closed_at=closed_at,
         )
 
-        cfg = _risk_config(strategy_replay_cooldown_s=300, strategy_replay_min_move=0.01)
+        cfg = _risk_config(
+            strategy_replay_cooldown_s=300, strategy_replay_min_move=0.01
+        )
         await detect_single_platform_opportunities(db, max_trades=5, risk_config=cfg)
 
         # A new open position should appear
@@ -432,8 +477,12 @@ class TestStrategyKillSwitch:
         """Rolling PnL sums realistic closed positions within window."""
         await _seed_market(db, "mkt_pnl1", 0.40)
         await _seed_market(db, "mkt_pnl2", 0.45)
-        await _seed_closed_position(db, "ks_pos1", "mkt_pnl1", "P3_calibration_bias", -0.50)
-        await _seed_closed_position(db, "ks_pos2", "mkt_pnl2", "P3_calibration_bias", -0.30)
+        await _seed_closed_position(
+            db, "ks_pos1", "mkt_pnl1", "P3_calibration_bias", -0.50
+        )
+        await _seed_closed_position(
+            db, "ks_pos2", "mkt_pnl2", "P3_calibration_bias", -0.30
+        )
 
         count, pnl = await _get_strategy_rolling_pnl(db, "P3_calibration_bias", 604800)
         assert count == 2
@@ -444,8 +493,11 @@ class TestStrategyKillSwitch:
         for i in range(5):
             await _seed_market(db, f"mkt_kill_{i}", 0.40)
             await _seed_closed_position(
-                db, f"ks_kill_{i}", f"mkt_kill_{i}",
-                "P3_calibration_bias", -0.50,
+                db,
+                f"ks_kill_{i}",
+                f"mkt_kill_{i}",
+                "P3_calibration_bias",
+                -0.50,
             )
 
         # P3 trigger market — would normally fire
@@ -463,9 +515,9 @@ class TestStrategyKillSwitch:
             "WHERE strategy='P3_calibration_bias' AND market_id='mkt_trigger'"
         )
         row = await cursor.fetchone()
-        assert row[0] == 0, (
-            f"Kill-switch should have blocked P3 trade, got {row[0]} positions"
-        )
+        assert (
+            row[0] == 0
+        ), f"Kill-switch should have blocked P3 trade, got {row[0]} positions"
 
     async def test_insufficient_trades_does_not_trigger_killswitch(self, db):
         """Strategy with negative PnL but fewer than min_trades is NOT killed."""
@@ -473,8 +525,11 @@ class TestStrategyKillSwitch:
         for i in range(2):
             await _seed_market(db, f"mkt_few_{i}", 0.40)
             await _seed_closed_position(
-                db, f"ks_few_{i}", f"mkt_few_{i}",
-                "P3_calibration_bias", -0.50,
+                db,
+                f"ks_few_{i}",
+                f"mkt_few_{i}",
+                "P3_calibration_bias",
+                -0.50,
             )
 
         await _seed_market(db, "mkt_few_trigger", 0.25)
@@ -496,8 +551,11 @@ class TestStrategyKillSwitch:
         for i in range(5):
             await _seed_market(db, f"mkt_pos_{i}", 0.40)
             await _seed_closed_position(
-                db, f"ks_pos_{i}", f"mkt_pos_{i}",
-                "P3_calibration_bias", +0.50,
+                db,
+                f"ks_pos_{i}",
+                f"mkt_pos_{i}",
+                "P3_calibration_bias",
+                +0.50,
             )
 
         await _seed_market(db, "mkt_pos_trigger", 0.25)
