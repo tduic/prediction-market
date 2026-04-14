@@ -1,11 +1,10 @@
 """
-Tests for Phase 6: Pre-live gating and safety arming.
+Tests for core/live_gate.py
 
 Covers:
-  6.1  Sentinel file: /etc/predictor/ARMED_FOR_LIVE must exist for live mode
-  6.2  Confirmation code: LIVE_CONFIRMATION_CODE=<YYYY-MM-DD> must match today
-  6.3  Stricter risk config auto-selected for live mode
-  6.4  Shadow execution mode accepted and uses paper clients
+  - check_live_gate: sentinel file guard (6.1) and daily confirmation code (6.2)
+  - get_effective_risk_config: stricter limits for live mode (6.3)
+  - Shadow execution mode passes the gate (6.4)
 """
 
 import os
@@ -26,7 +25,7 @@ from core.live_gate import (  # noqa: E402
     get_effective_risk_config,
 )
 
-# ── 6.1 Sentinel file ─────────────────────────────────────────────────────────
+# ── Sentinel file ──────────────────────────────────────────────────────────────
 
 
 class TestSentinelFile:
@@ -52,7 +51,6 @@ class TestSentinelFile:
     def test_live_mode_with_sentinel_passes(self, tmp_path):
         sentinel = tmp_path / "ARMED_FOR_LIVE"
         sentinel.write_text("armed by operator on 2026-04-11\n")
-        # Should not raise
         check_live_gate(
             "live",
             sentinel_path=sentinel,
@@ -61,7 +59,6 @@ class TestSentinelFile:
 
     def test_paper_mode_ignores_missing_sentinel(self, tmp_path):
         sentinel = tmp_path / "ARMED_FOR_LIVE"
-        # File does not exist — should be fine for paper mode
         check_live_gate("paper", sentinel_path=sentinel, confirmation_code=None)
 
     def test_mock_mode_ignores_sentinel(self, tmp_path):
@@ -79,7 +76,7 @@ class TestSentinelFile:
         assert str(SENTINEL_PATH).startswith("/etc/")
 
 
-# ── 6.2 Confirmation code ─────────────────────────────────────────────────────
+# ── Confirmation code ──────────────────────────────────────────────────────────
 
 
 class TestConfirmationCode:
@@ -124,7 +121,6 @@ class TestConfirmationCode:
 
     def test_paper_mode_ignores_confirmation_code(self, tmp_path):
         sentinel = tmp_path / "ARMED_FOR_LIVE"
-        # Wrong date, non-live mode — should not raise
         check_live_gate("paper", sentinel_path=sentinel, confirmation_code="2020-01-01")
 
     def test_shadow_mode_ignores_confirmation_code(self, tmp_path):
@@ -139,11 +135,10 @@ class TestConfirmationCode:
         sentinel.write_text("armed\n")
         today = date.today().isoformat()
         with patch.dict(os.environ, {"LIVE_CONFIRMATION_CODE": today}):
-            # Should not raise since env var matches today
             check_live_gate("live", sentinel_path=sentinel)
 
 
-# ── 6.3 Stricter live risk config ─────────────────────────────────────────────
+# ── Effective risk config ──────────────────────────────────────────────────────
 
 
 class TestEffectiveRiskConfig:
@@ -180,13 +175,12 @@ class TestEffectiveRiskConfig:
         assert mock_cfg.max_position_pct == paper_cfg.max_position_pct
 
     def test_live_env_overrides_respected(self):
-        """LIVE_MAX_POSITION_PCT env var customises the live config."""
         with patch.dict(os.environ, {"LIVE_MAX_POSITION_PCT": "0.01"}):
             live_cfg = get_effective_risk_config("live")
         assert live_cfg.max_position_pct == pytest.approx(0.01)
 
 
-# ── 6.4 Shadow execution mode ─────────────────────────────────────────────────
+# ── Shadow execution mode ──────────────────────────────────────────────────────
 
 
 class TestShadowMode:

@@ -344,3 +344,55 @@ class TestCircuitBreakerEndpoint:
         resp = await client.get("/api/circuit-breaker")
         assert resp.json()["tripped"] is False
         assert resp.json()["daily_loss"] == 0.0
+
+
+# ── /api/pnl-split ────────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+class TestPnlSplitEndpoint:
+    async def test_pnl_split_endpoint_exists(self, app_and_client):
+        _, client, _ = app_and_client
+        resp = await client.get("/api/pnl-split")
+        assert resp.status_code == 200
+
+    async def test_pnl_split_returns_both_models(self, app_and_client):
+        _, client, _ = app_and_client
+        resp = await client.get("/api/pnl-split")
+        data = resp.json()
+        assert "realistic" in data
+        assert "synthetic" in data
+
+    async def test_pnl_split_numeric_fields(self, app_and_client):
+        _, client, _ = app_and_client
+        resp = await client.get("/api/pnl-split")
+        data = resp.json()
+        for model in ("realistic", "synthetic"):
+            assert isinstance(data[model]["trade_count"], int)
+            assert isinstance(data[model]["total_pnl"], (int, float))
+            assert isinstance(data[model]["total_fees"], (int, float))
+
+
+# ── /api/invariants ───────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+class TestInvariantsEndpoint:
+    async def test_invariants_endpoint_exists(self, app_and_client):
+        _, client, _ = app_and_client
+        resp = await client.get("/api/invariants")
+        assert resp.status_code == 200
+
+    async def test_invariants_endpoint_returns_expected_keys(self, app_and_client):
+        _, client, _ = app_and_client
+        resp = await client.get("/api/invariants")
+        data = resp.json()
+        assert "violation_count" in data
+        assert "recent_violations" in data
+
+    async def test_invariants_empty_initially(self, app_and_client):
+        _, client, _ = app_and_client
+        resp = await client.get("/api/invariants")
+        data = resp.json()
+        assert data["violation_count"] == 0
+        assert data["recent_violations"] == []

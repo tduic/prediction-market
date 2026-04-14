@@ -8,13 +8,18 @@ trade execution, and batch commit behavior.
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from scripts.paper_trading_session import ArbitrageEngine  # noqa: E402
+from core.config import RiskControlConfig  # noqa: E402
+from scripts.paper_trading_session import (  # noqa: E402
+    ArbitrageEngine,
+    ScheduledStrategyRunner,
+)
 
 
 def _make_match(poly_id, kalshi_id, poly_price, kalshi_price, similarity=0.85):
@@ -294,3 +299,60 @@ class TestInitialSweep:
         engine = ArbitrageEngine(db, [match], min_spread=0.03)
         await engine.initial_sweep()
         assert len(engine.trades) == 0
+
+
+# ── execution_mode wiring: ScheduledStrategyRunner ────────────────────────────
+
+
+class TestScheduledStrategyRunnerExecutionMode:
+    def test_live_execution_mode_uses_live_risk_config(self):
+        runner = ScheduledStrategyRunner(MagicMock(), execution_mode="live")
+        assert runner._risk_config.max_position_pct == pytest.approx(0.02)
+        assert runner._risk_config.min_edge == pytest.approx(0.05)
+        assert runner._risk_config.max_daily_loss_pct == pytest.approx(0.01)
+
+    def test_paper_execution_mode_uses_default_risk_config(self):
+        runner = ScheduledStrategyRunner(MagicMock(), execution_mode="paper")
+        assert runner._risk_config.max_position_pct == pytest.approx(0.05)
+        assert runner._risk_config.min_edge == pytest.approx(0.02)
+
+    def test_shadow_execution_mode_uses_default_risk_config(self):
+        runner = ScheduledStrategyRunner(MagicMock(), execution_mode="shadow")
+        assert runner._risk_config.max_position_pct == pytest.approx(0.05)
+
+    def test_explicit_risk_config_overrides_execution_mode(self):
+        explicit = RiskControlConfig(max_position_pct=0.10)
+        runner = ScheduledStrategyRunner(
+            MagicMock(), execution_mode="live", risk_config=explicit
+        )
+        assert runner._risk_config.max_position_pct == pytest.approx(0.10)
+
+    def test_no_execution_mode_backward_compat(self):
+        """No execution_mode → standard defaults (unchanged behavior)."""
+        runner = ScheduledStrategyRunner(MagicMock())
+        assert runner._risk_config.max_position_pct == pytest.approx(0.05)
+
+
+# ── execution_mode wiring: ArbitrageEngine ────────────────────────────────────
+
+
+class TestArbitrageEngineExecutionMode:
+    def test_live_execution_mode_uses_live_risk_config(self, matches):
+        engine = ArbitrageEngine(MagicMock(), matches, execution_mode="live")
+        assert engine._risk_config.max_position_pct == pytest.approx(0.02)
+        assert engine._risk_config.min_edge == pytest.approx(0.05)
+
+    def test_paper_execution_mode_uses_default_risk_config(self, matches):
+        engine = ArbitrageEngine(MagicMock(), matches, execution_mode="paper")
+        assert engine._risk_config.max_position_pct == pytest.approx(0.05)
+
+    def test_explicit_risk_config_overrides_execution_mode(self, matches):
+        explicit = RiskControlConfig(max_position_pct=0.10)
+        engine = ArbitrageEngine(
+            MagicMock(), matches, execution_mode="live", risk_config=explicit
+        )
+        assert engine._risk_config.max_position_pct == pytest.approx(0.10)
+
+    def test_no_execution_mode_backward_compat(self, matches):
+        engine = ArbitrageEngine(MagicMock(), matches)
+        assert engine._risk_config.max_position_pct == pytest.approx(0.05)

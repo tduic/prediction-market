@@ -1,12 +1,12 @@
 """
-Tests for Phase 7: Invariants, alerting integration, and dashboard endpoints.
+Tests for core/invariants.py
 
 Covers:
-  7.1  Invariant checks: PnL sanity, position duration, orphan positions,
-       fee ratio, engine state consistency
-  7.2  check_all_invariants orchestrator: warn-only vs halt mode
-  7.3  Discord alert fired on invariant violation
-  7.5  Dashboard endpoints: /api/pnl-split, /api/invariants
+  - Individual invariant checks: PnL sanity, position duration, orphan positions,
+    fee ratio, engine state consistency
+  - check_all_invariants orchestrator: warn-only vs halt mode, Discord alert
+    forwarding, DB persistence
+  - ScheduledStrategyRunner.run_one_cycle alert_manager forwarding
 """
 
 import sys
@@ -15,45 +15,21 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
-import aiosqlite
 import pytest
-import pytest_asyncio
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
-
-from httpx import ASGITransport, AsyncClient  # noqa: E402
-from scripts.dashboard_api import create_dashboard_app  # noqa: E402
-from tests.paper.conftest import _apply_migrations  # noqa: E402
 
 from core.invariants import (  # noqa: E402
     InvariantResult,
     InvariantViolation,
     check_all_invariants,
+    check_engine_state,
     check_fee_ratio,
     check_orphan_positions,
     check_pnl_sanity,
     check_position_duration,
-    check_engine_state,
 )
-
-# ── Fixtures ──────────────────────────────────────────────────────────────────
-
-
-@pytest_asyncio.fixture
-async def app_and_client(tmp_path):
-    """Dashboard app backed by a temp file DB with full schema applied."""
-    db_path = str(tmp_path / "test_p7.db")
-    conn = await aiosqlite.connect(db_path)
-    conn.row_factory = aiosqlite.Row
-    await _apply_migrations(conn)
-    await conn.close()
-
-    app = create_dashboard_app(db_path=db_path)
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
-        yield app, client, db_path
-
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -126,7 +102,7 @@ async def _seed_closed_position(
     return pos_id
 
 
-# ── 7.1a PnL sanity ───────────────────────────────────────────────────────────
+# ── PnL sanity ────────────────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -137,7 +113,6 @@ class TestPnLSanity:
 
     async def test_normal_pnl_passes(self, db):
         await _seed_signal(db, "sig1")
-        # edge = 0.05, size = 50 → pnl of 2.5 is reasonable
         await _seed_closed_position(
             db, signal_id="sig1", realized_pnl=2.5, entry_size=50.0
         )
@@ -146,7 +121,6 @@ class TestPnLSanity:
 
     async def test_inflated_pnl_fails(self, db):
         await _seed_signal(db, "sig1")
-        # realized_pnl > entry_size is physically impossible
         await _seed_closed_position(
             db, signal_id="sig1", realized_pnl=999.0, entry_size=50.0
         )
@@ -155,7 +129,6 @@ class TestPnLSanity:
 
     async def test_pnl_exactly_at_bound_passes(self, db):
         await _seed_signal(db, "sig1")
-        # realized_pnl == entry_size is the theoretical max (bought at 0, resolved 1)
         await _seed_closed_position(
             db, signal_id="sig1", realized_pnl=50.0, entry_size=50.0
         )
@@ -172,7 +145,7 @@ class TestPnLSanity:
         assert "realized_pnl" in result.message.lower() or result.name
 
 
-# ── 7.1b Position duration ────────────────────────────────────────────────────
+# ── Position duration ─────────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -188,7 +161,6 @@ class TestPositionDuration:
         assert result.passed
 
     async def test_zero_duration_fails(self, db):
-        # Insert a position where opened_at == closed_at
         await _seed_signal(db, "sig1")
         now = _now()
         pos_id = f"pos_{uuid.uuid4().hex[:8]}"
@@ -206,7 +178,6 @@ class TestPositionDuration:
         assert not result.passed
 
     async def test_open_positions_excluded(self, db):
-        """Open positions have no closed_at; should not trigger duration check."""
         await _seed_signal(db, "sig1")
         pos_id = f"pos_{uuid.uuid4().hex[:8]}"
         await db.execute(
@@ -222,7 +193,7 @@ class TestPositionDuration:
         assert result.passed
 
 
-# ── 7.1c Orphan positions ─────────────────────────────────────────────────────
+# ── Orphan positions ──────────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -241,12 +212,10 @@ class TestOrphanPositions:
         """Orphan position (no matching signal) is caught by the soft check.
 
         Strategy: insert a valid position, then delete the signal with FK
-        enforcement off so the cascade doesn't fire. The position survives
-        as an orphan.
+        enforcement off so the cascade doesn't fire.
         """
         await _seed_signal(db, "sig_orphan_test")
         await _seed_closed_position(db, signal_id="sig_orphan_test")
-        # Disable FK so we can delete the signal without cascading to the position
         await db.execute("PRAGMA foreign_keys = OFF")
         await db.execute("DELETE FROM signals WHERE id = 'sig_orphan_test'")
         await db.commit()
@@ -254,7 +223,7 @@ class TestOrphanPositions:
         assert not result.passed
 
 
-# ── 7.1d Fee ratio ────────────────────────────────────────────────────────────
+# ── Fee ratio ─────────────────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -265,7 +234,6 @@ class TestFeeRatio:
 
     async def test_normal_fees_pass(self, db):
         await _seed_signal(db, "sig1")
-        # fees_paid=1.0, notional=entry_size*entry_price=50*0.50=25 → 4% fee rate
         await _seed_closed_position(
             db, signal_id="sig1", fees_paid=1.0, entry_size=50.0, entry_price=0.50
         )
@@ -280,7 +248,6 @@ class TestFeeRatio:
 
     async def test_excessive_fees_fail(self, db):
         await _seed_signal(db, "sig1")
-        # fees_paid=20.0 on notional=50*0.50=25 → 80% fee rate — clearly wrong
         await _seed_closed_position(
             db, signal_id="sig1", fees_paid=20.0, entry_size=50.0, entry_price=0.50
         )
@@ -288,7 +255,7 @@ class TestFeeRatio:
         assert not result.passed
 
 
-# ── 7.1e Engine state consistency ─────────────────────────────────────────────
+# ── Engine state consistency ──────────────────────────────────────────────────
 
 
 class TestEngineState:
@@ -313,12 +280,12 @@ class TestEngineState:
     def test_fired_state_exceeds_pairs_fails(self):
         engine = MagicMock()
         engine.fired_state = {"pair1": object(), "ghost": object()}
-        engine._pairs = {"pair1": None}  # only 1 known pair but 2 in fired_state
+        engine._pairs = {"pair1": None}
         result = check_engine_state(arb_engine=engine)
         assert not result.passed
 
 
-# ── 7.2 check_all_invariants orchestrator ─────────────────────────────────────
+# ── check_all_invariants orchestrator ────────────────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -335,7 +302,6 @@ class TestCheckAllInvariants:
     async def test_warn_mode_does_not_raise_on_violation(self, db):
         await _seed_signal(db, "sig1")
         await _seed_closed_position(db, signal_id="sig1", realized_pnl=9999.0)
-        # mode="warn" should not raise even with a violation
         results = await check_all_invariants(db, mode="warn")
         assert any(not r.passed for r in results)
 
@@ -346,7 +312,6 @@ class TestCheckAllInvariants:
             await check_all_invariants(db, mode="halt")
 
     async def test_halt_mode_passes_on_clean_db(self, db):
-        # Should not raise
         await check_all_invariants(db, mode="halt")
 
     async def test_violation_sends_discord_alert(self, db):
@@ -377,53 +342,38 @@ class TestCheckAllInvariants:
         assert row[0] == 0
 
 
-# ── 7.5 Dashboard: /api/pnl-split ─────────────────────────────────────────────
+# ── ScheduledStrategyRunner: alert_manager forwarding ────────────────────────
 
 
 @pytest.mark.asyncio
-class TestDashboardPnlSplit:
-    async def test_pnl_split_endpoint_exists(self, app_and_client):
-        _, client, _ = app_and_client
-        resp = await client.get("/api/pnl-split")
-        assert resp.status_code == 200
+class TestRunOneCycleAlertManager:
+    async def test_alert_manager_forwarded_on_invariant_violation(self, db):
+        """When runner has an alert_manager and an invariant fails, send() is called."""
+        from scripts.paper_trading_session import ScheduledStrategyRunner
 
-    async def test_pnl_split_returns_both_models(self, app_and_client):
-        _, client, _ = app_and_client
-        resp = await client.get("/api/pnl-split")
-        data = resp.json()
-        assert "realistic" in data
-        assert "synthetic" in data
+        await _seed_signal(db, "sig1")
+        await _seed_closed_position(db, signal_id="sig1", realized_pnl=9999.0)
 
-    async def test_pnl_split_numeric_fields(self, app_and_client):
-        _, client, _ = app_and_client
-        resp = await client.get("/api/pnl-split")
-        data = resp.json()
-        for model in ("realistic", "synthetic"):
-            assert isinstance(data[model]["trade_count"], int)
-            assert isinstance(data[model]["total_pnl"], (int, float))
-            assert isinstance(data[model]["total_fees"], (int, float))
+        mock_mgr = AsyncMock()
+        runner = ScheduledStrategyRunner(db, alert_manager=mock_mgr)
+        await runner.run_one_cycle()
 
+        mock_mgr.send.assert_called()
 
-# ── 7.5 Dashboard: /api/invariants ────────────────────────────────────────────
+    async def test_no_error_when_alert_manager_is_none(self, db):
+        """run_one_cycle works without alert_manager (backward compatibility)."""
+        from scripts.paper_trading_session import ScheduledStrategyRunner
 
+        runner = ScheduledStrategyRunner(db)
+        # Should not raise
+        await runner.run_one_cycle()
 
-@pytest.mark.asyncio
-class TestDashboardInvariants:
-    async def test_invariants_endpoint_exists(self, app_and_client):
-        _, client, _ = app_and_client
-        resp = await client.get("/api/invariants")
-        assert resp.status_code == 200
+    async def test_no_alert_on_clean_db(self, db):
+        """alert_manager.send() not called when all invariants pass."""
+        from scripts.paper_trading_session import ScheduledStrategyRunner
 
-    async def test_invariants_endpoint_returns_expected_keys(self, app_and_client):
-        _, client, _ = app_and_client
-        resp = await client.get("/api/invariants")
-        data = resp.json()
-        assert "violation_count" in data
-        assert "recent_violations" in data
+        mock_mgr = AsyncMock()
+        runner = ScheduledStrategyRunner(db, alert_manager=mock_mgr)
+        await runner.run_one_cycle()
 
-    async def test_invariants_empty_initially(self, app_and_client):
-        _, client, _ = app_and_client
-        resp = await client.get("/api/invariants")
-        data = resp.json()
-        assert data["violation_count"] == 0
-        assert data["recent_violations"] == []
+        mock_mgr.send.assert_not_called()

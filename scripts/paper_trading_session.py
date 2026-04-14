@@ -1284,6 +1284,7 @@ class ArbitrageEngine:
         min_spread: float = 0.03,
         risk_config: "RiskControlConfig | None" = None,
         circuit_breaker=None,
+        execution_mode: str | None = None,
     ):
         self.db = db
         self.min_spread = min_spread
@@ -1292,9 +1293,16 @@ class ArbitrageEngine:
         self._pending_commit = 0
 
         # Phase 2: risk config and circuit breaker.
-        # risk_config drives Kelly sizing and run_all_checks thresholds.
-        # circuit_breaker gates all trade attempts (daily loss halt).
-        self._risk_config: RiskControlConfig = risk_config or RiskControlConfig()
+        # Phase 6: when execution_mode is provided and risk_config is not, use
+        # get_effective_risk_config so live mode automatically enforces tighter limits.
+        if risk_config is not None:
+            self._risk_config: RiskControlConfig = risk_config
+        elif execution_mode is not None:
+            from core.live_gate import get_effective_risk_config
+
+            self._risk_config = get_effective_risk_config(execution_mode)
+        else:
+            self._risk_config = RiskControlConfig()
         self._circuit_breaker = circuit_breaker
 
         # Live price cache: market_id -> price
@@ -1842,14 +1850,27 @@ class ScheduledStrategyRunner:
         max_trades_per_cycle: int = 20,
         risk_config: "RiskControlConfig | None" = None,
         circuit_breaker=None,
+        execution_mode: str | None = None,
+        alert_manager=None,
     ):
         self.db = db
         self.interval = interval
         self.max_trades = max_trades_per_cycle
         self.total_trades = 0
         # Phase 2: risk config and circuit breaker.
-        self._risk_config: RiskControlConfig = risk_config or RiskControlConfig()
+        # Phase 6: when execution_mode is provided and risk_config is not, use
+        # get_effective_risk_config so live mode automatically enforces tighter limits.
+        if risk_config is not None:
+            self._risk_config: RiskControlConfig = risk_config
+        elif execution_mode is not None:
+            from core.live_gate import get_effective_risk_config
+
+            self._risk_config = get_effective_risk_config(execution_mode)
+        else:
+            self._risk_config = RiskControlConfig()
         self._circuit_breaker = circuit_breaker
+        # Phase 7: alert_manager forwards invariant violations to Discord.
+        self._alert_manager = alert_manager
 
     async def run_one_cycle(self) -> list:
         """Execute a single strategy cycle. Returns list of opened positions.
@@ -1869,10 +1890,13 @@ class ScheduledStrategyRunner:
         await mark_and_close_positions(
             self.db, holding_period_s=self._risk_config.strategy_holding_period_s
         )
-        # Phase 7: run invariant checks before opening new positions
+        # Phase 7: run invariant checks before opening new positions.
+        # alert_manager forwards violations to Discord when configured.
         from core.invariants import check_all_invariants
 
-        await check_all_invariants(self.db, mode="warn")
+        await check_all_invariants(
+            self.db, mode="warn", alert_manager=self._alert_manager
+        )
         return await detect_single_platform_opportunities(
             self.db, max_trades=self.max_trades, risk_config=self._risk_config
         )
@@ -3229,9 +3253,13 @@ async def main():
                 logger.warning("Initial snapshot failed (will retry later): %s", e)
 
             # Phase 2: instantiate risk config and circuit breaker alongside engine.
+            # Phase 6: get_effective_risk_config selects tighter limits for live mode.
             from execution.circuit_breaker import DailyLossCircuitBreaker  # noqa: E402
+            from core.live_gate import get_effective_risk_config  # noqa: E402
+            from core.alerting import get_alert_manager  # noqa: E402
 
-            risk_config = cfg.risk_controls
+            execution_mode = cfg.execution.execution_mode
+            risk_config = get_effective_risk_config(execution_mode)
             circuit_breaker = DailyLossCircuitBreaker(
                 db=db,
                 starting_capital=risk_config.starting_capital,
@@ -3254,6 +3282,7 @@ async def main():
                 max_trades_per_cycle=20,
                 risk_config=risk_config,
                 circuit_breaker=circuit_breaker,
+                alert_manager=get_alert_manager(),
             )
 
             # Build asset ID maps for websocket subscriptions
