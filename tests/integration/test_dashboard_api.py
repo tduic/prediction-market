@@ -76,7 +76,7 @@ async def app_and_client(db, tmp_path):
     db_path = str(tmp_path / "test_dashboard.db")
 
     # Re-apply migrations to the file-based DB
-    from tests.paper.conftest import _apply_migrations
+    from tests.integration.conftest import _apply_migrations
 
     file_db = await aiosqlite.connect(db_path)
     file_db.row_factory = aiosqlite.Row
