@@ -1,16 +1,21 @@
 """
-Phase 1 tests: matcher root-cause fixes.
+Tests for the inverted-index matching engine (core.matching.engine).
 
-TDD: these tests define the contracts. Run before implementing to confirm
-they fail, then implement until they all pass.
+Combines tests from former test_matching.py and test_phase1_matcher.py.
 
 Covers:
-  1.1  extract_numbers operates on RAW title (preserves decimals like 5.5)
-  1.2  Hard reject when both titles have threshold terms and numeric sets differ
-  1.3  Semantic preflight: O/U on one side + N+ on the other → 0.0
-  1.4  persist_matches sets active=0 / notes='pending_review' when spread > 0.05
-  1.5  mark_existing_pairs_pending_review deactivates unreviewed pairs
-       load_cached_matches skips pending_review pairs
+  - normalize_title: synonym expansion, whitespace, special chars
+  - tokenize: stop-word removal, min-length filtering
+  - extract_numbers: decimal preservation, ranges
+  - compute_match_score: scoring, number penalties, length penalty
+  - find_matches: end-to-end pipeline with DB
+  - Phase 1 matcher fixes:
+    1.1  extract_numbers operates on RAW title (preserves decimals like 5.5)
+    1.2  Hard reject when both titles have threshold terms and numeric sets differ
+    1.3  Semantic preflight: O/U on one side + N+ on the other → 0.0
+    1.4  persist_matches sets active=0 / notes='pending_review' when spread > 0.05
+    1.5  mark_existing_pairs_pending_review deactivates unreviewed pairs
+         load_cached_matches skips pending_review pairs
 """
 
 import sys
@@ -22,13 +27,16 @@ import pytest
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from scripts.paper_trading_session import (  # noqa: E402
+from core.matching.engine import (  # noqa: E402
+    _find_matches_sync,
     compute_match_score,
     extract_numbers,
-    normalize_title,
-    persist_matches,
+    find_matches,
     load_cached_matches,
     mark_existing_pairs_pending_review,
+    normalize_title,
+    persist_matches,
+    tokenize,
 )
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -61,7 +69,105 @@ async def _seed_pair(db, pair_id, poly_id, kalshi_id, active=1, notes=None):
     )
 
 
-# ── 1.1 extract_numbers on raw title ──────────────────────────────────────────
+# ── normalize_title ─────────────────────────────────────────────────────────
+
+
+class TestNormalizeTitle:
+    def test_lowercases(self):
+        assert normalize_title("Bitcoin PRICE") == "bitcoin price"
+
+    def test_strips_whitespace(self):
+        assert normalize_title("  hello world  ") == "hello world"
+
+    def test_expands_synonyms(self):
+        result = normalize_title("Fed rate cut")
+        assert "federal reserve" in result
+
+    def test_expands_btc_synonym(self):
+        result = normalize_title("BTC price above 100k")
+        assert "bitcoin" in result
+
+    def test_removes_special_chars(self):
+        result = normalize_title("What's the CPI @ 3.5%?")
+        assert "@" not in result
+        assert "%" not in result
+
+    def test_normalizes_smart_quotes(self):
+        result = normalize_title("it\u2019s a test")
+        assert "it" in result and "test" in result
+
+    def test_collapses_multiple_spaces(self):
+        result = normalize_title("too   many    spaces")
+        assert "  " not in result
+
+    def test_synonym_word_boundary(self):
+        result = normalize_title("unfederated system")
+        assert "unfederated" in result or "federal reserve" not in result
+
+    def test_multiple_synonyms(self):
+        result = normalize_title("BTC and ETH prices")
+        assert "bitcoin" in result
+        assert "ethereum" in result
+
+
+# ── tokenize ────────────────────────────────────────────────────────────────
+
+
+class TestTokenize:
+    def test_removes_stop_words(self):
+        tokens = tokenize("will the fed cut rates")
+        assert "will" not in tokens
+        assert "the" not in tokens
+
+    def test_keeps_meaningful_words(self):
+        tokens = tokenize("bitcoin price above 100000")
+        assert "bitcoin" in tokens
+        assert "price" in tokens
+        assert "100000" in tokens
+
+    def test_ignores_single_char_tokens(self):
+        tokens = tokenize("a b c hello world")
+        assert "a" not in tokens
+        assert "b" not in tokens
+        assert "hello" in tokens
+
+    def test_empty_string(self):
+        assert tokenize("") == set()
+
+    def test_all_stop_words(self):
+        tokens = tokenize("will the be is to")
+        assert tokens == set()
+
+    def test_returns_set(self):
+        tokens = tokenize("bitcoin bitcoin bitcoin")
+        assert isinstance(tokens, set)
+        assert len(tokens) == 1
+
+
+# ── extract_numbers ─────────────────────────────────────────────────────────
+
+
+class TestExtractNumbers:
+    def test_extracts_integers(self):
+        nums = extract_numbers("above 100000 in 2025")
+        assert "100000" in nums
+        assert "2025" in nums
+
+    def test_extracts_decimals(self):
+        nums = extract_numbers("CPI at 3.5 percent")
+        assert "3.5" in nums
+
+    def test_no_numbers(self):
+        assert extract_numbers("no numbers here") == set()
+
+    def test_multiple_numbers(self):
+        nums = extract_numbers("between 50 and 100 in Q1 2026")
+        assert "50" in nums
+        assert "100" in nums
+        assert "2026" in nums
+
+
+# ── 1.1 extract_numbers preserves decimals on RAW titles ─────────────────────
 
 
 class TestExtractNumbersPreservesDecimals:
@@ -72,19 +178,16 @@ class TestExtractNumbersPreservesDecimals:
     def test_normalized_ou_55_loses_decimal(self):
         """Confirms the bug: normalized title loses the decimal."""
         norm = normalize_title("O/U 5.5")
-        # norm will be something like "o u 5 5" — extract_numbers finds {'5'}
         nums = extract_numbers(norm)
-        assert "5.5" not in nums  # decimal is gone after normalization
+        assert "5.5" not in nums
 
     def test_raw_nplus_extracts_integer(self):
-        """Raw '5+' yields {'5'}."""
         assert extract_numbers("5+") == {"5"}
 
     def test_raw_percentage(self):
         assert extract_numbers("GDP above 3.5%") == {"3.5"}
 
     def test_raw_year(self):
-        # $100k: '100' is not extracted because 'k' is a word char (no \b after 100)
         assert extract_numbers("Will Bitcoin hit $100 in 2025") == {"100", "2025"}
 
     def test_raw_range(self):
@@ -94,6 +197,66 @@ class TestExtractNumbersPreservesDecimals:
         assert "5.5" in extract_numbers("Over/Under 5.5 total rebounds")
 
 
+# ── compute_match_score ─────────────────────────────────────────────────────
+
+
+class TestComputeMatchScore:
+    def test_identical_titles(self):
+        norm = "bitcoin price above 100000 by 2025"
+        tokens = tokenize(norm)
+        score = compute_match_score(norm, norm, tokens, tokens)
+        assert score >= 0.95
+
+    def test_very_similar_titles(self):
+        a = "bitcoin price above 100000 by end of 2025"
+        b = "bitcoin price exceed 100000 by 2025"
+        tok_a = tokenize(a)
+        tok_b = tokenize(b)
+        score = compute_match_score(a, b, tok_a, tok_b)
+        assert score > 0.60
+
+    def test_completely_different_titles(self):
+        a = "bitcoin price above 100000"
+        b = "snow in miami july rainfall weather"
+        tok_a = tokenize(a)
+        tok_b = tokenize(b)
+        score = compute_match_score(a, b, tok_a, tok_b)
+        assert score < 0.20
+
+    def test_empty_tokens(self):
+        score = compute_match_score("a", "b", set(), set())
+        assert score == 0.0
+
+    def test_number_mismatch_penalty(self):
+        a = "gdp growth above 3 percent in 2025"
+        b = "gdp growth above 5 percent in 2026"
+        tok_a = tokenize(a)
+        tok_b = tokenize(b)
+        score_diff = compute_match_score(a, b, tok_a, tok_b)
+
+        c = "gdp growth above 3 percent in 2025"
+        tok_c = tokenize(c)
+        score_same = compute_match_score(a, c, tok_a, tok_c)
+
+        assert score_same > score_diff
+
+    def test_score_bounded_zero_one(self):
+        a = "test market title"
+        b = "another completely different thing"
+        tok_a = tokenize(a)
+        tok_b = tokenize(b)
+        score = compute_match_score(a, b, tok_a, tok_b)
+        assert 0.0 <= score <= 1.0
+
+    def test_length_penalty(self):
+        short = "bitcoin"
+        long = "bitcoin price above 100000 by end of 2025 in the cryptocurrency market exchange"
+        tok_s = tokenize(short)
+        tok_l = tokenize(long)
+        score = compute_match_score(short, long, tok_s, tok_l)
+        assert score < 0.50
+
+
 # ── 1.2 Hard reject: threshold terms + numeric mismatch ───────────────────────
 
 
@@ -101,14 +264,11 @@ class TestHardRejectThresholdMismatch:
     def _score(self, raw_a, raw_b):
         norm_a = normalize_title(raw_a)
         norm_b = normalize_title(raw_b)
-        from scripts.paper_trading_session import tokenize
-
         return compute_match_score(
             norm_a, norm_b, tokenize(norm_a), tokenize(norm_b), raw_a, raw_b
         )
 
     def test_ou_55_vs_nplus_5_is_zero(self):
-        """Core false positive: O/U 5.5 rebounds vs 5+ rebounds → 0.0."""
         score = self._score(
             "Will player X have O/U 5.5 rebounds",
             "Will player X have 5+ rebounds",
@@ -116,7 +276,6 @@ class TestHardRejectThresholdMismatch:
         assert score == 0.0, f"Expected 0.0, got {score}"
 
     def test_ou_vs_nplus_different_contexts(self):
-        """Any O/U term vs N+ term with differing numbers → 0.0."""
         score = self._score(
             "Over/Under 22.5 points in the game",
             "Player scores 23+ points",
@@ -124,7 +283,6 @@ class TestHardRejectThresholdMismatch:
         assert score == 0.0
 
     def test_at_least_vs_ou(self):
-        """'at least N' on one side, O/U on the other → 0.0."""
         score = self._score(
             "Will GDP grow by O/U 2.5%",
             "Will GDP grow by at least 3%",
@@ -132,15 +290,13 @@ class TestHardRejectThresholdMismatch:
         assert score == 0.0
 
     def test_both_ou_same_number_not_rejected(self):
-        """Both O/U with same number — should NOT be rejected."""
         score = self._score(
             "O/U 5.5 rebounds for player A",
             "Over/Under 5.5 rebounds player A game",
         )
-        assert score > 0.0, "Same O/U number should not be hard-rejected"
+        assert score > 0.0
 
     def test_no_threshold_terms_no_rejection(self):
-        """Regular market titles with no threshold terminology — normal scoring."""
         score = self._score(
             "Will Bitcoin exceed $50,000 in 2025",
             "Will Bitcoin be above $50,000 by end of 2025",
@@ -148,11 +304,6 @@ class TestHardRejectThresholdMismatch:
         assert score > 0.0
 
     def test_q1_vs_q2_rejected(self):
-        """Different quarters (Q1 vs Q2) — the digit in 'Q1'/'Q2' is not
-        boundary-delimited after normalization, so extract_numbers misses it.
-        Score stays high (~0.85). This is a known limitation of the current
-        model; Phase 1 does not claim to fix quarter discrimination.
-        The score is still below 1.0 and won't be hard-rejected."""
         score = self._score(
             "Will GDP grow in Q1 2025",
             "Will GDP grow in Q2 2025",
@@ -160,7 +311,6 @@ class TestHardRejectThresholdMismatch:
         assert 0.0 < score < 1.0, f"Q1/Q2 score out of expected range: {score}"
 
     def test_same_event_no_threshold_still_matches(self):
-        """Same event with no threshold terminology still matches well."""
         score = self._score(
             "Will the Federal Reserve cut rates in March 2026",
             "Federal Reserve interest rate cut March 2026",
@@ -175,14 +325,11 @@ class TestSemanticPreflight:
     def _score(self, raw_a, raw_b):
         norm_a = normalize_title(raw_a)
         norm_b = normalize_title(raw_b)
-        from scripts.paper_trading_session import tokenize
-
         return compute_match_score(
             norm_a, norm_b, tokenize(norm_a), tokenize(norm_b), raw_a, raw_b
         )
 
     def test_ou_side_vs_nplus_side(self):
-        """O/U on poly side, N+ on kalshi side → 0.0."""
         score = self._score(
             "Will LeBron score O/U 25.5 points",
             "LeBron James scores 26+ points tonight",
@@ -190,7 +337,6 @@ class TestSemanticPreflight:
         assert score == 0.0
 
     def test_nplus_side_vs_ou_side(self):
-        """N+ on poly side, O/U on kalshi side → 0.0 (symmetric)."""
         score = self._score(
             "LeBron James 26+ points",
             "LeBron O/U 25.5 points scored",
@@ -198,7 +344,6 @@ class TestSemanticPreflight:
         assert score == 0.0
 
     def test_or_more_vs_ou_rejected(self):
-        """'N or more' counts as threshold term; O/U on other side → 0.0."""
         score = self._score(
             "Will the team score O/U 110.5",
             "Will the team score 111 or more points",
@@ -206,7 +351,6 @@ class TestSemanticPreflight:
         assert score == 0.0
 
     def test_neither_has_threshold_not_affected(self):
-        """No threshold terminology on either side — preflight has no effect."""
         score = self._score(
             "Will Ethereum reach $3000 by June",
             "Ethereum price above $3000 in June",
@@ -214,13 +358,10 @@ class TestSemanticPreflight:
         assert score > 0.0
 
     def test_both_nplus_not_rejected(self):
-        """Both N+ sides — not a mismatch, should not be 0.0."""
         score = self._score(
             "Player X scores 20+ points",
             "Player X 20+ point game",
         )
-        # Same threshold term type on both sides — penalty only if NUMBERS differ
-        # Both have 20, so this should not be hard-rejected
         assert score > 0.0
 
 
@@ -229,18 +370,12 @@ class TestSemanticPreflight:
 
 class TestFindMatchesSyncRejectsFalsePositives:
     def test_ou_vs_nplus_not_matched(self):
-        """_find_matches_sync with O/U vs N+ pair produces no match."""
-        from scripts.paper_trading_session import _find_matches_sync
-
         poly = [("poly_1", "Will Curry have O/U 5.5 assists", 0.55)]
         kalshi = [("kal_1", "Steph Curry 6+ assists tonight", 0.60)]
         matches = _find_matches_sync(poly, kalshi, threshold=0.80)
         assert len(matches) == 0, f"False-positive match was returned: {matches}"
 
     def test_same_event_still_matches(self):
-        """_find_matches_sync still finds genuine cross-platform matches."""
-        from scripts.paper_trading_session import _find_matches_sync
-
         poly = [
             (
                 "poly_1",
@@ -259,13 +394,57 @@ class TestFindMatchesSyncRejectsFalsePositives:
         assert len(matches) >= 1, "Genuine match was incorrectly rejected"
 
     def test_inverted_logic_ou_at_least(self):
-        """O/U 5.5 vs 'at least 6' — incompatible threshold types."""
-        from scripts.paper_trading_session import _find_matches_sync
-
         poly = [("poly_1", "Player rebounds O/U 5.5 tonight", 0.50)]
         kalshi = [("kal_1", "Player has at least 6 rebounds", 0.45)]
         matches = _find_matches_sync(poly, kalshi, threshold=0.80)
         assert len(matches) == 0
+
+
+# ── find_matches (end-to-end with DB) ───────────────────────────────────────
+
+
+@pytest.mark.asyncio
+class TestFindMatches:
+    async def test_finds_known_matches(self, db_with_markets):
+        matches = await find_matches(db_with_markets, threshold=0.50)
+        assert len(matches) >= 2
+
+    async def test_respects_threshold(self, db_with_markets):
+        low = await find_matches(db_with_markets, threshold=0.40)
+        high = await find_matches(db_with_markets, threshold=0.90)
+        assert len(low) >= len(high)
+
+    async def test_unrelated_not_matched(self, db_with_markets):
+        matches = await find_matches(db_with_markets, threshold=0.50)
+        kalshi_ids = {m["kalshi_id"] for m in matches}
+        assert "kal_UNRELATED" not in kalshi_ids
+
+    async def test_match_structure(self, db_with_markets):
+        matches = await find_matches(db_with_markets, threshold=0.40)
+        if matches:
+            m = matches[0]
+            assert "poly_id" in m
+            assert "kalshi_id" in m
+            assert "poly_price" in m
+            assert "kalshi_price" in m
+            assert "similarity" in m
+            assert "poly_title" in m
+            assert "kalshi_title" in m
+
+    async def test_one_to_one_matching(self, db_with_markets):
+        matches = await find_matches(db_with_markets, threshold=0.40)
+        kalshi_ids = [m["kalshi_id"] for m in matches]
+        assert len(kalshi_ids) == len(set(kalshi_ids))
+
+    async def test_empty_db(self, db):
+        matches = await find_matches(db, threshold=0.50)
+        assert matches == []
+
+    async def test_sorted_by_similarity(self, db_with_markets):
+        matches = await find_matches(db_with_markets, threshold=0.40)
+        if len(matches) >= 2:
+            for i in range(len(matches) - 1):
+                assert matches[i]["similarity"] >= matches[i + 1]["similarity"]
 
 
 # ── 1.4 persist_matches spread cap ────────────────────────────────────────────
@@ -274,7 +453,6 @@ class TestFindMatchesSyncRejectsFalsePositives:
 @pytest.mark.asyncio
 class TestPersistMatchesSpreadCap:
     async def test_high_spread_pair_marked_pending_review(self, db):
-        """Pair with spread > 0.05 at match time → active=0, notes='pending_review'."""
         now = datetime.now(timezone.utc).isoformat()
         for mid, platform in [("p1", "polymarket"), ("k1", "kalshi")]:
             await db.execute(
@@ -291,7 +469,7 @@ class TestPersistMatchesSpreadCap:
                 "poly_price": 0.50,
                 "kalshi_id": "k1",
                 "kalshi_title": "Test B",
-                "kalshi_price": 0.60,  # spread = 0.10 > 0.05 → pending_review
+                "kalshi_price": 0.60,
                 "similarity": 0.85,
             }
         ]
@@ -302,13 +480,10 @@ class TestPersistMatchesSpreadCap:
         )
         row = await cursor.fetchone()
         assert row is not None
-        assert row[0] == 0, f"Expected active=0 for high-spread pair, got {row[0]}"
-        assert (
-            row[1] == "pending_review"
-        ), f"Expected notes='pending_review', got {row[1]}"
+        assert row[0] == 0
+        assert row[1] == "pending_review"
 
     async def test_low_spread_pair_is_active(self, db):
-        """Pair with spread ≤ 0.05 at match time → active=1."""
         now = datetime.now(timezone.utc).isoformat()
         for mid, platform in [("p2", "polymarket"), ("k2", "kalshi")]:
             await db.execute(
@@ -325,7 +500,7 @@ class TestPersistMatchesSpreadCap:
                 "poly_price": 0.50,
                 "kalshi_id": "k2",
                 "kalshi_title": "Test B",
-                "kalshi_price": 0.53,  # spread = 0.03 ≤ 0.05 → active
+                "kalshi_price": 0.53,
                 "similarity": 0.88,
             }
         ]
@@ -336,10 +511,9 @@ class TestPersistMatchesSpreadCap:
         )
         row = await cursor.fetchone()
         assert row is not None
-        assert row[0] == 1, f"Expected active=1 for low-spread pair, got {row[0]}"
+        assert row[0] == 1
 
     async def test_exactly_at_boundary_is_active(self, db):
-        """Spread exactly 0.05 (not strictly greater) → active=1."""
         now = datetime.now(timezone.utc).isoformat()
         for mid, platform in [("p3", "polymarket"), ("k3", "kalshi")]:
             await db.execute(
@@ -356,7 +530,7 @@ class TestPersistMatchesSpreadCap:
                 "poly_price": 0.50,
                 "kalshi_id": "k3",
                 "kalshi_title": "Test B",
-                "kalshi_price": 0.55,  # spread exactly 0.05
+                "kalshi_price": 0.55,
                 "similarity": 0.85,
             }
         ]
@@ -373,7 +547,6 @@ class TestPersistMatchesSpreadCap:
 @pytest.mark.asyncio
 class TestMarkExistingPairsPending:
     async def test_unreviewed_pairs_deactivated(self, db):
-        """All pairs with notes=NULL are marked active=0, notes='pending_review'."""
         now = datetime.now(timezone.utc).isoformat()
         for i in range(3):
             for mid, platform in [(f"p{i}", "polymarket"), (f"k{i}", "kalshi")]:
@@ -395,7 +568,6 @@ class TestMarkExistingPairsPending:
         assert row[0] == 3
 
     async def test_already_reviewed_pairs_unchanged(self, db):
-        """Pairs with existing notes are NOT overwritten."""
         now = datetime.now(timezone.utc).isoformat()
         for mid, platform in [("p_ok", "polymarket"), ("k_ok", "kalshi")]:
             await db.execute(
@@ -414,11 +586,10 @@ class TestMarkExistingPairsPending:
             "SELECT notes, active FROM market_pairs WHERE id='pair_ok'"
         )
         row = await cursor.fetchone()
-        assert row[0] == "human_approved", "human_approved notes were overwritten"
-        assert row[1] == 1, "human_approved pair was deactivated"
+        assert row[0] == "human_approved"
+        assert row[1] == 1
 
     async def test_load_cached_excludes_pending_review(self, db):
-        """load_cached_matches returns no rows for pending_review pairs."""
         now = datetime.now(timezone.utc).isoformat()
         for mid, platform, price in [
             ("p_pend", "polymarket", 0.50),
@@ -441,13 +612,9 @@ class TestMarkExistingPairsPending:
 
         matches = await load_cached_matches(db)
         ids = {(m["poly_id"], m["kalshi_id"]) for m in matches}
-        assert (
-            "p_pend",
-            "k_pend",
-        ) not in ids, "pending_review pair was returned by load_cached_matches"
+        assert ("p_pend", "k_pend") not in ids
 
     async def test_returns_count_of_deactivated(self, db):
-        """Return value is the number of pairs deactivated."""
         now = datetime.now(timezone.utc).isoformat()
         for i in range(5):
             for mid, platform in [(f"px{i}", "polymarket"), (f"kx{i}", "kalshi")]:

@@ -1,14 +1,17 @@
 """
-Unit tests for the ArbitrageEngine.
+Tests for core/engine/arb_engine.py (ArbitrageEngine) and
+core/engine/scheduler.py (ScheduledStrategyRunner).
 
-Tests event-driven price updates, spread detection, position dedup,
-trade execution, and batch commit behavior.
+Covers event-driven spread detection, trade execution, fired_state / re-arm
+state machine, risk choke point, circuit breaker, Kelly sizing, and
+execution_mode wiring.
 """
 
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -16,10 +19,7 @@ PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from core.config import RiskControlConfig  # noqa: E402
-from scripts.paper_trading_session import (  # noqa: E402
-    ArbitrageEngine,
-    ScheduledStrategyRunner,
-)
+from core.engine import ArbitrageEngine, ScheduledStrategyRunner  # noqa: E402
 
 
 def _make_match(poly_id, kalshi_id, poly_price, kalshi_price, similarity=0.85):
@@ -356,3 +356,498 @@ class TestArbitrageEngineExecutionMode:
     def test_no_execution_mode_backward_compat(self, matches):
         engine = ArbitrageEngine(MagicMock(), matches)
         assert engine._risk_config.max_position_pct == pytest.approx(0.05)
+
+
+# ── Helpers shared by risk-choke and re-arm tests ────────────────────────────
+# Prices: kal_A seeded at 0.58, trigger poly_A to 0.51 → spread 0.07
+_POLY_SEED = 0.50
+_KAL_SEED = 0.58
+_POLY_TRIGGER = 0.51  # delta=0.01 > 0.001 guard
+
+
+def _risk_config(**overrides):
+    """RiskControlConfig with sensible test defaults, all Phase 5 fields set."""
+    defaults = dict(
+        starting_capital=10000.0,
+        max_position_pct=0.05,
+        max_daily_loss_pct=0.02,
+        max_portfolio_exposure_pct=0.20,
+        kelly_fraction=0.25,
+        duplicate_signal_window_s=300,
+        min_edge=0.02,
+        consecutive_failure_limit=5,
+        arb_cooldown_s=60.0,
+        arb_rearm_hysteresis=0.005,
+        slippage_bps=10.0,
+        strategy_holding_period_s=300,
+        strategy_replay_cooldown_s=300,
+        strategy_replay_min_move=0.01,
+        strategy_p2_enabled=True,
+        strategy_p3_enabled=True,
+        strategy_p4_enabled=True,
+        strategy_p5_enabled=True,
+        strategy_killswitch_window_s=604800,
+        strategy_killswitch_min_trades=5,
+    )
+    defaults.update(overrides)
+    cfg = RiskControlConfig.__new__(RiskControlConfig)
+    for k, v in defaults.items():
+        object.__setattr__(cfg, k, v)
+    return cfg
+
+
+async def _seed_markets_p23(db, matches):
+    """Seed markets + prices for risk-choke / re-arm tests."""
+    now = datetime.now(timezone.utc).isoformat()
+    for m in matches:
+        for mid, platform, price in [
+            (m["poly_id"], "polymarket", m["poly_price"]),
+            (m["kalshi_id"], "kalshi", m["kalshi_price"]),
+        ]:
+            await db.execute(
+                "INSERT OR IGNORE INTO markets "
+                "(id, platform, platform_id, title, status, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, 'open', ?, ?)",
+                (mid, platform, mid, f"Title {mid}", now, now),
+            )
+            if price is not None:
+                await db.execute(
+                    "INSERT INTO market_prices "
+                    "(market_id, yes_price, no_price, spread, liquidity, polled_at) "
+                    "VALUES (?, ?, ?, 0.02, 10000, ?)",
+                    (mid, price, round(1 - price, 4), now),
+                )
+    await db.commit()
+
+
+# ── Risk choke point (Phase 2) ────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+class TestArbEngineAcceptsRiskConfig:
+    async def test_engine_accepts_risk_config(self, db):
+        cfg = _risk_config()
+        matches = [_make_match("poly_A", "kal_A", _POLY_SEED, _KAL_SEED)]
+        await _seed_markets_p23(db, matches)
+        engine = ArbitrageEngine(db, matches, min_spread=0.03, risk_config=cfg)
+        assert engine._risk_config is cfg
+
+    async def test_engine_accepts_circuit_breaker(self, db):
+        cb = MagicMock()
+        cb.should_halt = AsyncMock(return_value=False)
+        matches = [_make_match("poly_A", "kal_A", _POLY_SEED, _KAL_SEED)]
+        await _seed_markets_p23(db, matches)
+        engine = ArbitrageEngine(db, matches, min_spread=0.03, circuit_breaker=cb)
+        assert engine._circuit_breaker is cb
+
+    async def test_engine_defaults_risk_config_when_none(self, db):
+        engine = ArbitrageEngine(db, [], min_spread=0.03)
+        assert engine._risk_config is not None
+        assert hasattr(engine._risk_config, "starting_capital")
+
+
+@pytest.mark.asyncio
+class TestCircuitBreakerHalt:
+    async def test_halted_circuit_breaker_prevents_trade(self, db):
+        cb = MagicMock()
+        cb.should_halt = AsyncMock(return_value=True)
+        matches = [_make_match("poly_A", "kal_A", _POLY_SEED, _KAL_SEED)]
+        await _seed_markets_p23(db, matches)
+        engine = ArbitrageEngine(db, matches, min_spread=0.03, circuit_breaker=cb)
+        await _simulate_price_update(engine, db, "poly_A", _POLY_TRIGGER)
+        assert len(engine.trades) == 0
+
+    async def test_halted_pair_not_added_to_recently_fired(self, db):
+        cb = MagicMock()
+        cb.should_halt = AsyncMock(return_value=True)
+        matches = [_make_match("poly_A", "kal_A", _POLY_SEED, _KAL_SEED)]
+        await _seed_markets_p23(db, matches)
+        engine = ArbitrageEngine(db, matches, min_spread=0.03, circuit_breaker=cb)
+        await _simulate_price_update(engine, db, "poly_A", _POLY_TRIGGER)
+        assert "poly_A_kal_A" not in engine.recently_fired
+
+    async def test_active_circuit_breaker_allows_trade(self, db):
+        cb = MagicMock()
+        cb.should_halt = AsyncMock(return_value=False)
+        matches = [_make_match("poly_A", "kal_A", _POLY_SEED, _KAL_SEED)]
+        await _seed_markets_p23(db, matches)
+        engine = ArbitrageEngine(
+            db, matches, min_spread=0.03, circuit_breaker=cb, risk_config=_risk_config()
+        )
+        await _simulate_price_update(engine, db, "poly_A", _POLY_TRIGGER)
+        assert len(engine.trades) == 1
+
+    async def test_no_circuit_breaker_trades_normally(self, db):
+        matches = [_make_match("poly_A", "kal_A", _POLY_SEED, _KAL_SEED)]
+        await _seed_markets_p23(db, matches)
+        engine = ArbitrageEngine(db, matches, min_spread=0.03, risk_config=_risk_config())
+        await _simulate_price_update(engine, db, "poly_A", _POLY_TRIGGER)
+        assert len(engine.trades) == 1
+
+
+@pytest.mark.asyncio
+class TestRiskChecksBlockTrades:
+    async def test_below_min_edge_blocked(self, db):
+        cfg = _risk_config(min_edge=0.20)
+        matches = [_make_match("poly_A", "kal_A", _POLY_SEED, _KAL_SEED)]
+        await _seed_markets_p23(db, matches)
+        engine = ArbitrageEngine(db, matches, min_spread=0.03, risk_config=cfg)
+        await _simulate_price_update(engine, db, "poly_A", _POLY_TRIGGER)
+        assert len(engine.trades) == 0
+
+    async def test_above_min_edge_allowed(self, db):
+        cfg = _risk_config(min_edge=0.02)
+        matches = [_make_match("poly_A", "kal_A", _POLY_SEED, _KAL_SEED)]
+        await _seed_markets_p23(db, matches)
+        engine = ArbitrageEngine(db, matches, min_spread=0.03, risk_config=cfg)
+        await _simulate_price_update(engine, db, "poly_A", _POLY_TRIGGER)
+        assert len(engine.trades) == 1
+
+
+@pytest.mark.asyncio
+class TestRecentlyFiredNotUpdatedOnRejection:
+    async def test_failed_risk_check_leaves_pair_retriable(self, db):
+        cfg = _risk_config(min_edge=0.99)
+        matches = [_make_match("poly_A", "kal_A", _POLY_SEED, _KAL_SEED)]
+        await _seed_markets_p23(db, matches)
+        engine = ArbitrageEngine(db, matches, min_spread=0.03, risk_config=cfg)
+        await _simulate_price_update(engine, db, "poly_A", _POLY_TRIGGER)
+        assert "poly_A_kal_A" not in engine.recently_fired
+
+    async def test_successful_trade_adds_to_recently_fired(self, db):
+        cfg = _risk_config(min_edge=0.02)
+        matches = [_make_match("poly_A", "kal_A", _POLY_SEED, _KAL_SEED)]
+        await _seed_markets_p23(db, matches)
+        engine = ArbitrageEngine(db, matches, min_spread=0.03, risk_config=cfg)
+        await _simulate_price_update(engine, db, "poly_A", _POLY_TRIGGER)
+        assert "poly_A_kal_A" in engine.recently_fired
+
+
+@pytest.mark.asyncio
+class TestKellySizing:
+    async def test_position_size_respects_max_position_pct(self, db):
+        cfg = _risk_config(starting_capital=10000.0, max_position_pct=0.05)
+        matches = [_make_match("poly_A", "kal_A", _POLY_SEED, _KAL_SEED)]
+        await _seed_markets_p23(db, matches)
+        engine = ArbitrageEngine(db, matches, min_spread=0.03, risk_config=cfg)
+        await _simulate_price_update(engine, db, "poly_A", _POLY_TRIGGER)
+        assert len(engine.trades) == 1
+        cursor = await db.execute(
+            "SELECT entry_size FROM positions ORDER BY opened_at DESC LIMIT 1"
+        )
+        row = await cursor.fetchone()
+        assert row is not None
+        assert row[0] <= 500.0
+
+    async def test_small_bankroll_produces_small_position(self, db):
+        cfg = _risk_config(starting_capital=100.0, max_position_pct=0.05)
+        matches = [_make_match("poly_A", "kal_A", _POLY_SEED, _KAL_SEED)]
+        await _seed_markets_p23(db, matches)
+        engine = ArbitrageEngine(db, matches, min_spread=0.03, risk_config=cfg)
+        await _simulate_price_update(engine, db, "poly_A", _POLY_TRIGGER)
+        assert len(engine.trades) >= 1
+        cursor = await db.execute(
+            "SELECT entry_size FROM positions ORDER BY opened_at DESC LIMIT 1"
+        )
+        row = await cursor.fetchone()
+        assert row is not None
+        assert row[0] <= 5.0
+
+    async def test_large_bankroll_exceeds_old_hardcoded_cap(self, db):
+        cfg = _risk_config(
+            starting_capital=1_000_000.0,
+            max_position_pct=0.05,
+            kelly_fraction=0.25,
+            min_edge=0.02,
+        )
+        matches = [_make_match("poly_A", "kal_A", _POLY_SEED, _KAL_SEED)]
+        await _seed_markets_p23(db, matches)
+        engine = ArbitrageEngine(db, matches, min_spread=0.03, risk_config=cfg)
+        await _simulate_price_update(engine, db, "poly_A", _POLY_TRIGGER)
+        assert len(engine.trades) == 1
+        cursor = await db.execute(
+            "SELECT entry_size FROM positions ORDER BY opened_at DESC LIMIT 1"
+        )
+        row = await cursor.fetchone()
+        assert row is not None
+        assert row[0] > 10.0
+
+
+class TestScheduledRunnerAcceptsRiskConfig:
+    def test_runner_accepts_risk_config(self, db):
+        cfg = _risk_config()
+        runner = ScheduledStrategyRunner(db, interval=120, risk_config=cfg)
+        assert runner._risk_config is cfg
+
+    def test_runner_accepts_circuit_breaker(self, db):
+        cb = MagicMock()
+        runner = ScheduledStrategyRunner(db, interval=120, circuit_breaker=cb)
+        assert runner._circuit_breaker is cb
+
+    def test_runner_defaults_when_no_risk_config(self, db):
+        runner = ScheduledStrategyRunner(db, interval=120)
+        assert runner._risk_config is not None
+
+
+@pytest.mark.asyncio
+class TestScheduledCircuitBreaker:
+    async def test_halted_runner_skips_cycle(self, db):
+        cb = MagicMock()
+        cb.should_halt = AsyncMock(return_value=True)
+        runner = ScheduledStrategyRunner(
+            db, interval=120, risk_config=_risk_config(), circuit_breaker=cb
+        )
+        trades = await runner.run_one_cycle()
+        assert len(trades) == 0
+
+    async def test_active_runner_runs_normally(self, db):
+        cb = MagicMock()
+        cb.should_halt = AsyncMock(return_value=False)
+        runner = ScheduledStrategyRunner(
+            db, interval=120, risk_config=_risk_config(), circuit_breaker=cb
+        )
+        trades = await runner.run_one_cycle()
+        assert isinstance(trades, list)
+
+
+# ── Re-arm state machine (Phase 3) ───────────────────────────────────────────
+
+
+class TestPairFireState:
+    def test_pairfirestate_exists(self):
+        from core.engine import PairFireState as PFS
+        assert PFS is not None
+
+    def test_pairfirestate_fields(self):
+        from core.engine import PairFireState as PFS
+        state = PFS(last_fired_at=time.time(), armed=True)
+        assert hasattr(state, "last_fired_at")
+        assert hasattr(state, "armed")
+        assert hasattr(state, "last_spread_seen_below")
+
+    def test_pairfirestate_defaults(self):
+        from core.engine import PairFireState as PFS
+        state = PFS(last_fired_at=0.0, armed=True)
+        assert state.last_spread_seen_below is None
+
+    def test_pairfirestate_armed_false(self):
+        from core.engine import PairFireState as PFS
+        state = PFS(last_fired_at=time.time(), armed=False)
+        assert state.armed is False
+
+
+class TestRiskConfigNewFields:
+    def test_arb_cooldown_s_has_default(self):
+        cfg = RiskControlConfig()
+        assert hasattr(cfg, "arb_cooldown_s")
+        assert cfg.arb_cooldown_s > 0
+
+    def test_arb_rearm_hysteresis_has_default(self):
+        cfg = RiskControlConfig()
+        assert hasattr(cfg, "arb_rearm_hysteresis")
+        assert 0 < cfg.arb_rearm_hysteresis < 0.05
+
+    def test_arb_cooldown_s_default_is_60(self):
+        import os
+        old = os.environ.pop("ARB_COOLDOWN_S", None)
+        try:
+            cfg = RiskControlConfig()
+            assert cfg.arb_cooldown_s == 60.0
+        finally:
+            if old is not None:
+                os.environ["ARB_COOLDOWN_S"] = old
+
+    def test_arb_rearm_hysteresis_default_is_0005(self):
+        import os
+        old = os.environ.pop("ARB_REARM_HYSTERESIS", None)
+        try:
+            cfg = RiskControlConfig()
+            assert cfg.arb_rearm_hysteresis == 0.005
+        finally:
+            if old is not None:
+                os.environ["ARB_REARM_HYSTERESIS"] = old
+
+
+@pytest.mark.asyncio
+class TestFiredStateAttribute:
+    async def test_fired_state_is_dict(self, db):
+        engine = ArbitrageEngine(db, [], min_spread=0.03)
+        assert isinstance(engine.fired_state, dict)
+
+    async def test_fired_state_empty_at_init(self, db):
+        engine = ArbitrageEngine(db, [], min_spread=0.03)
+        assert len(engine.fired_state) == 0
+
+    async def test_fired_state_populated_after_trade(self, db):
+        from core.engine import PairFireState as PFS
+        matches = [_make_match("poly_A", "kal_A", _POLY_SEED, _KAL_SEED)]
+        await _seed_markets_p23(db, matches)
+        engine = ArbitrageEngine(db, matches, min_spread=0.03, risk_config=_risk_config())
+        await _simulate_price_update(engine, db, "poly_A", _POLY_TRIGGER)
+        assert "poly_A_kal_A" in engine.fired_state
+        state = engine.fired_state["poly_A_kal_A"]
+        assert isinstance(state, PFS)
+        assert state.last_fired_at > 0
+
+    async def test_fired_state_armed_false_immediately_after_trade(self, db):
+        matches = [_make_match("poly_A", "kal_A", _POLY_SEED, _KAL_SEED)]
+        await _seed_markets_p23(db, matches)
+        engine = ArbitrageEngine(db, matches, min_spread=0.03, risk_config=_risk_config())
+        await _simulate_price_update(engine, db, "poly_A", _POLY_TRIGGER)
+        assert engine.fired_state["poly_A_kal_A"].armed is False
+
+
+@pytest.mark.asyncio
+class TestRecentlyFiredBackwardCompat:
+    async def test_recently_fired_is_set_like(self, db):
+        matches = [_make_match("poly_A", "kal_A", _POLY_SEED, _KAL_SEED)]
+        await _seed_markets_p23(db, matches)
+        engine = ArbitrageEngine(db, matches, min_spread=0.03, risk_config=_risk_config())
+        await _simulate_price_update(engine, db, "poly_A", _POLY_TRIGGER)
+        assert "poly_A_kal_A" in engine.recently_fired
+
+    async def test_recently_fired_empty_before_trade(self, db):
+        engine = ArbitrageEngine(db, [], min_spread=0.03)
+        assert len(engine.recently_fired) == 0
+
+    async def test_recently_fired_len_after_trade(self, db):
+        matches = [_make_match("poly_A", "kal_A", _POLY_SEED, _KAL_SEED)]
+        await _seed_markets_p23(db, matches)
+        engine = ArbitrageEngine(db, matches, min_spread=0.03, risk_config=_risk_config())
+        await _simulate_price_update(engine, db, "poly_A", _POLY_TRIGGER)
+        assert len(engine.recently_fired) >= 1
+
+
+@pytest.mark.asyncio
+class TestFireEligibility:
+    async def test_pair_not_eligible_during_cooldown(self, db):
+        cfg = _risk_config(arb_cooldown_s=999.0, arb_rearm_hysteresis=0.005)
+        matches = [_make_match("poly_A", "kal_A", _POLY_SEED, _KAL_SEED)]
+        await _seed_markets_p23(db, matches)
+        engine = ArbitrageEngine(db, matches, min_spread=0.03, risk_config=cfg)
+        await _simulate_price_update(engine, db, "poly_A", _POLY_TRIGGER)
+        assert len(engine.trades) == 1
+        await _simulate_price_update(engine, db, "poly_A", 0.52)
+        assert len(engine.trades) == 1
+
+    async def test_pair_eligible_after_cooldown_and_rearm(self, db):
+        cfg = _risk_config(arb_cooldown_s=0.0, arb_rearm_hysteresis=0.0)
+        matches = [_make_match("poly_A", "kal_A", _POLY_SEED, _KAL_SEED)]
+        await _seed_markets_p23(db, matches)
+        engine = ArbitrageEngine(db, matches, min_spread=0.03, risk_config=cfg)
+        await _simulate_price_update(engine, db, "poly_A", _POLY_TRIGGER)
+        assert len(engine.trades) == 1
+        await _simulate_price_update(engine, db, "poly_A", _KAL_SEED - 0.01)
+        await _simulate_price_update(engine, db, "poly_A", _POLY_TRIGGER)
+        assert len(engine.trades) == 2
+
+    async def test_initial_pair_has_no_cooldown(self, db):
+        cfg = _risk_config(arb_cooldown_s=60.0)
+        matches = [_make_match("poly_A", "kal_A", _POLY_SEED, _KAL_SEED)]
+        await _seed_markets_p23(db, matches)
+        engine = ArbitrageEngine(db, matches, min_spread=0.03, risk_config=cfg)
+        await _simulate_price_update(engine, db, "poly_A", _POLY_TRIGGER)
+        assert len(engine.trades) == 1
+
+
+@pytest.mark.asyncio
+class TestRearmTrigger:
+    async def test_spread_reversion_arms_pair(self, db):
+        cfg = _risk_config(arb_cooldown_s=0.0, arb_rearm_hysteresis=0.005)
+        matches = [_make_match("poly_A", "kal_A", _POLY_SEED, _KAL_SEED)]
+        await _seed_markets_p23(db, matches)
+        engine = ArbitrageEngine(db, matches, min_spread=0.05, risk_config=cfg)
+        await _simulate_price_update(engine, db, "poly_A", _POLY_TRIGGER)
+        assert engine.fired_state["poly_A_kal_A"].armed is False
+        await _simulate_price_update(engine, db, "poly_A", 0.55)
+        assert engine.fired_state["poly_A_kal_A"].armed is True
+
+    async def test_spread_above_threshold_does_not_arm(self, db):
+        cfg = _risk_config(arb_cooldown_s=999.0, arb_rearm_hysteresis=0.005)
+        matches = [_make_match("poly_A", "kal_A", _POLY_SEED, _KAL_SEED)]
+        await _seed_markets_p23(db, matches)
+        engine = ArbitrageEngine(db, matches, min_spread=0.05, risk_config=cfg)
+        await _simulate_price_update(engine, db, "poly_A", _POLY_TRIGGER)
+        assert engine.fired_state["poly_A_kal_A"].armed is False
+        await _simulate_price_update(engine, db, "poly_A", 0.52)
+        assert engine.fired_state["poly_A_kal_A"].armed is False
+
+    async def test_never_fired_pair_treated_as_armed(self, db):
+        cfg = _risk_config(arb_cooldown_s=999.0)
+        matches = [_make_match("poly_A", "kal_A", _POLY_SEED, _KAL_SEED)]
+        await _seed_markets_p23(db, matches)
+        engine = ArbitrageEngine(db, matches, min_spread=0.03, risk_config=cfg)
+        await _simulate_price_update(engine, db, "poly_A", _POLY_TRIGGER)
+        assert len(engine.trades) == 1
+
+
+@pytest.mark.asyncio
+class TestExceptionSafety:
+    async def test_exception_rolls_back_fired_state(self, db):
+        matches = [_make_match("poly_A", "kal_A", _POLY_SEED, _KAL_SEED)]
+        await _seed_markets_p23(db, matches)
+        engine = ArbitrageEngine(db, matches, min_spread=0.03, risk_config=_risk_config())
+        original = engine._execute_arb_trade
+
+        async def _failing_execute(*args, **kwargs):
+            raise RuntimeError("Simulated execution failure")
+
+        engine._execute_arb_trade = _failing_execute
+        await _simulate_price_update(engine, db, "poly_A", _POLY_TRIGGER)
+        assert "poly_A_kal_A" not in engine.fired_state
+        engine._execute_arb_trade = original
+        await _simulate_price_update(engine, db, "poly_A", 0.52)
+        assert len(engine.trades) >= 1
+
+    async def test_failed_risk_check_does_not_enter_cooldown(self, db):
+        cfg = _risk_config(min_edge=0.99, arb_cooldown_s=999.0)
+        matches = [_make_match("poly_A", "kal_A", _POLY_SEED, _KAL_SEED)]
+        await _seed_markets_p23(db, matches)
+        engine = ArbitrageEngine(db, matches, min_spread=0.03, risk_config=cfg)
+        await _simulate_price_update(engine, db, "poly_A", _POLY_TRIGGER)
+        assert len(engine.trades) == 0
+        assert "poly_A_kal_A" not in engine.fired_state
+
+
+@pytest.mark.asyncio
+class TestStatsWithFireState:
+    async def test_stats_recently_fired_is_muted_count(self, db):
+        cfg = _risk_config(arb_cooldown_s=999.0)
+        matches = [_make_match("poly_A", "kal_A", _POLY_SEED, _KAL_SEED)]
+        await _seed_markets_p23(db, matches)
+        engine = ArbitrageEngine(db, matches, min_spread=0.03, risk_config=cfg)
+        assert engine.stats()["recently_fired"] == 0
+        await _simulate_price_update(engine, db, "poly_A", _POLY_TRIGGER)
+        assert len(engine.trades) == 1
+        assert engine.stats()["recently_fired"] == 1
+
+
+@pytest.mark.asyncio
+class TestPeriodicScan:
+    async def test_periodic_scan_method_exists(self, db):
+        engine = ArbitrageEngine(db, [], min_spread=0.03)
+        assert hasattr(engine, "periodic_scan")
+        assert callable(engine.periodic_scan)
+
+    async def test_periodic_scan_fires_eligible_pairs(self, db):
+        cfg = _risk_config()
+        matches = [_make_match("poly_A", "kal_A", _POLY_SEED, _KAL_SEED)]
+        await _seed_markets_p23(db, matches)
+        engine = ArbitrageEngine(db, matches, min_spread=0.03, risk_config=cfg)
+        engine.prices["poly_A"] = _POLY_TRIGGER
+        engine.prices["kal_A"] = _KAL_SEED
+        assert len(engine.trades) == 0
+        await engine.periodic_scan()
+        assert len(engine.trades) == 1
+
+    async def test_periodic_scan_respects_cooldown(self, db):
+        cfg = _risk_config(arb_cooldown_s=999.0)
+        matches = [_make_match("poly_A", "kal_A", _POLY_SEED, _KAL_SEED)]
+        await _seed_markets_p23(db, matches)
+        engine = ArbitrageEngine(db, matches, min_spread=0.03, risk_config=cfg)
+        engine.prices["poly_A"] = _POLY_TRIGGER
+        engine.prices["kal_A"] = _KAL_SEED
+        await engine.periodic_scan()
+        assert len(engine.trades) == 1
+        await engine.periodic_scan()
+        assert len(engine.trades) == 1

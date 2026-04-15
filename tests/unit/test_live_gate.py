@@ -200,14 +200,14 @@ class TestShadowMode:
 
     def test_shadow_client_is_paper_type(self):
         from execution.clients.paper import PaperExecutionClient
-        from scripts.paper_trading_session import _make_single_execution_client
+        from execution.factory import _make_single_execution_client
 
         client = _make_single_execution_client(None, "shadow", "polymarket")
         assert isinstance(client, PaperExecutionClient)
 
     def test_shadow_client_kalshi_is_paper_type(self):
         from execution.clients.paper import PaperExecutionClient
-        from scripts.paper_trading_session import _make_single_execution_client
+        from execution.factory import _make_single_execution_client
 
         client = _make_single_execution_client(None, "shadow", "kalshi")
         assert isinstance(client, PaperExecutionClient)

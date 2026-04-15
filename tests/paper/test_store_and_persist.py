@@ -13,11 +13,11 @@ import pytest
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from scripts.paper_trading_session import (  # noqa: E402
+from core.ingestor.store import store_markets  # noqa: E402
+from core.matching.engine import (  # noqa: E402
     find_matches,
     load_cached_matches,
     persist_matches,
-    store_markets,
 )
 
 
