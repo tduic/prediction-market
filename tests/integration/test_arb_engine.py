@@ -480,7 +480,9 @@ class TestCircuitBreakerHalt:
     async def test_no_circuit_breaker_trades_normally(self, db):
         matches = [_make_match("poly_A", "kal_A", _POLY_SEED, _KAL_SEED)]
         await _seed_markets_p23(db, matches)
-        engine = ArbitrageEngine(db, matches, min_spread=0.03, risk_config=_risk_config())
+        engine = ArbitrageEngine(
+            db, matches, min_spread=0.03, risk_config=_risk_config()
+        )
         await _simulate_price_update(engine, db, "poly_A", _POLY_TRIGGER)
         assert len(engine.trades) == 1
 
@@ -616,10 +618,12 @@ class TestScheduledCircuitBreaker:
 class TestPairFireState:
     def test_pairfirestate_exists(self):
         from core.engine import PairFireState as PFS
+
         assert PFS is not None
 
     def test_pairfirestate_fields(self):
         from core.engine import PairFireState as PFS
+
         state = PFS(last_fired_at=time.time(), armed=True)
         assert hasattr(state, "last_fired_at")
         assert hasattr(state, "armed")
@@ -627,11 +631,13 @@ class TestPairFireState:
 
     def test_pairfirestate_defaults(self):
         from core.engine import PairFireState as PFS
+
         state = PFS(last_fired_at=0.0, armed=True)
         assert state.last_spread_seen_below is None
 
     def test_pairfirestate_armed_false(self):
         from core.engine import PairFireState as PFS
+
         state = PFS(last_fired_at=time.time(), armed=False)
         assert state.armed is False
 
@@ -649,6 +655,7 @@ class TestRiskConfigNewFields:
 
     def test_arb_cooldown_s_default_is_60(self):
         import os
+
         old = os.environ.pop("ARB_COOLDOWN_S", None)
         try:
             cfg = RiskControlConfig()
@@ -659,6 +666,7 @@ class TestRiskConfigNewFields:
 
     def test_arb_rearm_hysteresis_default_is_0005(self):
         import os
+
         old = os.environ.pop("ARB_REARM_HYSTERESIS", None)
         try:
             cfg = RiskControlConfig()
@@ -680,9 +688,12 @@ class TestFiredStateAttribute:
 
     async def test_fired_state_populated_after_trade(self, db):
         from core.engine import PairFireState as PFS
+
         matches = [_make_match("poly_A", "kal_A", _POLY_SEED, _KAL_SEED)]
         await _seed_markets_p23(db, matches)
-        engine = ArbitrageEngine(db, matches, min_spread=0.03, risk_config=_risk_config())
+        engine = ArbitrageEngine(
+            db, matches, min_spread=0.03, risk_config=_risk_config()
+        )
         await _simulate_price_update(engine, db, "poly_A", _POLY_TRIGGER)
         assert "poly_A_kal_A" in engine.fired_state
         state = engine.fired_state["poly_A_kal_A"]
@@ -692,7 +703,9 @@ class TestFiredStateAttribute:
     async def test_fired_state_armed_false_immediately_after_trade(self, db):
         matches = [_make_match("poly_A", "kal_A", _POLY_SEED, _KAL_SEED)]
         await _seed_markets_p23(db, matches)
-        engine = ArbitrageEngine(db, matches, min_spread=0.03, risk_config=_risk_config())
+        engine = ArbitrageEngine(
+            db, matches, min_spread=0.03, risk_config=_risk_config()
+        )
         await _simulate_price_update(engine, db, "poly_A", _POLY_TRIGGER)
         assert engine.fired_state["poly_A_kal_A"].armed is False
 
@@ -702,7 +715,9 @@ class TestRecentlyFiredBackwardCompat:
     async def test_recently_fired_is_set_like(self, db):
         matches = [_make_match("poly_A", "kal_A", _POLY_SEED, _KAL_SEED)]
         await _seed_markets_p23(db, matches)
-        engine = ArbitrageEngine(db, matches, min_spread=0.03, risk_config=_risk_config())
+        engine = ArbitrageEngine(
+            db, matches, min_spread=0.03, risk_config=_risk_config()
+        )
         await _simulate_price_update(engine, db, "poly_A", _POLY_TRIGGER)
         assert "poly_A_kal_A" in engine.recently_fired
 
@@ -713,7 +728,9 @@ class TestRecentlyFiredBackwardCompat:
     async def test_recently_fired_len_after_trade(self, db):
         matches = [_make_match("poly_A", "kal_A", _POLY_SEED, _KAL_SEED)]
         await _seed_markets_p23(db, matches)
-        engine = ArbitrageEngine(db, matches, min_spread=0.03, risk_config=_risk_config())
+        engine = ArbitrageEngine(
+            db, matches, min_spread=0.03, risk_config=_risk_config()
+        )
         await _simulate_price_update(engine, db, "poly_A", _POLY_TRIGGER)
         assert len(engine.recently_fired) >= 1
 
@@ -786,7 +803,9 @@ class TestExceptionSafety:
     async def test_exception_rolls_back_fired_state(self, db):
         matches = [_make_match("poly_A", "kal_A", _POLY_SEED, _KAL_SEED)]
         await _seed_markets_p23(db, matches)
-        engine = ArbitrageEngine(db, matches, min_spread=0.03, risk_config=_risk_config())
+        engine = ArbitrageEngine(
+            db, matches, min_spread=0.03, risk_config=_risk_config()
+        )
         original = engine._execute_arb_trade
 
         async def _failing_execute(*args, **kwargs):
