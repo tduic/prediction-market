@@ -47,16 +47,20 @@ jobs:
             --zone="$ZONE" --project="$PROJECT_ID" \
             --command="sudo systemctl start predictor-refresh.service --no-block 2>/dev/null || sudo systemctl restart predictor-refresh.service --no-block 2>/dev/null || true; echo 'Refresh dispatched (running in background on VM)'"
 
-      - name: Take phase0 baseline snapshot
+      - name: Stop predictor, take baseline, restart
         run: |
           gcloud compute ssh "$VM_NAME" \
             --zone="$ZONE" --project="$PROJECT_ID" \
             --command="$(cat <<'REMOTE_SCRIPT'
+          set -euo pipefail
+          echo "=== Stopping predictor ==="
+          sudo systemctl stop predictor
+
+          echo "=== Taking phase0 baseline ==="
           cd /data/predictor/prediction-market
           sudo -u predictor /data/predictor/venv/bin/python - <<'PYEOF'
-          import asyncio, sys, os
+          import asyncio, sys
           sys.path.insert(0, '/data/predictor/prediction-market')
-          os.environ.setdefault('DOTENV_PATH', '/data/predictor/.env')
           from dotenv import load_dotenv
           load_dotenv('/data/predictor/.env')
           import aiosqlite
@@ -65,21 +69,19 @@ jobs:
 
           async def run():
               cfg = get_config()
-              async with aiosqlite.connect(cfg.database.db_path, timeout=30) as db:
-                  await db.execute('PRAGMA journal_mode=WAL')
+              async with aiosqlite.connect(cfg.database.db_path) as db:
                   await take_phase0_baseline_snapshot(db)
                   print('Phase0 baseline snapshot taken.')
 
           asyncio.run(run())
           PYEOF
+
+          echo "=== Restarting predictor ==="
+          sudo systemctl start predictor
+          sleep 10
+          sudo systemctl is-active predictor
           REMOTE_SCRIPT
           )"
-
-      - name: Restart predictor service
-        run: |
-          gcloud compute ssh "$VM_NAME" \
-            --zone="$ZONE" --project="$PROJECT_ID" \
-            --command="sudo systemctl restart predictor && sleep 10 && sudo systemctl is-active predictor"
 
       - name: Tail recent logs
         run: |
