@@ -2,13 +2,17 @@
 
 import logging
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 import httpx
 from bs4 import BeautifulSoup
 
 logger = logging.getLogger(__name__)
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 @dataclass
@@ -19,11 +23,7 @@ class FedWatchData:
     implied_prob_hike: float
     implied_prob_hold: float
     implied_prob_cut: float
-    timestamp: datetime = None
-
-    def __post_init__(self):
-        if self.timestamp is None:
-            self.timestamp = datetime.now(timezone.utc)
+    timestamp: datetime = field(default_factory=_utcnow)
 
 
 @dataclass
@@ -35,11 +35,7 @@ class NowcastData:
     cpi_nowcast_std: float
     gdp_nowcast: float
     gdp_nowcast_std: float
-    timestamp: datetime = None
-
-    def __post_init__(self):
-        if self.timestamp is None:
-            self.timestamp = datetime.now(timezone.utc)
+    timestamp: datetime = field(default_factory=_utcnow)
 
 
 @dataclass
@@ -308,7 +304,7 @@ class BLSCalendarFetcher:
 
     def _extract_releases(self, soup: BeautifulSoup) -> list[BLSRelease]:
         """Extract release calendar from parsed HTML."""
-        releases = []
+        releases: list[BLSRelease] = []
         try:
             table = soup.find("table")
             if not table:

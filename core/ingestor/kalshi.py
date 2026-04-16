@@ -11,6 +11,7 @@ from pathlib import Path
 import httpx
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding
+from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey
 
 from core.ingestor.polymarket import MarketData, OrderBook, TokenBucket
 
@@ -21,14 +22,22 @@ _RATE_LIMIT_WAIT_S = 5.0
 _RATE_LIMIT_POLL_S = 0.1
 
 
-def _load_rsa_private_key(key_path: str):
-    """Load RSA private key from PEM file. Returns None if path missing or unreadable."""
+def _load_rsa_private_key(key_path: str) -> RSAPrivateKey | None:
+    """Load RSA private key from PEM file. Returns None if path missing, unreadable, or not RSA."""
     try:
         expanded = Path(key_path).expanduser()
         if not expanded.exists():
             logger.warning("Kalshi RSA key not found at %s", expanded)
             return None
-        return serialization.load_pem_private_key(expanded.read_bytes(), password=None)
+        key = serialization.load_pem_private_key(expanded.read_bytes(), password=None)
+        if not isinstance(key, RSAPrivateKey):
+            logger.warning(
+                "Kalshi key at %s is not an RSA private key (got %s)",
+                expanded,
+                type(key).__name__,
+            )
+            return None
+        return key
     except Exception as e:
         logger.warning("Failed to load Kalshi RSA key from %s: %s", key_path, e)
         return None
@@ -44,9 +53,11 @@ class KalshiClient:
         rsa_key_path: str | None = None,
         api_base: str | None = None,
     ):
-        self.api_key = api_key or os.getenv("KALSHI_API_KEY", "")
-        self.api_base = api_base or os.getenv(
-            "KALSHI_API_BASE", "https://api.elections.kalshi.com/trade-api/v2"
+        self.api_key: str = api_key or os.getenv("KALSHI_API_KEY") or ""
+        self.api_base: str = (
+            api_base
+            or os.getenv("KALSHI_API_BASE")
+            or "https://api.elections.kalshi.com/trade-api/v2"
         )
         self.rate_limiter = TokenBucket(capacity=10.0, refill_rate=10.0 / 1.0)
         self._client: httpx.AsyncClient | None = None
@@ -100,7 +111,7 @@ class KalshiClient:
         authenticated endpoints (orders, portfolio) must gate on
         ``is_authenticated`` first.
         """
-        if not self.is_authenticated:
+        if not self.is_authenticated or self._private_key is None:
             return {}
         timestamp_ms = str(int(time.time() * 1000))
         message = (timestamp_ms + method.upper() + path).encode("utf-8")

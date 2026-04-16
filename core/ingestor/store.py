@@ -80,12 +80,20 @@ async def fetch_kalshi_markets(
 
     from cryptography.hazmat.primitives import hashes, serialization
     from cryptography.hazmat.primitives.asymmetric import padding
+    from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey
 
     try:
         key_path = Path(rsa_key_path).expanduser()
-        private_key = serialization.load_pem_private_key(
+        loaded_key = serialization.load_pem_private_key(
             key_path.read_bytes(), password=None
         )
+        if not isinstance(loaded_key, RSAPrivateKey):
+            logger.error(
+                "Kalshi key is not an RSA private key (got %s)",
+                type(loaded_key).__name__,
+            )
+            return []
+        private_key: RSAPrivateKey = loaded_key
     except Exception as e:
         logger.error("Failed to load Kalshi RSA key: %s", e)
         return []
@@ -120,7 +128,11 @@ async def fetch_kalshi_markets(
                 page_num += 1
                 path = "/trade-api/v2/markets"
                 headers = sign("GET", path)
-                params = {"limit": 1000, "status": "open", "mve_filter": "exclude"}
+                params: dict[str, str | int] = {
+                    "limit": 1000,
+                    "status": "open",
+                    "mve_filter": "exclude",
+                }
                 if cursor:
                     params["cursor"] = cursor
 

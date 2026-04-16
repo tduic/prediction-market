@@ -19,11 +19,6 @@ no_implicit_optional = true
 module = [
     "core.analytics",
     "core.constraints.engine",
-    "core.ingestor.external",
-    "core.ingestor.kalshi",
-    "core.ingestor.polymarket",
-    "core.ingestor.store",
-    "core.ingestor.streamer",
     "core.invariants",
     "core.logging_config",
     "core.models",

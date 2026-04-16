@@ -108,13 +108,20 @@ async def stream_prices_kalshi(
     import websockets
     from cryptography.hazmat.primitives import hashes, serialization
     from cryptography.hazmat.primitives.asymmetric import padding
+    from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey
 
     WS_URL = "wss://api.elections.kalshi.com/trade-api/ws/v2"
 
     key_path = Path(rsa_key_path).expanduser()
-    private_key = serialization.load_pem_private_key(
+    loaded_key = serialization.load_pem_private_key(
         key_path.read_bytes(), password=None
     )
+    if not isinstance(loaded_key, RSAPrivateKey):
+        raise TypeError(
+            f"Kalshi key at {key_path} is not an RSA private key "
+            f"(got {type(loaded_key).__name__})"
+        )
+    private_key: RSAPrivateKey = loaded_key
 
     def sign(method: str, path: str) -> dict:
         ts = str(int(time.time() * 1000))
