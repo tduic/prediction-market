@@ -71,7 +71,8 @@ class DeadLetterQueue:
 
             # Serialize to JSON and push to list
             entry_json = json.dumps(dlq_entry)
-            await self.redis_client.rpush(self.queue_key, entry_json)
+            # redis-py async client return types are Awaitable[T] | T due to sync/async mixin sharing
+            await self.redis_client.rpush(self.queue_key, entry_json)  # type: ignore[misc]
 
             logger.info(
                 f"Pushed signal {dlq_entry['signal_id']} to DLQ "
@@ -94,7 +95,7 @@ class DeadLetterQueue:
             DLQ entry dict or None if empty
         """
         try:
-            entry_json = await self.redis_client.lpop(self.queue_key)
+            entry_json = await self.redis_client.lpop(self.queue_key)  # type: ignore[misc]
 
             if entry_json is None:
                 return None
@@ -127,7 +128,7 @@ class DeadLetterQueue:
         """
         try:
             # LRANGE from 0 to (limit-1) for FIFO ordering
-            entries_json = await self.redis_client.lrange(
+            entries_json = await self.redis_client.lrange(  # type: ignore[misc]
                 self.queue_key,
                 0,
                 limit - 1,
@@ -180,7 +181,7 @@ class DeadLetterQueue:
 
                 # Serialize signal (as JSON string) for queue
                 signal_json = json.dumps(signal_data)
-                await self.redis_client.lpush(max_queue_key, signal_json)
+                await self.redis_client.lpush(max_queue_key, signal_json)  # type: ignore[misc]
 
                 moved_count += 1
                 logger.info(
@@ -208,7 +209,7 @@ class DeadLetterQueue:
         """
         try:
             # Get the count before deleting (redis DELETE returns key count, not list length)
-            deleted_count = await self.redis_client.llen(self.queue_key)
+            deleted_count = await self.redis_client.llen(self.queue_key)  # type: ignore[misc]
             await self.redis_client.delete(self.queue_key)
             logger.warning(f"Purged {deleted_count} entries from DLQ")
             return deleted_count
@@ -225,7 +226,7 @@ class DeadLetterQueue:
             Number of failed signals in queue
         """
         try:
-            size = await self.redis_client.llen(self.queue_key)
+            size = await self.redis_client.llen(self.queue_key)  # type: ignore[misc]
             return size
 
         except Exception as e:

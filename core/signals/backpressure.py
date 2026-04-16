@@ -50,7 +50,8 @@ class BackpressureMonitor:
             Number of signals waiting in the queue
         """
         try:
-            depth = await self.redis_client.llen(self.signal_queue_key)
+            # redis-py async client return types are Awaitable[T] | T due to sync/async mixin sharing
+            depth = await self.redis_client.llen(self.signal_queue_key)  # type: ignore[misc]
             return max(0, depth)  # LLEN returns -1 if key doesn't exist
         except Exception as e:
             logger.error(f"Error checking queue depth: {e}")
@@ -165,25 +166,25 @@ class BackpressureMonitor:
 
             # Store latency for this signal (for percentile calculations)
             # Use a limited-size FIFO list to avoid unbounded growth
-            await self.redis_client.lpush(
+            await self.redis_client.lpush(  # type: ignore[misc]
                 f"{self.processing_stats_key}:latency_history",
                 processing_time_ms,
             )
 
             # Trim to keep only last 1000 values
-            await self.redis_client.ltrim(
+            await self.redis_client.ltrim(  # type: ignore[misc]
                 f"{self.processing_stats_key}:latency_history",
                 0,
                 999,
             )
 
             # Update counter and sum for avg calculation
-            await self.redis_client.hincrby(
+            await self.redis_client.hincrby(  # type: ignore[misc]
                 stats_hash_key,
                 "processed_count",
                 1,
             )
-            await self.redis_client.hincrbyfloat(
+            await self.redis_client.hincrbyfloat(  # type: ignore[misc]
                 stats_hash_key,
                 "total_latency_ms",
                 processing_time_ms,
@@ -215,7 +216,7 @@ class BackpressureMonitor:
             # Get processing stats
             try:
                 stats_hash_key = f"{self.processing_stats_key}:latencies"
-                stats_data = await self.redis_client.hgetall(stats_hash_key)
+                stats_data = await self.redis_client.hgetall(stats_hash_key)  # type: ignore[misc]
 
                 if stats_data:
                     processed_count = int(stats_data.get(b"processed_count", 0))
@@ -228,7 +229,7 @@ class BackpressureMonitor:
 
                 # Get latency history for percentiles
                 latency_history_key = f"{self.processing_stats_key}:latency_history"
-                latencies = await self.redis_client.lrange(latency_history_key, 0, -1)
+                latencies = await self.redis_client.lrange(latency_history_key, 0, -1)  # type: ignore[misc]
 
                 if latencies:
                     latencies_float = [float(val) for val in latencies]

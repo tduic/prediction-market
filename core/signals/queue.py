@@ -100,7 +100,8 @@ class HardenedSignalQueue:
 
             # Serialize and push to queue
             signal_json = json.dumps(signal)
-            await self.redis_client.lpush(self.queue_key, signal_json)
+            # redis-py async client return types are Awaitable[T] | T due to sync/async mixin sharing
+            await self.redis_client.lpush(self.queue_key, signal_json)  # type: ignore[misc]
 
             # Mark as processed in dedup cache
             await self.deduplicator.mark_processed(
@@ -133,8 +134,8 @@ class HardenedSignalQueue:
         while True:
             try:
                 # Blocking pop with timeout
-                result = await self.redis_client.brpop(
-                    self.queue_key,
+                result = await self.redis_client.brpop(  # type: ignore[misc]
+                    [self.queue_key],
                     timeout=1,
                 )
 
@@ -211,7 +212,7 @@ class HardenedSignalQueue:
                 signal["_retry_count"] = retry_count + 1
                 signal_json = json.dumps(signal)
 
-                await self.redis_client.lpush(self.queue_key, signal_json)
+                await self.redis_client.lpush(self.queue_key, signal_json)  # type: ignore[misc]
                 logger.warning(
                     f"Signal {signal_id} failed, requeueing for retry "
                     f"({retry_count + 1}/{self.max_retries}): {error[:100]}"
