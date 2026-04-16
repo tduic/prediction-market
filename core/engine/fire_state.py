@@ -21,12 +21,19 @@ class _RiskLeg:
 
 @dataclass
 class _RiskSignal:
-    """Minimal signal proxy for run_all_checks duck-typing."""
+    """Minimal signal proxy for run_all_checks duck-typing.
+
+    ``violation_id`` is threaded through so the risk_check_log audit row
+    can link back to the triggering violation. ``signal_id`` is not
+    carried: the signal row does not exist in the DB at risk-check time
+    (under PRAGMA foreign_keys=ON the FK would fail), so the audit row
+    always writes NULL for signal_id. See core/signals/risk.py.
+    """
 
     legs: list
     edge: float
-    signal_id: str | None = None  # Set by caller; None = not yet persisted to DB
     strategy: str = ""
+    violation_id: str | None = None
 
 
 @dataclass

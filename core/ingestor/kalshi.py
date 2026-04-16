@@ -1,5 +1,6 @@
 """Kalshi API client with polling and rate limiting."""
 
+import asyncio
 import base64
 import logging
 import os
@@ -14,6 +15,10 @@ from cryptography.hazmat.primitives.asymmetric import padding
 from core.ingestor.polymarket import MarketData, OrderBook, TokenBucket
 
 logger = logging.getLogger(__name__)
+
+# Max time to wait for a rate-limit token before giving up on a request.
+_RATE_LIMIT_WAIT_S = 5.0
+_RATE_LIMIT_POLL_S = 0.1
 
 
 def _load_rsa_private_key(key_path: str):
@@ -35,6 +40,7 @@ class KalshiClient:
     def __init__(
         self,
         api_key: str | None = None,
+        *,
         rsa_key_path: str | None = None,
         api_base: str | None = None,
     ):
@@ -47,6 +53,22 @@ class KalshiClient:
 
         key_path = rsa_key_path or os.getenv("KALSHI_RSA_KEY_PATH", "")
         self._private_key = _load_rsa_private_key(key_path) if key_path else None
+
+    async def _wait_for_token(self) -> bool:
+        """Await until a rate-limit token is available, up to the wait budget.
+
+        Returns True if a token was acquired, False on timeout. Prevents the
+        silent data drop of plain ``acquire()`` while capping the wait so
+        sustained overload surfaces as a visible warning.
+        """
+        if self.rate_limiter.acquire():
+            return True
+        deadline = time.monotonic() + _RATE_LIMIT_WAIT_S
+        while time.monotonic() < deadline:
+            await asyncio.sleep(_RATE_LIMIT_POLL_S)
+            if self.rate_limiter.acquire():
+                return True
+        return False
 
     async def __aenter__(self):
         self._client = httpx.AsyncClient(base_url=self.api_base, timeout=30.0)
@@ -105,8 +127,11 @@ class KalshiClient:
         offset: int = 0,
     ) -> list[MarketData]:
         """Poll markets from Kalshi API."""
-        if not self.rate_limiter.acquire():
-            logger.warning("Rate limit exceeded for Kalshi")
+        if not await self._wait_for_token():
+            logger.warning(
+                "Kalshi rate limit: no token available after %.1fs — skipping poll",
+                _RATE_LIMIT_WAIT_S,
+            )
             return []
 
         try:
@@ -138,7 +163,13 @@ class KalshiClient:
 
     async def get_market(self, ticker: str) -> MarketData | None:
         """Get single market by ticker."""
-        if not self.rate_limiter.acquire():
+        if not await self._wait_for_token():
+            logger.warning(
+                "Kalshi rate limit: no token available after %.1fs — "
+                "skipping get_market(%s)",
+                _RATE_LIMIT_WAIT_S,
+                ticker,
+            )
             return None
 
         try:
@@ -163,7 +194,13 @@ class KalshiClient:
 
     async def get_orderbook(self, ticker: str) -> OrderBook | None:
         """Get orderbook for a market."""
-        if not self.rate_limiter.acquire():
+        if not await self._wait_for_token():
+            logger.warning(
+                "Kalshi rate limit: no token available after %.1fs — "
+                "skipping get_orderbook(%s)",
+                _RATE_LIMIT_WAIT_S,
+                ticker,
+            )
             return None
 
         try:

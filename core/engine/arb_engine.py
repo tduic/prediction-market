@@ -344,6 +344,48 @@ class ArbitrageEngine:
             )
             return None
 
+        # Insert market_pair + violation BEFORE risk checks so:
+        #   (a) risk_check_log.violation_id FK is satisfied when we log
+        #       (PRAGMA foreign_keys=ON enforces this at INSERT time), and
+        #   (b) rejected trades still leave a violations row for analytics.
+        # An exception here (not a duplicate — INSERT OR IGNORE swallows those
+        # silently with rowcount=0) indicates a schema/FK/lock error, and we
+        # must abort before sending orders.
+        try:
+            await self.db.execute(
+                """INSERT OR IGNORE INTO market_pairs
+                   (id, market_id_a, market_id_b, pair_type, similarity_score,
+                    match_method, active, created_at, updated_at)
+                   VALUES (?, ?, ?, 'cross_platform', ?, 'inverted_index', 1, ?, ?)""",
+                (pair_id, buy_id, sell_id, match.get("similarity", 0.0), now, now),
+            )
+            await self.db.execute(
+                """INSERT OR IGNORE INTO violations
+                   (id, pair_id, violation_type, price_a_at_detect, price_b_at_detect,
+                    raw_spread, net_spread, fee_estimate_a, fee_estimate_b,
+                    status, detected_at, updated_at)
+                   VALUES (?, ?, 'cross_platform', ?, ?, ?, ?, ?, ?, 'detected', ?, ?)""",
+                (
+                    violation_id,
+                    pair_id,
+                    buy_price,
+                    sell_price,
+                    spread,
+                    spread - 0.02,
+                    buy_price * 0.02,
+                    sell_price * 0.02,
+                    now,
+                    now,
+                ),
+            )
+            await self.db.commit()
+        except Exception:
+            logger.exception(
+                "Aborting arb trade for pair=%s: market_pair/violation insert failed",
+                pair_id,
+            )
+            return None
+
         # Phase 2.2: run all risk checks before executing orders.
         risk_signal = _RiskSignal(
             legs=[
@@ -356,7 +398,7 @@ class ArbitrageEngine:
             ],
             edge=edge,
             strategy=strategy,
-            signal_id=signal_id,
+            violation_id=violation_id,
         )
         all_passed, check_results = await run_all_checks(
             risk_signal, self._risk_config, self.db
@@ -378,41 +420,6 @@ class ArbitrageEngine:
             match["kalshi_title"][:40],
             k_price,
         )
-
-        # Write market_pair, violation, signal
-        try:
-            await self.db.execute(
-                """INSERT OR IGNORE INTO market_pairs
-                   (id, market_id_a, market_id_b, pair_type, similarity_score,
-                    match_method, active, created_at, updated_at)
-                   VALUES (?, ?, ?, 'cross_platform', ?, 'inverted_index', 1, ?, ?)""",
-                (pair_id, buy_id, sell_id, match.get("similarity", 0.0), now, now),
-            )
-        except Exception as e:
-            logger.debug("Market pair insert error: %s", e)
-
-        try:
-            await self.db.execute(
-                """INSERT OR IGNORE INTO violations
-                   (id, pair_id, violation_type, price_a_at_detect, price_b_at_detect,
-                    raw_spread, net_spread, fee_estimate_a, fee_estimate_b,
-                    status, detected_at, updated_at)
-                   VALUES (?, ?, 'cross_platform', ?, ?, ?, ?, ?, ?, 'detected', ?, ?)""",
-                (
-                    violation_id,
-                    pair_id,
-                    buy_price,
-                    sell_price,
-                    spread,
-                    spread - 0.02,
-                    buy_price * 0.02,
-                    sell_price * 0.02,
-                    now,
-                    now,
-                ),
-            )
-        except Exception as e:
-            logger.debug("Violation insert error: %s", e)
 
         try:
             kelly = min(edge / 0.50, 0.25)
@@ -437,8 +444,12 @@ class ArbitrageEngine:
                     now,
                 ),
             )
-        except Exception as e:
-            logger.debug("Signal insert error: %s", e)
+            await self.db.commit()
+        except Exception:
+            logger.exception(
+                "Aborting arb trade for pair=%s: signal insert failed", pair_id
+            )
+            return None
 
         # Execute both legs
         buy_leg = OrderLeg(

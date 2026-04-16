@@ -326,23 +326,30 @@ async def _log_risk_checks(
     signal: Any,
     results: list[RiskCheckResult],
 ) -> None:
-    """Write risk check results to the risk_check_log table."""
-    # Risk checks always run before the signal is written to DB across all
-    # callers (arb_engine, generator, execution/handler). Logging signal_id
-    # here would always violate the FK constraint. Use NULL — the audit row
-    # remains useful for rejected-trade analysis; the nullable FK contract
-    # still enforces referential integrity when signal_id IS set.
+    """Write risk check results to the risk_check_log table.
+
+    Risk checks always run before the signal is written to DB across all
+    callers (arb_engine, generator, execution/handler), so signal_id is
+    always NULL at log time (the FK would otherwise fail under
+    PRAGMA foreign_keys=ON). violation_id is pulled off the signal when
+    available — callers that insert the violation before running checks
+    (e.g. arb_engine) get the audit linkage; callers without a violation
+    context leave it NULL.
+    """
     signal_id = None
+    violation_id = getattr(signal, "violation_id", None)
     now = datetime.now(timezone.utc).isoformat()
 
     try:
         for r in results:
             await db.execute(
                 """INSERT INTO risk_check_log
-                   (signal_id, check_type, passed, check_value, threshold, detail, evaluated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                   (signal_id, violation_id, check_type, passed, check_value,
+                    threshold, detail, evaluated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     signal_id,
+                    violation_id,
                     r.check_type,
                     int(r.passed),
                     r.check_value,

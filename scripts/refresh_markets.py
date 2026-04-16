@@ -35,7 +35,9 @@ async def main() -> None:
     logger.info("=== Market Refresh ===")
     logger.info("DB: %s", cfg.database.db_path)
 
-    db_wrapper = Database(cfg.database.db_path, migrations_dir=cfg.database.migrations_dir)
+    db_wrapper = Database(
+        cfg.database.db_path, migrations_dir=cfg.database.migrations_dir
+    )
     await db_wrapper.init()
     db = db_wrapper._conn
 
