@@ -130,7 +130,7 @@ export function TradeLog({ data, strategies }: TradeLogProps) {
                         </div>
                       ) : (
                         <span className="text-gray-500">
-                          {trade.market_id_a.substring(0, 8)}... / {trade.market_id_b.substring(0, 8)}...
+                          {(trade.market_id_a ?? '').substring(0, 8)}... / {(trade.market_id_b ?? '').substring(0, 8)}...
                         </span>
                       )}
                     </td>

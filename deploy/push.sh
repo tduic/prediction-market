@@ -69,6 +69,7 @@ tar czf "$TARBALL" \
   --exclude='*.db-wal' \
   --exclude='deploy/config.env' \
   --exclude='deploy/*-key.json' \
+  --exclude='dashboard/node_modules' \
   .
 
 gcloud compute scp \
@@ -89,7 +90,7 @@ $GCE_SSH "sudo mkdir -p /tmp/predictor-staging \
     --exclude='*.db-wal' \
     --exclude='venv' \
     --exclude='node_modules' \
-    --exclude='dashboard/dist' \
+    --exclude='dashboard/node_modules' \
     /tmp/predictor-staging/ /data/predictor/prediction-market/ \
   && sudo chown -R predictor:predictor /data/predictor/prediction-market \
   && sudo rm -rf /tmp/predictor-staging /tmp/predictor-deploy.tar.gz"
@@ -131,15 +132,19 @@ echo "[3/5] Installing Python dependencies..."
 $GCE_SSH "cd /data/predictor/prediction-market \
   && sudo -u predictor python3 -m venv /data/predictor/venv --clear 2>/dev/null || sudo -u predictor python3 -m venv /data/predictor/venv \
   && sudo -u predictor /data/predictor/venv/bin/pip install --quiet --upgrade pip \
-  && sudo -u predictor /data/predictor/venv/bin/pip install --quiet -r requirements.txt"
+  && sudo -u predictor /data/predictor/venv/bin/pip install --quiet -r requirements.txt \
+  && sudo -u predictor /data/predictor/venv/bin/pip install --quiet --force-reinstall --no-deps typing_extensions"
 
-# ── 4. Build dashboard frontend ───────────────────────────────────────────────
+# ── 4. Build dashboard frontend (locally, then shipped with code) ─────────────
 echo ""
 echo "[4/5] Building dashboard frontend..."
-$GCE_SSH "cd /data/predictor/prediction-market/dashboard \
-  && sudo -u predictor npm install --silent \
-  && sudo -u predictor npm run build --silent" || \
-  echo "    WARNING: Dashboard build failed — dashboard may not load correctly."
+if command -v npm &>/dev/null && [ -f "$PROJECT_ROOT/dashboard/package.json" ]; then
+  (cd "$PROJECT_ROOT/dashboard" && npm install --silent && npm run build --silent) && \
+    echo "    Dashboard built and will be deployed with code." || \
+    echo "    WARNING: Dashboard build failed — API will work but no frontend."
+else
+  echo "    npm not found locally — skipping build (deploy existing dist/ if present)"
+fi
 
 # ── 5. Install and (re)start systemd service ──────────────────────────────────
 echo ""

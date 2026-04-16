@@ -10,7 +10,10 @@ Or embedded in trading_session.py as a background asyncio task:
 """
 
 import argparse
+import base64
 import math
+import os
+import secrets
 import statistics
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -21,6 +24,9 @@ import uvicorn
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+from starlette.responses import Response
 
 from core.config import get_config
 
@@ -36,6 +42,33 @@ def configure(db_path: str) -> None:
     _DB_PATH = db_path
 
 
+class _BasicAuthMiddleware(BaseHTTPMiddleware):
+    """HTTP Basic Auth gate. Applied only when DASHBOARD_PASSWORD is set."""
+
+    def __init__(self, app, username: str, password: str) -> None:
+        super().__init__(app)
+        self._username = username
+        self._password = password
+
+    async def dispatch(self, request: Request, call_next):
+        auth = request.headers.get("Authorization", "")
+        if auth.startswith("Basic "):
+            try:
+                decoded = base64.b64decode(auth[6:]).decode("utf-8", errors="replace")
+                user, _, pwd = decoded.partition(":")
+                user_ok = secrets.compare_digest(user.encode(), self._username.encode())
+                pass_ok = secrets.compare_digest(pwd.encode(), self._password.encode())
+                if user_ok and pass_ok:
+                    return await call_next(request)
+            except Exception:
+                pass
+        return Response(
+            "Unauthorized",
+            status_code=401,
+            headers={"WWW-Authenticate": 'Basic realm="Predictor Dashboard"'},
+        )
+
+
 def _build_app(static_dir: Optional[str] = None) -> FastAPI:
     """
     Build the FastAPI application.
@@ -47,6 +80,13 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
         frontend is served from the same process.
     """
     app = FastAPI(title="Prediction Market Dashboard API")
+
+    # HTTP Basic Auth — enabled when DASHBOARD_PASSWORD env var is set.
+    # Add before CORS so unauthenticated requests are rejected at the gate.
+    _dash_password = os.getenv("DASHBOARD_PASSWORD", "")
+    if _dash_password:
+        _dash_user = os.getenv("DASHBOARD_USER", "admin")
+        app.add_middleware(_BasicAuthMiddleware, username=_dash_user, password=_dash_password)
 
     # CORS middleware.
     #

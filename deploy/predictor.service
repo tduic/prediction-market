@@ -24,7 +24,8 @@ Environment="ALERT_DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/REDACTED
 ExecStart=/data/predictor/venv/bin/python \
     scripts/trading_session.py \
     --dashboard \
-    --dashboard-port 8000
+    --dashboard-port 8000 \
+    --dashboard-host 0.0.0.0
 
 # Restart policy: wait 30s before retrying on crash
 Restart=on-failure

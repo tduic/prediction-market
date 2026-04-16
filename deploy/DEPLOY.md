@@ -124,7 +124,38 @@ sudo systemctl restart predictor
 
 ## Viewing the dashboard
 
-The dashboard runs on port 8000 on the VM but is **not exposed publicly** (no firewall rule). Access it via SSH tunnel:
+The dashboard is bound to `0.0.0.0:8000` and protected by HTTP Basic Auth.
+
+### 1. Set credentials in `.env` on the VM
+
+```bash
+# Add to /data/predictor/.env
+DASHBOARD_USER=admin          # optional, defaults to "admin"
+DASHBOARD_PASSWORD=changeme   # required to enable auth
+```
+
+Then redeploy or restart the service:
+```bash
+bash deploy/push.sh --with-env
+```
+
+### 2. Open the GCP firewall
+
+```bash
+gcloud compute firewall-rules create allow-dashboard \
+  --project=YOUR_PROJECT_ID \
+  --direction=INGRESS \
+  --action=ALLOW \
+  --rules=tcp:8000 \
+  --source-ranges=YOUR_IP/32 \   # restrict to your IP
+  --target-tags=predictor-vm
+```
+
+Then open **http://VM_EXTERNAL_IP:8000** in your browser and enter your credentials.
+
+### SSH tunnel (no firewall rule needed)
+
+If you prefer not to open a firewall rule, you can still use the SSH tunnel:
 
 ```bash
 gcloud compute ssh predictor-vm \

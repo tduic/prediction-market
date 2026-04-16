@@ -121,6 +121,12 @@ async def main():
         default=8000,
         help="Port for the analytics dashboard (default: 8000)",
     )
+    parser.add_argument(
+        "--dashboard-host",
+        type=str,
+        default="127.0.0.1",
+        help="Host to bind the dashboard to (default: 127.0.0.1; use 0.0.0.0 to expose publicly)",
+    )
     args = parser.parse_args()
 
     # Allow env var to override --min-spread without requiring a code change.
@@ -179,13 +185,15 @@ async def main():
             dashboard_task = asyncio.create_task(
                 start_dashboard_server(
                     dashboard_app,
-                    host="127.0.0.1",
+                    host=args.dashboard_host,
                     port=args.dashboard_port,
                 )
             )
             # Yield to let uvicorn bind before continuing
             await asyncio.sleep(0.5)
-            logger.info("Dashboard live at http://127.0.0.1:%d", args.dashboard_port)
+            logger.info(
+                "Dashboard live at http://%s:%d", args.dashboard_host, args.dashboard_port
+            )
 
         # ── Step 1: Get matches (refresh or load from cache) ──
         from core.matching.engine import load_cached_matches

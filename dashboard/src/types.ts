@@ -46,8 +46,8 @@ export interface Trade {
   id: string
   signal_id: string
   strategy: string
-  market_id_a: string
-  market_id_b: string
+  market_id_a: string | null
+  market_id_b: string | null
   predicted_edge: number
   predicted_pnl: number
   actual_pnl: number
