@@ -62,7 +62,7 @@ def future_utc(seconds: int = 300) -> str:
 # ============================================================================
 
 
-MARKET_TEMPLATES = [
+MARKET_TEMPLATES: list[dict[str, Any]] = [
     # FOMC/Fed Funds Rate
     {
         "title": "Fed Funds Rate >5.25% at June 2026 FOMC",
@@ -317,7 +317,7 @@ async def add_price_snapshots(db: aiosqlite.Connection) -> None:
     cursor = await db.execute(
         "SELECT id, market_id_a, market_id_b FROM market_pairs LIMIT 10"
     )
-    pairs = await cursor.fetchall()
+    pairs = list(await cursor.fetchall())
 
     for pair_id, market_a, market_b in pairs:
         # Get current prices
@@ -368,7 +368,7 @@ async def generate_violations(
     cursor = await db.execute(
         "SELECT id, market_id_a, market_id_b FROM market_pairs LIMIT 20"
     )
-    pairs = await cursor.fetchall()
+    pairs = list(await cursor.fetchall())
 
     violation_ids = []
 
@@ -641,7 +641,7 @@ async def execute_signals(
 
         # Simulate order executions
         orders = []
-        _order_ids = []
+        _order_ids: list[str] = []
 
         # Leg 1: BUY on market_a
         order_id_1 = gen_id("ord_")
@@ -948,10 +948,16 @@ async def take_pnl_snapshot(db: aiosqlite.Connection) -> None:
         FROM positions
         """)
     row = await cursor.fetchone()
-    open_count = row[0] if row[0] else 0
-    unrealized_pnl = row[1] if row[1] else 0.0
-    realized_pnl_total = row[2] if row[2] else 0.0
-    fees_total = row[3] if row[3] else 0.0
+    if row is None:
+        open_count = 0
+        unrealized_pnl = 0.0
+        realized_pnl_total = 0.0
+        fees_total = 0.0
+    else:
+        open_count = row[0] if row[0] else 0
+        unrealized_pnl = row[1] if row[1] else 0.0
+        realized_pnl_total = row[2] if row[2] else 0.0
+        fees_total = row[3] if row[3] else 0.0
 
     total_capital = 100000.0
     cash = total_capital - (unrealized_pnl if unrealized_pnl > 0 else 0)
@@ -1026,9 +1032,11 @@ async def generate_report(db: aiosqlite.Connection, verbose: bool = False) -> No
     print("SETUP PHASE")
     print("-" * 80)
     cursor = await db.execute("SELECT COUNT(*) FROM markets")
-    market_count = (await cursor.fetchone())[0]
+    row = await cursor.fetchone()
+    market_count = row[0] if row else 0
     cursor = await db.execute("SELECT COUNT(*) FROM market_pairs")
-    pair_count = (await cursor.fetchone())[0]
+    row = await cursor.fetchone()
+    pair_count = row[0] if row else 0
     print(f"  Markets seeded:       {market_count}")
     print(f"  Market pairs created: {pair_count}")
 
@@ -1038,7 +1046,8 @@ async def generate_report(db: aiosqlite.Connection, verbose: bool = False) -> No
     cursor = await db.execute(
         "SELECT COUNT(*) FROM violations WHERE status = 'detected'"
     )
-    violation_count = (await cursor.fetchone())[0]
+    row = await cursor.fetchone()
+    violation_count = row[0] if row else 0
     cursor = await db.execute(
         "SELECT AVG(net_spread), MIN(net_spread), MAX(net_spread) FROM violations"
     )
@@ -1055,7 +1064,8 @@ async def generate_report(db: aiosqlite.Connection, verbose: bool = False) -> No
     print("\nSIGNAL GENERATION PHASE")
     print("-" * 80)
     cursor = await db.execute("SELECT COUNT(*) FROM signals")
-    signal_count = (await cursor.fetchone())[0]
+    row = await cursor.fetchone()
+    signal_count = row[0] if row else 0
     cursor = await db.execute("""
         SELECT strategy, COUNT(*) as count, AVG(model_edge) as avg_edge
         FROM signals
@@ -1072,7 +1082,8 @@ async def generate_report(db: aiosqlite.Connection, verbose: bool = False) -> No
     print("\nEXECUTION PHASE")
     print("-" * 80)
     cursor = await db.execute("SELECT COUNT(*) FROM orders")
-    order_count = (await cursor.fetchone())[0]
+    row = await cursor.fetchone()
+    order_count = row[0] if row else 0
     cursor = await db.execute(
         "SELECT status, COUNT(*) as count FROM orders GROUP BY status"
     )
@@ -1086,9 +1097,11 @@ async def generate_report(db: aiosqlite.Connection, verbose: bool = False) -> No
     print("\nPOST-TRADE PHASE")
     print("-" * 80)
     cursor = await db.execute("SELECT COUNT(*) FROM positions WHERE status = 'open'")
-    open_pos_count = (await cursor.fetchone())[0]
+    row = await cursor.fetchone()
+    open_pos_count = row[0] if row else 0
     cursor = await db.execute("SELECT COUNT(*) FROM positions WHERE status = 'closed'")
-    closed_pos_count = (await cursor.fetchone())[0]
+    row = await cursor.fetchone()
+    closed_pos_count = row[0] if row else 0
     print(f"  Open positions:        {open_pos_count}")
     print(f"  Closed positions:      {closed_pos_count}")
 

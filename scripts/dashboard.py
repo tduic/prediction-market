@@ -645,7 +645,7 @@ class Dashboard:
                 """,
                 (row["strategy"], self.days),
             )
-            pnl_rows = await cursor2.fetchall()
+            pnl_rows = list(await cursor2.fetchall())
             if len(pnl_rows) > 1:
                 pnl_values = [
                     r["actual_pnl"] for r in pnl_rows if r["actual_pnl"] is not None
@@ -701,9 +701,12 @@ class Dashboard:
             (self.days,),
         )
         row = await cursor.fetchone()
-
-        total_orders = row["total_orders"] or 0
-        filled_orders = row["filled_orders"] or 0
+        if row is None:
+            total_orders = 0
+            filled_orders = 0
+        else:
+            total_orders = row["total_orders"] or 0
+            filled_orders = row["filled_orders"] or 0
         fill_rate = (filled_orders / total_orders * 100) if total_orders > 0 else 0
 
         # Platform-specific metrics
@@ -721,13 +724,13 @@ class Dashboard:
         )
         platform_rows = await cursor.fetchall()
 
-        polymarket_rate = 0
-        kalshi_rate = 0
+        polymarket_rate = 0.0
+        kalshi_rate = 0.0
         for prow in platform_rows:
             platform = prow["platform"] or ""
             total = prow["total"] or 0
             filled = prow["filled"] or 0
-            rate = (filled / total * 100) if total > 0 else 0
+            rate = (filled / total * 100) if total > 0 else 0.0
             if "polymarket" in platform.lower():
                 polymarket_rate = rate
             elif "kalshi" in platform.lower():
@@ -737,12 +740,14 @@ class Dashboard:
             total_orders=total_orders,
             filled_orders=filled_orders,
             fill_rate=fill_rate,
-            avg_submission_latency_ms=row["avg_submission_latency"] or 0,
-            avg_fill_latency_ms=row["avg_fill_latency"] or 0,
-            avg_slippage=row["avg_slippage"] or 0,
-            total_slippage_cost=row["total_slippage_cost"] or 0,
-            partial_fills=row["partial_fills"] or 0,
-            rejections=row["rejections"] or 0,
+            avg_submission_latency_ms=(
+                (row["avg_submission_latency"] or 0) if row else 0
+            ),
+            avg_fill_latency_ms=(row["avg_fill_latency"] or 0) if row else 0,
+            avg_slippage=(row["avg_slippage"] or 0) if row else 0,
+            total_slippage_cost=(row["total_slippage_cost"] or 0) if row else 0,
+            partial_fills=(row["partial_fills"] or 0) if row else 0,
+            rejections=(row["rejections"] or 0) if row else 0,
             polymarket_fill_rate=polymarket_rate,
             kalshi_fill_rate=kalshi_rate,
         )
@@ -764,12 +769,18 @@ class Dashboard:
             (self.days,),
         )
         row = await cursor.fetchone()
-
-        max_loss = row["max_loss"] or 0
-        largest_win = row["largest_win"] or 0
-        wins = row["wins"] or 0
-        losses = row["losses"] or 0
-        avg_holding_hours = row["avg_holding_hours"] or 0
+        if row is None:
+            max_loss = 0.0
+            largest_win = 0.0
+            wins = 0
+            losses = 0
+            avg_holding_hours = 0.0
+        else:
+            max_loss = row["max_loss"] or 0
+            largest_win = row["largest_win"] or 0
+            wins = row["wins"] or 0
+            losses = row["losses"] or 0
+            avg_holding_hours = row["avg_holding_hours"] or 0
 
         win_loss_ratio = (wins / losses) if losses > 0 else (wins if wins > 0 else 0)
 
@@ -785,7 +796,7 @@ class Dashboard:
             """,
             (self.days,),
         )
-        pnl_rows = await cursor.fetchall()
+        pnl_rows = list(await cursor.fetchall())
 
         max_drawdown = 0.0
         if pnl_rows:
@@ -875,7 +886,7 @@ class Dashboard:
             (self.days,),
         )
         row = await cursor.fetchone()
-        total_violations = row["total"] or 0
+        total_violations = (row["total"] or 0) if row else 0
 
         # Signals created
         cursor = await db.execute(
@@ -887,7 +898,7 @@ class Dashboard:
             (self.days,),
         )
         row = await cursor.fetchone()
-        signals_created = row["total"] or 0
+        signals_created = (row["total"] or 0) if row else 0
 
         # Executed signals (with filled orders)
         cursor = await db.execute(
@@ -901,7 +912,7 @@ class Dashboard:
             (self.days,),
         )
         row = await cursor.fetchone()
-        executed = row["executed"] or 0
+        executed = (row["executed"] or 0) if row else 0
 
         conversion_rate = (
             (signals_created / total_violations * 100) if total_violations > 0 else 0

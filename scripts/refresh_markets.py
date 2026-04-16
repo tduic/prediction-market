@@ -39,7 +39,7 @@ async def main() -> None:
         cfg.database.db_path, migrations_dir=cfg.database.migrations_dir
     )
     await db_wrapper.init()
-    db = db_wrapper._conn
+    db = db_wrapper._require_conn()
 
     try:
         from core.ingestor.store import (

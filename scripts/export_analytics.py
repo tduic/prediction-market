@@ -7,9 +7,9 @@ Dumps trade_outcomes, pnl_snapshots, and violations summary to CSV.
 import argparse
 import asyncio
 import logging
+import sqlite3
 from pathlib import Path
 
-import aiosqlite
 import pandas as pd
 
 logger = logging.getLogger(__name__)
@@ -45,10 +45,11 @@ class AnalyticsExporter:
         try:
             logger.info("Exporting table '%s' to %s", table_name, output_path)
 
-            async with aiosqlite.connect(self.db_path) as db:
-                # Read table into pandas DataFrame
+            # pandas needs a sync DB-API connection; aiosqlite wraps sqlite3
+            # in an executor and doesn't expose one pandas can consume.
+            with sqlite3.connect(self.db_path) as db:
                 query = f"SELECT * FROM {table_name}"
-                df = pd.read_sql_query(query, await db.connection())
+                df = pd.read_sql_query(query, db)
 
             if df.empty:
                 logger.warning("Table '%s' is empty", table_name)
@@ -105,7 +106,7 @@ class AnalyticsExporter:
         try:
             logger.info("Exporting violations summary to %s", output_path)
 
-            async with aiosqlite.connect(self.db_path) as db:
+            with sqlite3.connect(self.db_path) as db:
                 # Create violations summary
                 query = """
                     SELECT
@@ -119,7 +120,7 @@ class AnalyticsExporter:
                     ORDER BY count DESC
                 """
 
-                df = pd.read_sql_query(query, await db.connection())
+                df = pd.read_sql_query(query, db)
 
             if df.empty:
                 logger.warning("No violations found")

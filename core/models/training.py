@@ -143,14 +143,14 @@ class ModelTrainer:
         """
         self.model = model
         self.db = db_connection
-        self.X_train = None
-        self.y_train = None
-        self.X_test = None
-        self.y_test = None
-        self.train_indices = None
-        self.test_indices = None
-        self.evaluation_results = None
-        self._sklearn_model = None  # For models that use sklearn internally
+        self.X_train: np.ndarray | None = None
+        self.y_train: np.ndarray | None = None
+        self.X_test: np.ndarray | None = None
+        self.y_test: np.ndarray | None = None
+        self.train_indices: np.ndarray | None = None
+        self.test_indices: np.ndarray | None = None
+        self.evaluation_results: dict[str, Any] | None = None
+        self._sklearn_model: Any = None  # For models that use sklearn internally
 
     def prepare_dataset(
         self, days: int = 90, limit: int | None = None
@@ -263,7 +263,7 @@ class ModelTrainer:
         Raises:
             RuntimeError: If dataset not prepared
         """
-        if self.X_train is None:
+        if self.X_train is None or self.y_train is None:
             raise RuntimeError("Dataset must be prepared first via prepare_dataset()")
 
         n_samples = len(self.X_train)
@@ -355,7 +355,7 @@ class ModelTrainer:
         Raises:
             RuntimeError: If model not trained or test set not available
         """
-        if self.X_test is None:
+        if self.X_test is None or self.y_test is None or self.X_train is None:
             raise RuntimeError("Test set not available. Call train_test_split() first.")
 
         if self._sklearn_model is None:

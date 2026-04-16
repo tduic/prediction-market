@@ -28,8 +28,10 @@ from core.models.training import ModelTrainer
 logger = logging.getLogger(__name__)
 
 
-# Available models - load gracefully to handle missing dependencies
-MODELS = {}
+# Available models - load gracefully to handle missing dependencies.
+# Models share only construct/fit/save protocol; the concrete types diverge,
+# so we store them as Any rather than narrowing to one base class.
+MODELS: dict[str, Any] = {}
 
 try:
     from core.models.calibration import CalibrationModel

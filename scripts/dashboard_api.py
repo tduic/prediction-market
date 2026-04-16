@@ -119,7 +119,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
         db: Optional[aiosqlite.Connection] = None,
     ) -> Optional[Dict[str, Any]]:
         own_db = db is None
-        if own_db:
+        if db is None:
             db = await get_db()
         try:
             cursor = await db.execute(
@@ -166,7 +166,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
             finally:
                 await close_db(db)
 
-        net_return_pct = 0
+        net_return_pct = 0.0
         if total_capital > 0:
             net_pnl = realized_pnl_total + unrealized_pnl - total_fees
             net_return_pct = (net_pnl / PAPER_CAPITAL) * 100
@@ -225,7 +225,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
                 win_count = row_dict.get("win_count", 0) or 0
                 win_rate = (win_count / trade_count) if trade_count > 0 else 0
 
-                sharpe_ratio = 0
+                sharpe_ratio = 0.0
                 pnl_count = row_dict.get("pnl_count", 0) or 0
                 if pnl_count > 1:
                     mean_pnl = row_dict.get("avg_pnl", 0) or 0
@@ -403,10 +403,10 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
                 SELECT total_capital, realized_pnl_total + unrealized_pnl as net_pnl
                 FROM pnl_snapshots ORDER BY snapshotted_at DESC LIMIT 100
                 """)
-            snapshots = await cursor.fetchall()
+            snapshots = list(await cursor.fetchall())
 
-            max_drawdown = 0
-            max_drawdown_dollar = 0
+            max_drawdown = 0.0
+            max_drawdown_dollar = 0.0
             if snapshots:
                 peak_capital = None
                 for snap in reversed(snapshots):
