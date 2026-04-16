@@ -43,7 +43,7 @@ class SignalHandler:
         Args:
             db_connection: SQLite connection for writing results
             redis_client: Redis client for queue operations
-            execution_mode: Execution mode - "live", "paper", or "mock"
+            execution_mode: Execution mode - "live", "paper", or "shadow"
             risk_config: Risk control configuration. If None, loaded from env.
             reconciliation_engine: Optional ReconciliationEngine for halt checks.
             circuit_breaker: Optional DailyLossCircuitBreaker for sticky halts.

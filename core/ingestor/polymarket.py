@@ -8,7 +8,6 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
-
 import httpx
 
 logger = logging.getLogger(__name__)

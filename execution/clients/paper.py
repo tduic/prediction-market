@@ -66,7 +66,51 @@ class PaperExecutionClient(BaseExecutionClient):
         self.total_filled = 0
 
     async def _get_current_price(self, market_id: str) -> float | None:
-        """Fetch the latest price from the DB (written by ingestor)."""
+        """Fetch the live price from the exchange API, falling back to DB.
+
+        Tries to call the exchange's price endpoint directly so paper/shadow
+        fills use the actual market price at order time, not stale polled data.
+        Falls back to the most recent DB price if the live fetch fails.
+        """
+        try:
+            cursor = await self.db.execute(
+                "SELECT platform, platform_id FROM markets WHERE id = ?",
+                (market_id,),
+            )
+            row = await cursor.fetchone()
+            if row:
+                platform, platform_id = row[0], row[1]
+                live_price = await self._fetch_live_price(platform, platform_id)
+                if live_price is not None:
+                    return live_price
+        except Exception as e:
+            logger.debug("[PAPER] Live price lookup failed for %s: %s", market_id, e)
+
+        return await self._get_db_price(market_id)
+
+    async def _fetch_live_price(self, platform: str, platform_id: str) -> float | None:
+        """Call the exchange API for the current price."""
+        try:
+            if platform == "polymarket":
+                from core.ingestor.polymarket import PolymarketClient
+
+                async with PolymarketClient() as client:
+                    market = await client.get_market(platform_id)
+                    return market.last_price if market else None
+            elif platform == "kalshi":
+                from core.ingestor.kalshi import KalshiClient
+
+                async with KalshiClient() as client:
+                    market = await client.get_market(platform_id)
+                    return market.last_price if market else None
+        except Exception as e:
+            logger.debug(
+                "[PAPER] %s price API error for %s: %s", platform, platform_id, e
+            )
+        return None
+
+    async def _get_db_price(self, market_id: str) -> float | None:
+        """Read the most recently polled price from the DB (fallback)."""
         try:
             cursor = await self.db.execute(
                 """

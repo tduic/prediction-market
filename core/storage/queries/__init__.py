@@ -1,10 +1,6 @@
 """Database query modules."""
 
-from . import markets
-from . import violations
-from . import signals
-from . import positions
-from . import pnl
+from . import markets, pnl, positions, signals, violations
 
 __all__ = [
     "markets",

@@ -1,22 +1,22 @@
 """Event system for the prediction market trading system."""
 
+from .bus import EventBus
 from .types import (
     Event,
     MarketUpdated,
-    ViolationDetected,
-    SignalFired,
-    SignalQueued,
-    OrderSubmitted,
-    OrderFilled,
     OrderCancelled,
     OrderFailed,
-    PositionUpdated,
-    PositionClosed,
-    RiskCheckFailed,
+    OrderFilled,
+    OrderSubmitted,
     PnLSnapshot,
+    PositionClosed,
+    PositionUpdated,
+    RiskCheckFailed,
+    SignalFired,
+    SignalQueued,
     SystemEvent,
+    ViolationDetected,
 )
-from .bus import EventBus
 
 __all__ = [
     "Event",

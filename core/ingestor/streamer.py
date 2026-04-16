@@ -104,6 +104,7 @@ async def stream_prices_kalshi(
     market_id is formatted as "kal_{ticker}" to match our internal IDs.
     """
     import base64
+
     import websockets
     from cryptography.hazmat.primitives import hashes, serialization
     from cryptography.hazmat.primitives.asymmetric import padding

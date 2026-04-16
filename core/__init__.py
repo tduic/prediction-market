@@ -12,7 +12,7 @@ def __getattr__(name: str):
         return globals()[name]
 
     if name in ("EventBus", "Event"):
-        from .events import EventBus, Event
+        from .events import Event, EventBus
 
         globals().update({"EventBus": EventBus, "Event": Event})
         return globals()[name]

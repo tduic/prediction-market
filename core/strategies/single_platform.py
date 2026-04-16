@@ -108,6 +108,7 @@ async def _get_strategy_rolling_pnl(
 async def mark_and_close_positions(
     db: aiosqlite.Connection,
     holding_period_s: int = 300,
+    price_cache: dict | None = None,
 ) -> int:
     """Close open positions that have exceeded their holding period.
 
@@ -132,19 +133,22 @@ async def mark_and_close_positions(
     for row in rows:
         pos_id, market_id, side, entry_price, entry_size, fees_paid = row
 
-        price_cursor = await db.execute(
-            "SELECT yes_price FROM market_prices WHERE market_id=? "
-            "ORDER BY polled_at DESC LIMIT 1",
-            (market_id,),
-        )
-        price_row = await price_cursor.fetchone()
-        if price_row is None:
-            logger.debug(
-                "mark_and_close: no price for market %s — leaving open", market_id
+        # Use live cache price if available, fall back to DB
+        if price_cache and market_id in price_cache:
+            current_price = price_cache[market_id]
+        else:
+            price_cursor = await db.execute(
+                "SELECT yes_price FROM market_prices WHERE market_id=? "
+                "ORDER BY polled_at DESC LIMIT 1",
+                (market_id,),
             )
-            continue
-
-        current_price = price_row[0]
+            price_row = await price_cursor.fetchone()
+            if price_row is None:
+                logger.debug(
+                    "mark_and_close: no price for market %s — leaving open", market_id
+                )
+                continue
+            current_price = price_row[0]
         if side == "BUY":
             realized_pnl = round(
                 (current_price - entry_price) * entry_size - (fees_paid or 0), 4
@@ -180,6 +184,7 @@ async def detect_single_platform_opportunities(
     db: aiosqlite.Connection,
     max_trades: int = 20,
     risk_config=None,
+    price_cache: dict | None = None,
 ) -> list[dict]:
     """
     Find trading opportunities on individual markets (no cross-platform match needed).
@@ -231,6 +236,16 @@ async def detect_single_platform_opportunities(
                     "liquidity": row[7] or 0,
                 }
             )
+
+    # Override with live websocket prices where available
+    if price_cache:
+        for m in markets:
+            cached = price_cache.get(m["id"])
+            if cached is not None:
+                m["yes_price"] = cached
+                m["no_price"] = round(1.0 - cached, 4)
+        # Re-apply price bounds filter after override
+        markets = [m for m in markets if 0.05 < m["yes_price"] < 0.95]
 
     trades = []
     opportunities = []

@@ -31,10 +31,10 @@ async def detect_violations_and_trade(
     For each matched pair, check for price discrepancies.
     If spread exceeds threshold, generate a signal and execute paper trade.
     """
-    from execution.factory import _make_execution_clients
-    from execution.models import OrderLeg
     from core.signals.sizing import compute_kelly_fraction, compute_position_size
     from core.strategies.assignment import assign_strategy
+    from execution.factory import _make_execution_clients
+    from execution.models import OrderLeg
 
     execution_mode = os.getenv("EXECUTION_MODE", "paper")
     paper_poly, paper_kalshi = _make_execution_clients(db, execution_mode)

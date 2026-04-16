@@ -27,8 +27,8 @@ from uuid import uuid4
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-# Set mock execution mode before any imports
-os.environ["EXECUTION_MODE"] = "mock"
+# Set paper execution mode before any imports
+os.environ["EXECUTION_MODE"] = "paper"
 
 import aiosqlite  # noqa: E402
 

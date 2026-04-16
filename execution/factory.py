@@ -15,11 +15,11 @@ def _make_execution_clients(db, execution_mode: str):
     """
     Return (poly_client, kalshi_client) for the given execution mode.
 
-    - "live"                → real PolymarketExecutionClient + KalshiExecutionClient
-    - "paper"/"shadow"/any  → PaperExecutionClient (simulated fills, no real orders)
+    - "live"            → real PolymarketExecutionClient + KalshiExecutionClient
+    - "paper"/"shadow"  → PaperExecutionClient (simulated fills, no real orders)
 
-    Shadow mode intentionally uses paper clients: it generates signals and runs
-    all risk checks but never submits real orders.
+    Shadow mode uses paper clients by design: full signal/risk pipeline runs
+    but no real orders are submitted.
     """
     if execution_mode == "live":
         from execution.clients.kalshi import KalshiExecutionClient

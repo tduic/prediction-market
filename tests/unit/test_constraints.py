@@ -8,8 +8,9 @@ Tests all constraint rule implementations:
 - Cross-platform spread validation
 """
 
-import pytest
 from datetime import datetime, timezone
+
+import pytest
 
 # ============================================================================
 # Constraint Detection Classes (Mock Implementations)

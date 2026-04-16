@@ -33,11 +33,15 @@ class ScheduledStrategyRunner:
         circuit_breaker=None,
         execution_mode: str | None = None,
         alert_manager=None,
+        price_cache: "dict | None" = None,
     ):
         self.db = db
         self.interval = interval
         self.max_trades = max_trades_per_cycle
         self.total_trades = 0
+        # Live price cache shared with the websocket feed — gives P2-P5
+        # strategies real-time prices without reading stale DB rows.
+        self._price_cache = price_cache
         # Phase 2: risk config and circuit breaker.
         # Phase 6: when execution_mode is provided and risk_config is not, use
         # get_effective_risk_config so live mode automatically enforces tighter limits.
@@ -74,7 +78,9 @@ class ScheduledStrategyRunner:
                 return []
         # Mark-to-market pass: close expired open positions at current prices
         await mark_and_close_positions(
-            self.db, holding_period_s=self._risk_config.strategy_holding_period_s
+            self.db,
+            holding_period_s=self._risk_config.strategy_holding_period_s,
+            price_cache=self._price_cache,
         )
         # Phase 7: run invariant checks before opening new positions.
         # alert_manager forwards violations to Discord when configured.
@@ -84,7 +90,10 @@ class ScheduledStrategyRunner:
             self.db, mode="warn", alert_manager=self._alert_manager
         )
         return await detect_single_platform_opportunities(
-            self.db, max_trades=self.max_trades, risk_config=self._risk_config
+            self.db,
+            max_trades=self.max_trades,
+            risk_config=self._risk_config,
+            price_cache=self._price_cache,
         )
 
     async def run(self, stop_event: asyncio.Event):

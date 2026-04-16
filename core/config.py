@@ -6,9 +6,8 @@ This is the single source of truth for all configuration. Both the
 core service and execution service use get_config() to read settings.
 """
 
-from dataclasses import dataclass, field
-
 import os
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from core.secrets import get_secret
@@ -225,7 +224,7 @@ class ExecutionConfig:
     """Order execution and settlement settings."""
 
     execution_mode: str = field(
-        default_factory=lambda: os.getenv("EXECUTION_MODE", "mock")
+        default_factory=lambda: os.getenv("EXECUTION_MODE", "paper")
     )
     max_order_retries: int = field(
         default_factory=lambda: int(os.getenv("MAX_ORDER_RETRIES", "3"))
@@ -275,9 +274,9 @@ class Config:
     def _validate(self):
         """Validate all configuration constraints."""
         # Execution mode validation
-        if self.execution.execution_mode not in ("live", "mock", "paper", "shadow"):
+        if self.execution.execution_mode not in ("live", "paper", "shadow"):
             raise ValueError(
-                f"EXECUTION_MODE must be 'live', 'mock', 'paper', or 'shadow', "
+                f"EXECUTION_MODE must be 'live', 'paper', or 'shadow', "
                 f"got {self.execution.execution_mode}"
             )
 

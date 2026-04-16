@@ -8,8 +8,9 @@ Tests data ingestion pipeline:
 - Tracking ingestor runs
 """
 
-import pytest
 from datetime import datetime, timezone
+
+import pytest
 
 # ============================================================================
 # Ingestor Classes (Mock Implementations)

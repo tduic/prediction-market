@@ -21,10 +21,7 @@ Covers:
   - Per-strategy kill-switch based on rolling realistic PnL
 """
 
-import ast
-import re as _re
 import sys
-import textwrap
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -33,41 +30,13 @@ import pytest
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-_SRC = (PROJECT_ROOT / "scripts" / "paper_trading_session.py").read_text()
-_TREE = ast.parse(_SRC)
-
-
-def _extract_func(name):
-    node = next(
-        n
-        for n in ast.walk(_TREE)
-        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == name
-    )
-    lines = _SRC.splitlines()[node.lineno - 1 : node.end_lineno]
-    return textwrap.dedent("\n".join(lines))
-
-
-_root_src = _extract_func("_p2_title_root")
-
-_STRIP_SUFFIX = _re.compile(
-    r"\s+(?:(january|february|march|april|may|june|july|august|september|"
-    r"october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|oct|nov|dec)"
-    r"|20\d{2}|q[1-4]|h[1-2]|"
-    r"\$?[\d,]+\.?\d*[km%]?(?:\s*[-\u2013to]+\s*\$?[\d,]+\.?\d*[km%]?)?)"
-    r"\s*$",
-    _re.IGNORECASE,
-)
-_ns = {"_STRIP_SUFFIX": _STRIP_SUFFIX, "re": _re}
-_compiled = compile(_root_src, "<_p2_title_root>", "exec")
-exec(_compiled, _ns)  # noqa: S102
-_p2_title_root = _ns["_p2_title_root"]
-
 from core.config import RiskControlConfig  # noqa: E402
 from core.engine import ScheduledStrategyRunner  # noqa: E402
 from core.strategies.single_platform import (  # noqa: E402
     _cross_strategy_dedup,
     _get_strategy_rolling_pnl,
     _normalize_signal_strengths,
+    _p2_title_root,
     detect_single_platform_opportunities,
     mark_and_close_positions,
 )

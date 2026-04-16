@@ -5,12 +5,13 @@ Tests deduplication, DLQ, backpressure, and the unified queue.
 """
 
 import json
+
 import pytest
 import redis.asyncio as redis
 
+from core.signals.backpressure import BackpressureMonitor
 from core.signals.dedup import SignalDeduplicator
 from core.signals.dlq import DeadLetterQueue
-from core.signals.backpressure import BackpressureMonitor
 from core.signals.queue import HardenedSignalQueue
 
 

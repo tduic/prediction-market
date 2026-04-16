@@ -2,9 +2,9 @@
 Database queries for violation and arbitrage opportunity management.
 """
 
-from typing import Any
-from datetime import datetime, timezone
 import logging
+from datetime import datetime, timezone
+from typing import Any
 
 from ..db import Database
 

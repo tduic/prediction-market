@@ -15,8 +15,8 @@ import click
 import redis.asyncio as redis
 from tabulate import tabulate
 
-from core.signals.dedup import SignalDeduplicator
 from core.signals.backpressure import BackpressureMonitor
+from core.signals.dedup import SignalDeduplicator
 from core.signals.dlq import DeadLetterQueue
 from core.signals.queue import HardenedSignalQueue
 

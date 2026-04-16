@@ -1,8 +1,6 @@
-"""Unit tests for assign_strategy() in paper_trading_session."""
+"""Unit tests for assign_strategy() in core/strategies/assignment.py."""
 
-import ast
 import sys
-import textwrap
 from pathlib import Path
 
 import pytest
@@ -10,20 +8,7 @@ import pytest
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-_SRC = (PROJECT_ROOT / "scripts" / "paper_trading_session.py").read_text()
-_TREE = ast.parse(_SRC)
-
-_func_node = next(
-    n
-    for n in ast.walk(_TREE)
-    if isinstance(n, ast.FunctionDef) and n.name == "assign_strategy"
-)
-_func_lines = _SRC.splitlines()[_func_node.lineno - 1 : _func_node.end_lineno]
-_func_src = textwrap.dedent("\n".join(_func_lines))
-
-_ns: dict = {}
-exec(compile(_func_src, "<assign_strategy>", "exec"), _ns)
-assign_strategy = _ns["assign_strategy"]
+from core.strategies.assignment import assign_strategy  # noqa: E402
 
 
 @pytest.mark.parametrize(

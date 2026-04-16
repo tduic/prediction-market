@@ -4,10 +4,10 @@ Shared pytest fixtures for prediction market trading system tests.
 
 import json
 import sqlite3
-from pathlib import Path
-from typing import Generator, Any
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Generator
 
 import pytest
 import pytest_asyncio

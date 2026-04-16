@@ -13,11 +13,11 @@ import signal as signal_module
 import sys
 
 from core.config import get_config
-from core.events.bus import EventBus
 from core.constraints.engine import ConstraintEngine
+from core.events.bus import EventBus
+from core.ingestor.scheduler import IngestorScheduler
 from core.signals.generator import SignalGenerator
 from core.storage.db import Database
-from core.ingestor.scheduler import IngestorScheduler
 
 logger = logging.getLogger(__name__)
 
@@ -148,6 +148,7 @@ class CoreService:
 async def main() -> None:
     """Main entry point."""
     from dotenv import load_dotenv
+
     from core.logging_config import configure_from_env
 
     load_dotenv()

@@ -14,12 +14,12 @@ Usage:
 import argparse
 import asyncio
 import json
+import statistics
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict
-import statistics
 
 import aiosqlite
 
@@ -538,14 +538,14 @@ class Dashboard:
         print(json.dumps(output, indent=2, default=str))
 
     async def _detect_mode(self, db: aiosqlite.Connection) -> str:
-        """Detect if database is in mock or live mode."""
+        """Detect if database is in paper or live mode."""
         # Simple heuristic: check for high number of recent trades with same timestamps
         cursor = await db.execute(
             "SELECT COUNT(*) as cnt FROM orders WHERE submitted_at > datetime('now', '-1 day')"
         )
         row = await cursor.fetchone()
         if row and row["cnt"] > 100:
-            return "mock"
+            return "paper"
         return "live"
 
     async def _get_portfolio_metrics(

@@ -1,13 +1,13 @@
 """Ingestor module for polling prediction market data."""
 
-from core.ingestor.polymarket import PolymarketClient
-from core.ingestor.kalshi import KalshiClient
 from core.ingestor.external import (
-    CMEFedWatchScraper,
-    ClevelandFedScraper,
-    MetaculusClient,
     BLSCalendarFetcher,
+    ClevelandFedScraper,
+    CMEFedWatchScraper,
+    MetaculusClient,
 )
+from core.ingestor.kalshi import KalshiClient
+from core.ingestor.polymarket import PolymarketClient
 from core.ingestor.scheduler import IngestorScheduler
 
 __all__ = [

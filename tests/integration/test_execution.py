@@ -8,10 +8,11 @@ Tests order execution pipeline:
 - Concurrent vs sequential execution
 """
 
-import pytest
+import asyncio
 from datetime import datetime, timedelta, timezone
 from enum import Enum
-import asyncio
+
+import pytest
 
 # ============================================================================
 # Execution Classes (Mock Implementations)

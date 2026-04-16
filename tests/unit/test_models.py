@@ -4,9 +4,10 @@ Unit tests for prediction model service.
 Tests model training, prediction, calibration, and lifecycle management.
 """
 
-import pytest
 from datetime import datetime, timedelta, timezone
 from typing import Any
+
+import pytest
 
 # ============================================================================
 # Model Service Classes (Mock Implementations)

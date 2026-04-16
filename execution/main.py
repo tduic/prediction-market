@@ -214,6 +214,7 @@ class ExecutionService:
 async def main() -> None:
     """Main entry point."""
     from dotenv import load_dotenv
+
     from core.logging_config import configure_from_env
 
     load_dotenv()

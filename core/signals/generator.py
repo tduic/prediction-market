@@ -192,7 +192,7 @@ class SignalGenerator:
 
     def _create_signal_from_violation(self, violation: ViolationDetected) -> Signal:
         """Create signal from violation."""
-        from core.signals.sizing import compute_position_size, compute_kelly_fraction
+        from core.signals.sizing import compute_kelly_fraction, compute_position_size
 
         signal = Signal(
             strategy=self.config.get("strategy_name", "prediction_market"),

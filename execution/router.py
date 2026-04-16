@@ -55,7 +55,7 @@ class OrderRouter:
 
         Args:
             db_connection: SQLite connection for writing results
-            execution_mode: "live" for real clients, "mock" for mock clients
+            execution_mode: "live" for real clients, "paper" or "shadow" for simulated fills
             max_retries: Maximum number of order submission attempts
             retry_backoff_base_s: Base seconds for exponential backoff between retries
         """
@@ -64,23 +64,21 @@ class OrderRouter:
         self.max_retries = max_retries
         self.retry_backoff_base_s = retry_backoff_base_s
 
-        if execution_mode == "mock":
-            logger.info("Initializing router in MOCK execution mode")
-            from execution.clients.mock import MockExecutionClient, MockConfig
+        if execution_mode == "live":
+            logger.info("Initializing router in LIVE execution mode")
+            from execution.clients.kalshi import KalshiExecutionClient
+            from execution.clients.polymarket import PolymarketExecutionClient
 
-            mock_config = MockConfig.from_env()
-            self.polymarket_client = MockExecutionClient(
+            self.polymarket_client = PolymarketExecutionClient(
                 db_connection=db_connection,
-                config=mock_config,
-                platform_label="mock_polymarket",
             )
-            self.kalshi_client = MockExecutionClient(
+            self.kalshi_client = KalshiExecutionClient(
                 db_connection=db_connection,
-                config=mock_config,
-                platform_label="mock_kalshi",
             )
-        elif execution_mode == "paper":
-            logger.info("Initializing router in PAPER trading mode")
+        else:
+            # paper or shadow — both use simulated fills, no real orders
+            label = "SHADOW" if execution_mode == "shadow" else "PAPER"
+            logger.info("Initializing router in %s trading mode", label)
             from execution.clients.paper import PaperExecutionClient
 
             self.polymarket_client = PaperExecutionClient(
@@ -90,17 +88,6 @@ class OrderRouter:
             self.kalshi_client = PaperExecutionClient(
                 db_connection=db_connection,
                 platform_label="paper_kalshi",
-            )
-        else:
-            logger.info("Initializing router in LIVE execution mode")
-            from execution.clients.polymarket import PolymarketExecutionClient
-            from execution.clients.kalshi import KalshiExecutionClient
-
-            self.polymarket_client = PolymarketExecutionClient(
-                db_connection=db_connection,
-            )
-            self.kalshi_client = KalshiExecutionClient(
-                db_connection=db_connection,
             )
 
     async def route_order(

@@ -6,7 +6,7 @@ Configurable fill probability, latency, slippage, and partial fills.
 Writes to the same DB tables as the real clients so the entire
 analytics pipeline works identically.
 
-Enable via:  EXECUTION_MODE=mock  (in .env or environment)
+Used internally by run_mock_session.py for synthetic end-to-end testing.
 """
 
 import asyncio

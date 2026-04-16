@@ -9,8 +9,9 @@ Tests the complete pipeline:
 - Paper trading mode
 """
 
-import pytest
 from datetime import datetime, timedelta, timezone
+
+import pytest
 
 # ============================================================================
 # Signal Flow Classes (Mock Implementations)

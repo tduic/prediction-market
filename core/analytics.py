@@ -11,11 +11,11 @@ All methods are async and work directly with aiosqlite.Connection.
 """
 
 import logging
+import math
+import statistics
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
-import math
-import statistics
 
 import aiosqlite
 

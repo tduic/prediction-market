@@ -5,10 +5,10 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
-from core.constraints.fees import FeeEstimator, FeeConfig
+from core.constraints.fees import FeeConfig, FeeEstimator
 from core.constraints.rules import (
-    cross_platform,
     complementarity,
+    cross_platform,
     mutual_exclusivity,
     subset_superset,
 )

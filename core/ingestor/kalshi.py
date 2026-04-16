@@ -7,7 +7,6 @@ import os
 import time
 from datetime import datetime
 
-
 import httpx
 
 from core.ingestor.polymarket import MarketData, OrderBook, TokenBucket

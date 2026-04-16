@@ -5,7 +5,7 @@ Queries the SQLite trading database and serves JSON to the React frontend.
 Can be run standalone:
     python scripts/dashboard_api.py --db prediction_market.db
 
-Or embedded in paper_trading_session.py as a background asyncio task:
+Or embedded in trading_session.py as a background asyncio task:
     from scripts.dashboard_api import create_dashboard_app, start_dashboard_server
 """
 
@@ -634,7 +634,7 @@ async def start_dashboard_server(
     """
     Start uvicorn as an async coroutine (non-blocking).
     Designed to be launched as an asyncio.create_task() inside
-    paper_trading_session.py.
+    trading_session.py.
     """
     config = uvicorn.Config(
         app,
