@@ -22,8 +22,7 @@ Environment="ALERT_DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/REDACTED
 
 # Python venv binary
 ExecStart=/data/predictor/venv/bin/python \
-    scripts/paper_trading_session.py \
-    --stream \
+    scripts/trading_session.py \
     --dashboard \
     --dashboard-port 8000
 
