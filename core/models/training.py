@@ -43,9 +43,9 @@ class SimpleLogisticRegression:
         self.learning_rate = learning_rate
         self.max_iterations = max_iterations
         self.l2_reg = l2_reg
-        self.weights = None
-        self.bias = None
-        self.loss_history = []
+        self.weights: np.ndarray | None = None
+        self.bias: float = 0.0
+        self.loss_history: list[float] = []
 
     def fit(self, X: np.ndarray, y: np.ndarray) -> None:
         """

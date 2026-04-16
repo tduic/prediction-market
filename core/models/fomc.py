@@ -191,12 +191,12 @@ class FOMCModel(BaseModel):
             actuals.append(y_test[0])
 
         # Calculate metrics
-        predictions = np.array(predictions)
-        actuals = np.array(actuals)
+        predictions_arr = np.array(predictions)
+        actuals_arr = np.array(actuals)
 
-        mse = float(np.mean((predictions - actuals) ** 2))
+        mse = float(np.mean((predictions_arr - actuals_arr) ** 2))
         rmse = float(np.sqrt(mse))
-        mae = float(np.mean(np.abs(predictions - actuals)))
+        mae = float(np.mean(np.abs(predictions_arr - actuals_arr)))
 
         return {
             "mse": mse,

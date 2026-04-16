@@ -180,14 +180,14 @@ class CalibrationModel(BaseModel):
                 bin_outcomes.append(mean_outcome)
 
             sort_idx = np.argsort(bin_means)
-            bin_means = np.array(bin_means)[sort_idx]
-            bin_outcomes = np.array(bin_outcomes)[sort_idx]
+            bin_means_arr = np.array(bin_means)[sort_idx]
+            bin_outcomes_arr = np.array(bin_outcomes)[sort_idx]
 
             # Create interpolation function
             try:
                 curve = interp1d(
-                    bin_means,
-                    bin_outcomes,
+                    bin_means_arr,
+                    bin_outcomes_arr,
                     kind="linear",
                     fill_value="extrapolate",
                     bounds_error=False,
@@ -198,7 +198,7 @@ class CalibrationModel(BaseModel):
                     return x
 
             # Identify systematic biases
-            biases = self._detect_biases(bin_means, bin_outcomes)
+            biases = self._detect_biases(bin_means_arr, bin_outcomes_arr)
 
             return curve, biases
         except ValueError as e:
