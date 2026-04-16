@@ -1,67 +1,100 @@
 """Kalshi API client with polling and rate limiting."""
 
-import hashlib
-import hmac
+import base64
 import logging
 import os
 import time
 from datetime import datetime
+from pathlib import Path
 
 import httpx
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import padding
 
 from core.ingestor.polymarket import MarketData, OrderBook, TokenBucket
 
 logger = logging.getLogger(__name__)
 
 
+def _load_rsa_private_key(key_path: str):
+    """Load RSA private key from PEM file. Returns None if path missing or unreadable."""
+    try:
+        expanded = Path(key_path).expanduser()
+        if not expanded.exists():
+            logger.warning("Kalshi RSA key not found at %s", expanded)
+            return None
+        return serialization.load_pem_private_key(expanded.read_bytes(), password=None)
+    except Exception as e:
+        logger.warning("Failed to load Kalshi RSA key from %s: %s", key_path, e)
+        return None
+
+
 class KalshiClient:
-    """Kalshi API client with rate limiting and HMAC authentication."""
+    """Kalshi API client with rate limiting and RSA-PSS authentication."""
 
-    BASE_URL = "https://trading-api.kalshi.com/trade-api/v2"
-
-    def __init__(self, api_key: str | None = None, api_secret: str | None = None):
-        """
-        Args:
-            api_key: API key (or from KALSHI_API_KEY env var)
-            api_secret: API secret (or from KALSHI_API_SECRET env var)
-        """
+    def __init__(
+        self,
+        api_key: str | None = None,
+        rsa_key_path: str | None = None,
+        api_base: str | None = None,
+    ):
         self.api_key = api_key or os.getenv("KALSHI_API_KEY", "")
-        self.api_secret = api_secret or os.getenv("KALSHI_API_SECRET", "")
+        self.api_base = api_base or os.getenv(
+            "KALSHI_API_BASE", "https://api.elections.kalshi.com/trade-api/v2"
+        )
         self.rate_limiter = TokenBucket(capacity=10.0, refill_rate=10.0 / 1.0)
         self._client: httpx.AsyncClient | None = None
 
+        key_path = rsa_key_path or os.getenv("KALSHI_RSA_KEY_PATH", "")
+        self._private_key = _load_rsa_private_key(key_path) if key_path else None
+
     async def __aenter__(self):
-        """Async context manager entry."""
-        self._client = httpx.AsyncClient(base_url=self.BASE_URL, timeout=30.0)
+        self._client = httpx.AsyncClient(base_url=self.api_base, timeout=30.0)
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
-        """Async context manager exit."""
         if self._client:
             await self._client.aclose()
 
     @property
     def client(self) -> httpx.AsyncClient:
-        """Get or create HTTP client."""
         if self._client is None:
             raise RuntimeError(
                 "Client not initialized. Use 'async with' context manager."
             )
         return self._client
 
-    def _sign_request(self, method: str, path: str, body: str = "") -> dict[str, str]:
-        """Generate HMAC-SHA256 signature for request."""
-        timestamp = str(int(time.time()))
-        message = method + path + body + timestamp
-        signature = hmac.new(
-            self.api_secret.encode(),
-            message.encode(),
-            hashlib.sha256,
-        ).hexdigest()
+    @property
+    def is_authenticated(self) -> bool:
+        """True when both API key and RSA private key are configured."""
+        return bool(self.api_key and self._private_key)
+
+    def _sign_request(self, method: str, path: str) -> dict[str, str]:
+        """Generate RSA-PSS signature headers for Kalshi API.
+
+        Returns an empty dict when credentials are not configured. Kalshi's
+        read endpoints (/markets, /markets/{ticker}, /markets/{ticker}/orderbook)
+        are public, so unsigned requests are still valid. Callers that hit
+        authenticated endpoints (orders, portfolio) must gate on
+        ``is_authenticated`` first.
+        """
+        if not self.is_authenticated:
+            return {}
+        timestamp_ms = str(int(time.time() * 1000))
+        message = (timestamp_ms + method.upper() + path).encode("utf-8")
+        signature = self._private_key.sign(
+            message,
+            padding.PSS(
+                mgf=padding.MGF1(hashes.SHA256()),
+                salt_length=padding.PSS.DIGEST_LENGTH,
+            ),
+            hashes.SHA256(),
+        )
         return {
-            "KALSHI-SIGNATURE": signature,
-            "KALSHI-TIMESTAMP": timestamp,
-            "KALSHI-API-KEY": self.api_key,
+            "KALSHI-ACCESS-KEY": self.api_key,
+            "KALSHI-ACCESS-SIGNATURE": base64.b64encode(signature).decode("utf-8"),
+            "KALSHI-ACCESS-TIMESTAMP": timestamp_ms,
+            "Content-Type": "application/json",
         }
 
     async def poll_markets(
@@ -71,18 +104,7 @@ class KalshiClient:
         limit: int = 100,
         offset: int = 0,
     ) -> list[MarketData]:
-        """
-        Poll markets from Kalshi API.
-
-        Args:
-            status: Filter by status (active, paused, resolved, etc.)
-            category: Filter by category
-            limit: Results per page
-            offset: Pagination offset
-
-        Returns:
-            List of MarketData objects
-        """
+        """Poll markets from Kalshi API."""
         if not self.rate_limiter.acquire():
             logger.warning("Rate limit exceeded for Kalshi")
             return []
@@ -107,23 +129,15 @@ class KalshiClient:
                 if market:
                     markets.append(market)
 
-            logger.info(f"Polled {len(markets)} markets from Kalshi")
+            logger.info("Polled %d markets from Kalshi", len(markets))
             return markets
 
         except httpx.HTTPError as e:
-            logger.error(f"Kalshi API error: {e}")
+            logger.error("Kalshi API error: %s", e)
             return []
 
     async def get_market(self, ticker: str) -> MarketData | None:
-        """
-        Get single market by ticker.
-
-        Args:
-            ticker: Market ticker
-
-        Returns:
-            MarketData or None if not found
-        """
+        """Get single market by ticker."""
         if not self.rate_limiter.acquire():
             return None
 
@@ -139,24 +153,16 @@ class KalshiClient:
 
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 404:
-                logger.debug(f"Market {ticker} not found")
+                logger.debug("Market %s not found", ticker)
             else:
-                logger.error(f"Error fetching market {ticker}: {e}")
+                logger.error("Error fetching market %s: %s", ticker, e)
             return None
         except httpx.HTTPError as e:
-            logger.error(f"Kalshi API error: {e}")
+            logger.error("Kalshi API error: %s", e)
             return None
 
     async def get_orderbook(self, ticker: str) -> OrderBook | None:
-        """
-        Get orderbook for a market.
-
-        Args:
-            ticker: Market ticker
-
-        Returns:
-            OrderBook or None
-        """
+        """Get orderbook for a market."""
         if not self.rate_limiter.acquire():
             return None
 
@@ -177,7 +183,7 @@ class KalshiClient:
             return book
 
         except httpx.HTTPError as e:
-            logger.error(f"Error fetching orderbook for {ticker}: {e}")
+            logger.error("Error fetching orderbook for %s: %s", ticker, e)
             return None
 
     def _parse_market(self, item: dict) -> MarketData | None:
@@ -206,5 +212,5 @@ class KalshiClient:
                 },
             )
         except (KeyError, ValueError, TypeError) as e:
-            logger.warning(f"Failed to parse market item: {e}")
+            logger.warning("Failed to parse market item: %s", e)
             return None

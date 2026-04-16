@@ -327,7 +327,12 @@ async def _log_risk_checks(
     results: list[RiskCheckResult],
 ) -> None:
     """Write risk check results to the risk_check_log table."""
-    signal_id = getattr(signal, "signal_id", "unknown")
+    # Risk checks always run before the signal is written to DB across all
+    # callers (arb_engine, generator, execution/handler). Logging signal_id
+    # here would always violate the FK constraint. Use NULL — the audit row
+    # remains useful for rejected-trade analysis; the nullable FK contract
+    # still enforces referential integrity when signal_id IS set.
+    signal_id = None
     now = datetime.now(timezone.utc).isoformat()
 
     try:

@@ -6,8 +6,7 @@ run_all_checks() without requiring the full Signal dataclass from
 core/signals/generator.py (which pulls in Redis and other heavy deps).
 """
 
-import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 @dataclass
@@ -26,7 +25,7 @@ class _RiskSignal:
 
     legs: list
     edge: float
-    signal_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    signal_id: str | None = None  # Set by caller; None = not yet persisted to DB
     strategy: str = ""
 
 

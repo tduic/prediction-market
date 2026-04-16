@@ -356,6 +356,7 @@ class ArbitrageEngine:
             ],
             edge=edge,
             strategy=strategy,
+            signal_id=signal_id,
         )
         all_passed, check_results = await run_all_checks(
             risk_signal, self._risk_config, self.db
