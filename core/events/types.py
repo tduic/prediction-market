@@ -3,9 +3,14 @@ Event type definitions for the prediction market trading system.
 All events are immutable dataclasses for type safety and performance.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
+
+
+def _utcnow() -> datetime:
+    """Default factory for event timestamps — current UTC time."""
+    return datetime.now(timezone.utc)
 
 
 @dataclass(frozen=True)
@@ -21,12 +26,7 @@ class MarketUpdated:
     open_interest: float | None = None
     liquidity: float | None = None
     poll_latency_ms: int | None = None
-    timestamp: datetime = None
-
-    def __post_init__(self):
-        """Set timestamp if not provided."""
-        if self.timestamp is None:
-            object.__setattr__(self, "timestamp", datetime.now(timezone.utc))
+    timestamp: datetime = field(default_factory=_utcnow)
 
 
 @dataclass(frozen=True)
@@ -46,12 +46,7 @@ class ViolationDetected:
     net_spread: float
     fee_estimate_a: float
     fee_estimate_b: float
-    timestamp: datetime = None
-
-    def __post_init__(self):
-        """Set timestamp if not provided."""
-        if self.timestamp is None:
-            object.__setattr__(self, "timestamp", datetime.now(timezone.utc))
+    timestamp: datetime = field(default_factory=_utcnow)
 
 
 @dataclass(frozen=True)
@@ -73,12 +68,7 @@ class SignalFired:
     position_size_b: float | None
     total_capital_at_risk: float
     sizing_method: str  # e.g., 'kelly', 'fixed_pct', 'exposure_limit'
-    timestamp: datetime = None
-
-    def __post_init__(self):
-        """Set timestamp if not provided."""
-        if self.timestamp is None:
-            object.__setattr__(self, "timestamp", datetime.now(timezone.utc))
+    timestamp: datetime = field(default_factory=_utcnow)
 
 
 @dataclass(frozen=True)
@@ -86,12 +76,7 @@ class SignalQueued:
     """Fired when a signal enters the processing queue."""
 
     signal_id: str
-    timestamp: datetime = None
-
-    def __post_init__(self):
-        """Set timestamp if not provided."""
-        if self.timestamp is None:
-            object.__setattr__(self, "timestamp", datetime.now(timezone.utc))
+    timestamp: datetime = field(default_factory=_utcnow)
 
 
 @dataclass(frozen=True)
@@ -107,12 +92,7 @@ class OrderSubmitted:
     order_type: str  # 'LIMIT', 'MARKET'
     requested_price: float | None
     requested_size: float
-    timestamp: datetime = None
-
-    def __post_init__(self):
-        """Set timestamp if not provided."""
-        if self.timestamp is None:
-            object.__setattr__(self, "timestamp", datetime.now(timezone.utc))
+    timestamp: datetime = field(default_factory=_utcnow)
 
 
 @dataclass(frozen=True)
@@ -126,12 +106,7 @@ class OrderFilled:
     fill_time: datetime
     slippage: float | None = None
     fee_paid: float | None = None
-    timestamp: datetime = None
-
-    def __post_init__(self):
-        """Set timestamp if not provided."""
-        if self.timestamp is None:
-            object.__setattr__(self, "timestamp", datetime.now(timezone.utc))
+    timestamp: datetime = field(default_factory=_utcnow)
 
 
 @dataclass(frozen=True)
@@ -141,12 +116,7 @@ class OrderCancelled:
     order_id: str
     platform: str
     reason: str
-    timestamp: datetime = None
-
-    def __post_init__(self):
-        """Set timestamp if not provided."""
-        if self.timestamp is None:
-            object.__setattr__(self, "timestamp", datetime.now(timezone.utc))
+    timestamp: datetime = field(default_factory=_utcnow)
 
 
 @dataclass(frozen=True)
@@ -157,12 +127,7 @@ class OrderFailed:
     platform: str
     reason: str
     error_detail: str | None = None
-    timestamp: datetime = None
-
-    def __post_init__(self):
-        """Set timestamp if not provided."""
-        if self.timestamp is None:
-            object.__setattr__(self, "timestamp", datetime.now(timezone.utc))
+    timestamp: datetime = field(default_factory=_utcnow)
 
 
 @dataclass(frozen=True)
@@ -180,12 +145,7 @@ class PositionUpdated:
     unrealized_pnl: float
     unrealized_pnl_pct: float
     status: str  # 'open', 'closed', 'partial'
-    timestamp: datetime = None
-
-    def __post_init__(self):
-        """Set timestamp if not provided."""
-        if self.timestamp is None:
-            object.__setattr__(self, "timestamp", datetime.now(timezone.utc))
+    timestamp: datetime = field(default_factory=_utcnow)
 
 
 @dataclass(frozen=True)
@@ -202,12 +162,7 @@ class PositionClosed:
     realized_pnl_pct: float
     fees_paid: float
     holding_period_seconds: int
-    timestamp: datetime = None
-
-    def __post_init__(self):
-        """Set timestamp if not provided."""
-        if self.timestamp is None:
-            object.__setattr__(self, "timestamp", datetime.now(timezone.utc))
+    timestamp: datetime = field(default_factory=_utcnow)
 
 
 @dataclass(frozen=True)
@@ -221,12 +176,7 @@ class RiskCheckFailed:
     check_value: float
     threshold: float
     detail: str
-    timestamp: datetime = None
-
-    def __post_init__(self):
-        """Set timestamp if not provided."""
-        if self.timestamp is None:
-            object.__setattr__(self, "timestamp", datetime.now(timezone.utc))
+    timestamp: datetime = field(default_factory=_utcnow)
 
 
 @dataclass(frozen=True)
@@ -243,12 +193,7 @@ class PnLSnapshot:
     realized_pnl_total: float
     fees_today: float
     fees_total: float
-    timestamp: datetime = None
-
-    def __post_init__(self):
-        """Set timestamp if not provided."""
-        if self.timestamp is None:
-            object.__setattr__(self, "timestamp", datetime.now(timezone.utc))
+    timestamp: datetime = field(default_factory=_utcnow)
 
 
 @dataclass(frozen=True)
@@ -260,12 +205,7 @@ class SystemEvent:
     component: str  # e.g., 'ingestor', 'constraint_engine', 'execution'
     detail: str
     context: dict[str, Any] | None = None
-    timestamp: datetime = None
-
-    def __post_init__(self):
-        """Set timestamp if not provided."""
-        if self.timestamp is None:
-            object.__setattr__(self, "timestamp", datetime.now(timezone.utc))
+    timestamp: datetime = field(default_factory=_utcnow)
 
 
 # Type union for all events
