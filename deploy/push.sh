@@ -83,6 +83,7 @@ rm -f "$TARBALL"
 # Extract and rsync into place on the VM
 $GCE_SSH "sudo mkdir -p /tmp/predictor-staging \
   && sudo tar xzf /tmp/predictor-deploy.tar.gz -C /tmp/predictor-staging \
+  && sudo rm -rf /data/predictor/prediction-market/dashboard/dist \
   && sudo rsync -a --delete \
     --exclude='.env' \
     --exclude='*.db' \
