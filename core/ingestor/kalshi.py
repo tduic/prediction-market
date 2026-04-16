@@ -135,16 +135,19 @@ class KalshiClient:
             return []
 
         try:
-            params = {"limit": limit, "offset": offset}
+            params: dict[str, str | int] = {"limit": limit, "offset": offset}
             if status:
                 params["status"] = status
             if category:
                 params["category"] = category
 
-            path = "/markets?" + "&".join(f"{k}={v}" for k, v in params.items())
-            headers = self._sign_request("GET", path)
+            # Sign the canonical full API path without the query string. Kalshi's
+            # signature covers method + path only; query params must be sent as
+            # a separate dict to httpx. See scripts/verify_api_auth.py and
+            # core/ingestor/store.py for the canonical pattern.
+            headers = self._sign_request("GET", "/trade-api/v2/markets")
 
-            response = await self.client.get(path, headers=headers)
+            response = await self.client.get("/markets", headers=headers, params=params)
             response.raise_for_status()
             data = response.json()
 
@@ -173,10 +176,12 @@ class KalshiClient:
             return None
 
         try:
-            path = f"/markets/{ticker}"
-            headers = self._sign_request("GET", path)
+            # Sign the canonical full API path (includes /trade-api/v2 prefix);
+            # the request URL stays relative to api_base which already has the
+            # prefix baked in.
+            headers = self._sign_request("GET", f"/trade-api/v2/markets/{ticker}")
 
-            response = await self.client.get(path, headers=headers)
+            response = await self.client.get(f"/markets/{ticker}", headers=headers)
             response.raise_for_status()
             item = response.json()
 
@@ -204,10 +209,15 @@ class KalshiClient:
             return None
 
         try:
-            path = f"/markets/{ticker}/orderbook"
-            headers = self._sign_request("GET", path)
+            # Sign the canonical full API path (with /trade-api/v2 prefix);
+            # request URL stays relative to api_base.
+            headers = self._sign_request(
+                "GET", f"/trade-api/v2/markets/{ticker}/orderbook"
+            )
 
-            response = await self.client.get(path, headers=headers)
+            response = await self.client.get(
+                f"/markets/{ticker}/orderbook", headers=headers
+            )
             response.raise_for_status()
             data = response.json()
 
