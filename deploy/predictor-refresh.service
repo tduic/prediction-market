@@ -20,9 +20,7 @@ Environment="ALERT_DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/REDACTED
 # Re-fetch all markets, re-match, write to DB, then exit.
 # The running predictor.service will pick up fresh pairs on next restart.
 ExecStart=/data/predictor/venv/bin/python \
-    scripts/paper_trading_session.py \
-    --refresh \
-    --once
+    scripts/refresh_markets.py
 
 # Give the refresh plenty of time (match phase is ~100 min on first run)
 TimeoutStartSec=7200

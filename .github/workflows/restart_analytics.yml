@@ -1,0 +1,57 @@
+name: Restart Analytics
+
+on:
+  workflow_dispatch:
+
+env:
+  PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  ZONE: ${{ secrets.GCP_ZONE || 'us-central1-a' }}
+  VM_NAME: ${{ secrets.GCP_VM_NAME || 'predictor-vm' }}
+
+jobs:
+  restart-analytics:
+    name: Restart Analytics on VM
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up gcloud CLI
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: Check service status
+        run: |
+          echo "=== predictor.service status ==="
+          gcloud compute ssh "$VM_NAME" \
+            --zone="$ZONE" --project="$PROJECT_ID" \
+            --command="sudo systemctl status predictor --no-pager -l | head -30"
+
+      - name: Run market refresh
+        run: |
+          gcloud compute ssh "$VM_NAME" \
+            --zone="$ZONE" --project="$PROJECT_ID" \
+            --command="sudo systemctl start predictor-refresh.service && echo 'Refresh triggered'"
+
+      - name: Take phase0 baseline snapshot
+        run: |
+          gcloud compute ssh "$VM_NAME" \
+            --zone="$ZONE" --project="$PROJECT_ID" \
+            --command="sudo -u predictor /data/predictor/venv/bin/python /data/predictor/prediction-market/scripts/take_baseline.py"
+
+      - name: Restart predictor service
+        run: |
+          gcloud compute ssh "$VM_NAME" \
+            --zone="$ZONE" --project="$PROJECT_ID" \
+            --command="sudo systemctl restart predictor && sleep 10 && sudo systemctl is-active predictor"
+
+      - name: Tail recent logs
+        run: |
+          gcloud compute ssh "$VM_NAME" \
+            --zone="$ZONE" --project="$PROJECT_ID" \
+            --command="sudo journalctl -u predictor -n 40 --no-pager"
