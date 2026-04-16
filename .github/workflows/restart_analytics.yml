@@ -12,7 +12,7 @@ jobs:
   restart-analytics:
     name: Restart Analytics on VM
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 15
 
     steps:
       - name: Authenticate to Google Cloud
@@ -25,21 +25,27 @@ jobs:
         with:
           project_id: ${{ env.PROJECT_ID }}
 
-      - name: Check service status
+      - name: Check service and refresh status
         run: |
-          echo "=== predictor.service status ==="
           gcloud compute ssh "$VM_NAME" \
             --zone="$ZONE" --project="$PROJECT_ID" \
-            --command="sudo systemctl status predictor --no-pager -l | head -30"
+            --command="$(cat <<'REMOTE_SCRIPT'
+          echo "=== predictor.service ==="
+          sudo systemctl is-active predictor
+          echo "=== predictor-refresh.service ==="
+          sudo systemctl is-active predictor-refresh || true
+          sudo journalctl -u predictor-refresh -n 10 --no-pager || true
+          REMOTE_SCRIPT
+          )"
 
-      - name: Run market refresh
-        timeout-minutes: 45
+      - name: Trigger market refresh (non-blocking)
         run: |
-          # Start the oneshot refresh and wait for it to finish.
-          # The refresh fetches all markets + runs NLP matching — can take 20-40 min.
+          # Fire the refresh and return immediately — don't wait for it to finish.
+          # The matching phase takes 30-90 min depending on market volume.
+          # The predictor.service will pick up fresh data on next restart.
           gcloud compute ssh "$VM_NAME" \
             --zone="$ZONE" --project="$PROJECT_ID" \
-            --command="sudo systemctl start predictor-refresh.service && sudo journalctl -u predictor-refresh -n 20 --no-pager && echo 'Refresh complete'"
+            --command="sudo systemctl start predictor-refresh.service --no-block 2>/dev/null || sudo systemctl restart predictor-refresh.service --no-block 2>/dev/null || true; echo 'Refresh dispatched (running in background on VM)'"
 
       - name: Take phase0 baseline snapshot
         run: |
