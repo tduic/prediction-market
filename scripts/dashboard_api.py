@@ -86,7 +86,9 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
     _dash_password = os.getenv("DASHBOARD_PASSWORD", "")
     if _dash_password:
         _dash_user = os.getenv("DASHBOARD_USER", "admin")
-        app.add_middleware(_BasicAuthMiddleware, username=_dash_user, password=_dash_password)
+        app.add_middleware(
+            _BasicAuthMiddleware, username=_dash_user, password=_dash_password
+        )
 
     # CORS middleware.
     #

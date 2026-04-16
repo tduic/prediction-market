@@ -192,7 +192,9 @@ async def main():
             # Yield to let uvicorn bind before continuing
             await asyncio.sleep(0.5)
             logger.info(
-                "Dashboard live at http://%s:%d", args.dashboard_host, args.dashboard_port
+                "Dashboard live at http://%s:%d",
+                args.dashboard_host,
+                args.dashboard_port,
             )
 
         # ── Step 1: Get matches (refresh or load from cache) ──
