@@ -27,7 +27,7 @@ class RuleTemplate:
         self.name = name
         self.category = category
 
-    def extract_key_info(self, title: str) -> dict[str, str] | None:
+    def extract_key_info(self, title: str) -> dict[str, str | None] | None:
         """
         Extract key information from market title.
 
@@ -55,7 +55,7 @@ class FOCMTemplate(RuleTemplate):
             r"Interest.*?Rate.*?Decision.*?FOMC",
         ]
 
-    def extract_key_info(self, title: str) -> dict[str, str] | None:
+    def extract_key_info(self, title: str) -> dict[str, str | None] | None:
         """Extract FOMC decision info from title."""
         title_lower = title.lower()
 
@@ -87,7 +87,7 @@ class CPITemplate(RuleTemplate):
             r"Inflation.*?Rate",
         ]
 
-    def extract_key_info(self, title: str) -> dict[str, str] | None:
+    def extract_key_info(self, title: str) -> dict[str, str | None] | None:
         """Extract CPI decision info from title."""
         title_lower = title.lower()
 
@@ -117,7 +117,7 @@ class ElectionTemplate(RuleTemplate):
             r"(Trump|Harris|DeSantis|Newsom).*?(President|Senate|House)",
         ]
 
-    def extract_key_info(self, title: str) -> dict[str, str] | None:
+    def extract_key_info(self, title: str) -> dict[str, str | None] | None:
         """Extract election info from title."""
         title_lower = title.lower()
 
@@ -126,7 +126,9 @@ class ElectionTemplate(RuleTemplate):
             if match:
                 return {
                     "event_type": "ELECTION",
-                    "race_type": match.group(2) if match.lastindex >= 2 else "election",
+                    "race_type": (
+                        match.group(2) if (match.lastindex or 0) >= 2 else "election"
+                    ),
                     "normalized_title": re.sub(
                         r"(polymarket|kalshi|metaculus)", "", title_lower
                     ).strip(),
@@ -146,7 +148,7 @@ class SportsTemplate(RuleTemplate):
             r"(AFC|NFC|NBA|MLB|NHL|Premier League)",
         ]
 
-    def extract_key_info(self, title: str) -> dict[str, str] | None:
+    def extract_key_info(self, title: str) -> dict[str, str | None] | None:
         """Extract sports info from title."""
         title_lower = title.lower()
 
@@ -184,9 +186,9 @@ class TemplateRegistry:
         """Get all templates for a category."""
         return [t for t in self.templates if t.category == category]
 
-    def extract_info_all(self, title: str) -> list[dict[str, str]]:
+    def extract_info_all(self, title: str) -> list[dict[str, str | None]]:
         """Try all templates on a title."""
-        results = []
+        results: list[dict[str, str | None]] = []
         for template in self.templates:
             info = template.extract_key_info(title)
             if info:
@@ -253,7 +255,7 @@ def match_by_rules(
     return None
 
 
-def _events_match(info_a: dict[str, str], info_b: dict[str, str]) -> bool:
+def _events_match(info_a: dict[str, str | None], info_b: dict[str, str | None]) -> bool:
     """Check if two extracted event infos match."""
     # Events must be of same type
     if info_a.get("event_type") != info_b.get("event_type"):
@@ -275,7 +277,10 @@ def _events_match(info_a: dict[str, str], info_b: dict[str, str]) -> bool:
 
 
 def _infer_pair_type(
-    title_a: str, title_b: str, info_a: dict[str, str], info_b: dict[str, str]
+    title_a: str,
+    title_b: str,
+    info_a: dict[str, str | None],
+    info_b: dict[str, str | None],
 ) -> str:
     """Infer the pair type from market titles and extracted info."""
     # Check for subset/superset patterns

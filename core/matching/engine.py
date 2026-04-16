@@ -230,7 +230,9 @@ def _find_matches_sync(
             continue
 
         # Find candidate Kalshi markets: those sharing ANY token
-        candidate_counts = defaultdict(int)  # kalshi_id -> shared_token_count
+        candidate_counts: defaultdict[str, int] = defaultdict(
+            int
+        )  # kalshi_id → shared tokens
         for token in p_tokens:
             for k_id in kalshi_index.get(token, set()):
                 if k_id not in used_kalshi:
@@ -412,8 +414,8 @@ async def load_cached_matches(db: aiosqlite.Connection) -> list[dict]:
         JOIN markets mb ON mb.id = mp.market_id_b
         WHERE mp.active = 1 AND mp.pair_type = 'cross_platform'
     """)
-    rows = await cursor.fetchall()
-    matches = []
+    rows = list(await cursor.fetchall())
+    matches: list[dict] = []
     for r in rows:
         if r[5] and r[6]:  # both prices exist
             matches.append(

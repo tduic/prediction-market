@@ -277,7 +277,7 @@ class MarketPairCurator:
             True if updated successfully, False otherwise
         """
         try:
-            updates = {}
+            updates: dict[str, Any] = {}
 
             if pair_type is not None:
                 updates["pair_type"] = pair_type
@@ -339,7 +339,7 @@ class MarketPairCurator:
             logger.error(f"Error getting verified pairs: {e}")
             return []
 
-    async def get_pair_stats(self) -> dict:
+    async def get_pair_stats(self) -> dict[str, Any]:
         """
         Get statistics about market pairs.
 
@@ -347,7 +347,7 @@ class MarketPairCurator:
             Dictionary with pair statistics
         """
         try:
-            stats = {
+            stats: dict[str, Any] = {
                 "total_pairs": 0,
                 "active_pairs": 0,
                 "inactive_pairs": 0,

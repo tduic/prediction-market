@@ -1,6 +1,7 @@
 """Sentence embeddings for semantic market matching."""
 
 import logging
+from typing import Any
 
 import numpy as np
 
@@ -26,7 +27,10 @@ class MarketEmbedder:
             ImportError: If sentence-transformers not installed
         """
         self.model_name = model_name
-        self._model = None
+        # _model is typed Any because sentence_transformers is an optional
+        # dependency. When installed it's a SentenceTransformer; when not,
+        # it stays None and self._available gates all access.
+        self._model: Any = None
         self._available = False
 
         try:
