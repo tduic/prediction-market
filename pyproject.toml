@@ -1,0 +1,60 @@
+[tool.mypy]
+python_version = "3.14"
+ignore_missing_imports = true
+show_error_codes = true
+warn_unused_ignores = true
+warn_return_any = false
+no_implicit_optional = true
+
+# Phased typing rollout.
+#
+# Each module listed below has outstanding mypy errors that we are working
+# through phase by phase (see PR history: phases 1–10 of the typing
+# initiative). As each phase cleans a module, remove it from this list and
+# the blocking mypy check in CI will start enforcing types on it.
+#
+# Goal state: this overrides block is empty, and the root [tool.mypy]
+# section above is the only config.
+[[tool.mypy.overrides]]
+module = [
+    "core.analytics",
+    "core.constraints.engine",
+    "core.events.types",
+    "core.ingestor.external",
+    "core.ingestor.kalshi",
+    "core.ingestor.polymarket",
+    "core.ingestor.store",
+    "core.ingestor.streamer",
+    "core.invariants",
+    "core.logging_config",
+    "core.matching.curator",
+    "core.matching.embedder",
+    "core.matching.engine",
+    "core.matching.rules",
+    "core.models",
+    "core.models.calibration",
+    "core.models.fomc",
+    "core.models.registry",
+    "core.models.training",
+    "core.secrets",
+    "core.signals.backpressure",
+    "core.signals.dlq",
+    "core.signals.queue",
+    "core.snapshots.phase0",
+    "core.snapshots.pnl",
+    "core.storage.db",
+    "core.storage.queries.markets",
+    "core.storage.queries.positions",
+    "core.storage.queries.signals",
+    "core.strategies.batch",
+    "core.strategies.single_platform",
+    "execution.clients.kalshi",
+    "execution.clients.mock",
+    "execution.clients.polymarket",
+    "execution.factory",
+    "execution.main",
+    "execution.reconciliation",
+    "execution.resolution",
+    "execution.router",
+]
+ignore_errors = true

@@ -65,7 +65,7 @@ def check_live_gate(
 
     # --- 6.2: Daily confirmation code ---
     # Use the argument if provided (not the sentinel default); else read env.
-    if confirmation_code is ...:  # type: ignore[comparison-overlap]
+    if confirmation_code is ...:
         confirmation_code = os.getenv("LIVE_CONFIRMATION_CODE")
 
     today = date.today().isoformat()
