@@ -12,7 +12,7 @@ jobs:
   restart-analytics:
     name: Restart Analytics on VM
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
 
     steps:
       - name: Authenticate to Google Cloud
@@ -33,10 +33,13 @@ jobs:
             --command="sudo systemctl status predictor --no-pager -l | head -30"
 
       - name: Run market refresh
+        timeout-minutes: 45
         run: |
+          # Start the oneshot refresh and wait for it to finish.
+          # The refresh fetches all markets + runs NLP matching — can take 20-40 min.
           gcloud compute ssh "$VM_NAME" \
             --zone="$ZONE" --project="$PROJECT_ID" \
-            --command="sudo systemctl start predictor-refresh.service && echo 'Refresh triggered'"
+            --command="sudo systemctl start predictor-refresh.service && sudo journalctl -u predictor-refresh -n 20 --no-pager && echo 'Refresh complete'"
 
       - name: Take phase0 baseline snapshot
         run: |
