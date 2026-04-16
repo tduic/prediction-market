@@ -118,8 +118,8 @@ async def update_order(
     """
     now = datetime.now(timezone.utc).isoformat()
 
-    updates = []
-    params = []
+    updates: list[str] = []
+    params: list[Any] = []
 
     if filled_price is not None:
         updates.append("filled_price = ?")
@@ -353,8 +353,8 @@ async def update_position(
     """
     now = datetime.now(timezone.utc).isoformat()
 
-    updates = []
-    params = []
+    updates: list[str] = []
+    params: list[Any] = []
 
     if current_price is not None:
         updates.append("current_price = ?")
