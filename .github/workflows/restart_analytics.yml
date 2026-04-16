@@ -51,7 +51,29 @@ jobs:
         run: |
           gcloud compute ssh "$VM_NAME" \
             --zone="$ZONE" --project="$PROJECT_ID" \
-            --command="cd /data/predictor/prediction-market && sudo -u predictor /data/predictor/venv/bin/python scripts/take_baseline.py"
+            --command="$(cat <<'REMOTE_SCRIPT'
+          cd /data/predictor/prediction-market
+          sudo -u predictor /data/predictor/venv/bin/python - <<'PYEOF'
+          import asyncio, sys, os
+          sys.path.insert(0, '/data/predictor/prediction-market')
+          os.environ.setdefault('DOTENV_PATH', '/data/predictor/.env')
+          from dotenv import load_dotenv
+          load_dotenv('/data/predictor/.env')
+          import aiosqlite
+          from core.config import get_config
+          from core.snapshots.phase0 import take_phase0_baseline_snapshot
+
+          async def run():
+              cfg = get_config()
+              async with aiosqlite.connect(cfg.database.db_path, timeout=30) as db:
+                  await db.execute('PRAGMA journal_mode=WAL')
+                  await take_phase0_baseline_snapshot(db)
+                  print('Phase0 baseline snapshot taken.')
+
+          asyncio.run(run())
+          PYEOF
+          REMOTE_SCRIPT
+          )"
 
       - name: Restart predictor service
         run: |
