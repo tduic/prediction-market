@@ -9,6 +9,7 @@ import asyncio
 import logging
 import os
 import time
+from typing import Any
 
 import aiosqlite
 
@@ -18,11 +19,12 @@ from execution.models import OrderLeg
 
 logger = logging.getLogger(__name__)
 
-# Lazy imports for py_clob_client
-_ClobClient = None
-_ApiCreds = None
-_OrderArgs = None
-_OrderType = None
+# Lazy imports for py_clob_client — runtime-bound by _ensure_clob_imports().
+# Typed Any so call-sites after the ensure-call don't fight mypy's None-narrowing.
+_ClobClient: Any = None
+_ApiCreds: Any = None
+_OrderArgs: Any = None
+_OrderType: Any = None
 
 # Polymarket is fee-free for makers, takers pay ~1-2%
 POLYMARKET_FEE_RATE = 0.02
@@ -61,9 +63,9 @@ class PolymarketExecutionClient(BaseExecutionClient):
         self.signature_type = int(os.getenv("POLYMARKET_SIGNATURE_TYPE", "1"))
 
         # SOCKS5 proxy URL for EU routing (e.g. "socks5://1.2.3.4:1080")
-        self.proxy_url = proxy_url or os.getenv("POLYMARKET_PROXY", "")
+        self.proxy_url: str = proxy_url or os.getenv("POLYMARKET_PROXY") or ""
 
-        self._client = None
+        self._client: Any = None
         self._initialized = False
 
         # Rate limiter

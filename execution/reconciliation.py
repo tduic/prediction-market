@@ -77,7 +77,9 @@ class ReconciliationEngine:
                 "timestamp": ISO8601 string
             }
         """
-        report = {"timestamp": datetime.now(timezone.utc).isoformat()}
+        report: dict[str, object] = {
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }
 
         try:
             # Polymarket reconciliation
@@ -168,7 +170,9 @@ class ReconciliationEngine:
                 "timestamp": ISO8601 string
             }
         """
-        report = {"timestamp": datetime.now(timezone.utc).isoformat()}
+        report: dict[str, object] = {
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }
 
         try:
             # Polymarket positions (from order history)

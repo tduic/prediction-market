@@ -57,7 +57,7 @@ class ExecutionService:
             migrations_dir=cfg.database.migrations_dir,
         )
         await self.db.init()
-        self.db_connection = self.db._conn
+        self.db_connection = self.db._require_conn()
 
         self.signal_handler = SignalHandler(
             self.db_connection,
@@ -160,7 +160,8 @@ class ExecutionService:
 
         while self.running:
             try:
-                result = await self.redis_client.brpop(queue_name, timeout=1)
+                # redis-py async client return types are Awaitable[T] | T due to sync/async mixin sharing
+                result = await self.redis_client.brpop([queue_name], timeout=1)  # type: ignore[misc]
 
                 if result is None:
                     continue

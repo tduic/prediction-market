@@ -12,6 +12,7 @@ from enum import Enum
 
 import aiosqlite
 
+from execution.clients.base import BaseExecutionClient
 from execution.models import OrderLeg
 
 logger = logging.getLogger(__name__)
@@ -63,6 +64,9 @@ class OrderRouter:
         self.execution_mode = execution_mode
         self.max_retries = max_retries
         self.retry_backoff_base_s = retry_backoff_base_s
+
+        self.polymarket_client: BaseExecutionClient
+        self.kalshi_client: BaseExecutionClient
 
         if execution_mode == "live":
             logger.info("Initializing router in LIVE execution mode")
@@ -135,7 +139,18 @@ class OrderRouter:
                     details=f"Submitted to {platform}",
                 )
 
-                return result
+                # Adapt base.OrderResult → router.OrderResult (adds leg_index,
+                # drops fill-price/size/fee/slippage which the router does not
+                # expose upstream).
+                return OrderResult(
+                    order_id=result.order_id,
+                    leg_index=leg_index,
+                    platform=result.platform,
+                    status=result.status,
+                    submission_latency_ms=result.submission_latency_ms,
+                    fill_latency_ms=result.fill_latency_ms,
+                    error_message=result.error_message,
+                )
 
             except Exception as e:
                 logger.warning(
@@ -245,7 +260,7 @@ class OrderRouter:
         raw = await asyncio.gather(*tasks, return_exceptions=True)
         results: list[OrderResult] = []
         for idx, res in enumerate(raw):
-            if isinstance(res, Exception):
+            if isinstance(res, BaseException):
                 logger.error(
                     "Simultaneous leg %d raised exception: %s", idx, res, exc_info=res
                 )

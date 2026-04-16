@@ -481,7 +481,7 @@ class MockExecutionClient:
         except Exception as e:
             logger.error("[MOCK] Failed to write fill event to DB: %s", e)
 
-    def get_stats(self) -> dict[str, int]:
+    def get_stats(self) -> dict[str, int | float]:
         """Return summary stats for the mock session."""
         return {
             "total_submitted": self.total_submitted,

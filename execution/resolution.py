@@ -60,7 +60,7 @@ class ResolutionMonitor:
                 FROM positions
                 WHERE status = 'open'
                 """)
-            open_positions = await cursor.fetchall()
+            open_positions = list(await cursor.fetchall())
             summary["checked"] = len(open_positions)
 
             if not open_positions:

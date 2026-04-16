@@ -8,10 +8,14 @@ execution_mode parameter.
 
 import logging
 
+from execution.clients.base import BaseExecutionClient
+
 logger = logging.getLogger(__name__)
 
 
-def _make_execution_clients(db, execution_mode: str):
+def _make_execution_clients(
+    db, execution_mode: str
+) -> tuple[BaseExecutionClient, BaseExecutionClient]:
     """
     Return (poly_client, kalshi_client) for the given execution mode.
 
@@ -21,6 +25,8 @@ def _make_execution_clients(db, execution_mode: str):
     Shadow mode uses paper clients by design: full signal/risk pipeline runs
     but no real orders are submitted.
     """
+    poly_client: BaseExecutionClient
+    kalshi_client: BaseExecutionClient
     if execution_mode == "live":
         from execution.clients.kalshi import KalshiExecutionClient
         from execution.clients.polymarket import PolymarketExecutionClient

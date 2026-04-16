@@ -28,13 +28,5 @@ module = [
     "core.storage.queries.signals",
     "core.strategies.batch",
     "core.strategies.single_platform",
-    "execution.clients.kalshi",
-    "execution.clients.mock",
-    "execution.clients.polymarket",
-    "execution.factory",
-    "execution.main",
-    "execution.reconciliation",
-    "execution.resolution",
-    "execution.router",
 ]
 ignore_errors = true

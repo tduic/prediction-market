@@ -17,6 +17,7 @@ import aiosqlite
 import httpx
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding
+from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey
 
 from core.secrets import get_secret
 from execution.clients.base import BaseExecutionClient, OrderResult
@@ -28,12 +29,18 @@ DEFAULT_TIMEOUT = 30
 KALSHI_FEE_RATE = 0.07  # Kalshi charges ~7% of profit on winning contracts
 
 
-def _load_rsa_private_key(key_path: str) -> object:
+def _load_rsa_private_key(key_path: str) -> RSAPrivateKey:
     """Load RSA private key from PEM file."""
     expanded = Path(key_path).expanduser()
     if not expanded.exists():
         raise FileNotFoundError(f"RSA key file not found: {expanded}")
-    return serialization.load_pem_private_key(expanded.read_bytes(), password=None)
+    key = serialization.load_pem_private_key(expanded.read_bytes(), password=None)
+    if not isinstance(key, RSAPrivateKey):
+        raise TypeError(
+            f"Kalshi key at {expanded} is not an RSA private key "
+            f"(got {type(key).__name__})"
+        )
+    return key
 
 
 class KalshiExecutionClient(BaseExecutionClient):
@@ -48,16 +55,18 @@ class KalshiExecutionClient(BaseExecutionClient):
     ) -> None:
         super().__init__(db_connection, platform_label="kalshi")
 
-        self.api_key = api_key or get_secret("KALSHI_API_KEY", "") or ""
-        self.api_base = api_base or os.getenv(
-            "KALSHI_API_BASE", "https://api.elections.kalshi.com/trade-api/v2"
+        self.api_key: str = api_key or get_secret("KALSHI_API_KEY", "") or ""
+        self.api_base: str = (
+            api_base
+            or os.getenv("KALSHI_API_BASE")
+            or "https://api.elections.kalshi.com/trade-api/v2"
         )
 
         # Load RSA key. Key path is a filesystem pointer, not a secret, so
         # it stays in env vars. The key material itself lives on disk with
         # mode 0600 and is optionally mounted from a Secret Manager volume.
         key_path = rsa_key_path or get_secret("KALSHI_RSA_KEY_PATH", "") or ""
-        self._private_key = None
+        self._private_key: RSAPrivateKey | None = None
         if key_path:
             try:
                 self._private_key = _load_rsa_private_key(key_path)
