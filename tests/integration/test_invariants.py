@@ -349,7 +349,7 @@ class TestCheckAllInvariants:
 class TestRunOneCycleAlertManager:
     async def test_alert_manager_forwarded_on_invariant_violation(self, db):
         """When runner has an alert_manager and an invariant fails, send() is called."""
-        from scripts.paper_trading_session import ScheduledStrategyRunner
+        from core.engine import ScheduledStrategyRunner
 
         await _seed_signal(db, "sig1")
         await _seed_closed_position(db, signal_id="sig1", realized_pnl=9999.0)
@@ -362,7 +362,7 @@ class TestRunOneCycleAlertManager:
 
     async def test_no_error_when_alert_manager_is_none(self, db):
         """run_one_cycle works without alert_manager (backward compatibility)."""
-        from scripts.paper_trading_session import ScheduledStrategyRunner
+        from core.engine import ScheduledStrategyRunner
 
         runner = ScheduledStrategyRunner(db)
         # Should not raise
@@ -370,7 +370,7 @@ class TestRunOneCycleAlertManager:
 
     async def test_no_alert_on_clean_db(self, db):
         """alert_manager.send() not called when all invariants pass."""
-        from scripts.paper_trading_session import ScheduledStrategyRunner
+        from core.engine import ScheduledStrategyRunner
 
         mock_mgr = AsyncMock()
         runner = ScheduledStrategyRunner(db, alert_manager=mock_mgr)
