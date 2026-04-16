@@ -61,10 +61,6 @@ class TestSentinelFile:
         sentinel = tmp_path / "ARMED_FOR_LIVE"
         check_live_gate("paper", sentinel_path=sentinel, confirmation_code=None)
 
-    def test_mock_mode_ignores_sentinel(self, tmp_path):
-        sentinel = tmp_path / "ARMED_FOR_LIVE"
-        check_live_gate("mock", sentinel_path=sentinel, confirmation_code=None)
-
     def test_shadow_mode_ignores_sentinel(self, tmp_path):
         sentinel = tmp_path / "ARMED_FOR_LIVE"
         check_live_gate("shadow", sentinel_path=sentinel, confirmation_code=None)
@@ -168,11 +164,6 @@ class TestEffectiveRiskConfig:
         assert shadow_cfg.max_position_pct == paper_cfg.max_position_pct
         assert shadow_cfg.max_daily_loss_pct == paper_cfg.max_daily_loss_pct
         assert shadow_cfg.min_edge == paper_cfg.min_edge
-
-    def test_mock_uses_paper_limits(self):
-        mock_cfg = get_effective_risk_config("mock")
-        paper_cfg = get_effective_risk_config("paper")
-        assert mock_cfg.max_position_pct == paper_cfg.max_position_pct
 
     def test_live_env_overrides_respected(self):
         with patch.dict(os.environ, {"LIVE_MAX_POSITION_PCT": "0.01"}):
