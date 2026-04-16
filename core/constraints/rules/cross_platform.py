@@ -5,6 +5,10 @@ Detects identical-event spread violations across different platforms.
 
 from dataclasses import dataclass
 
+# Re-exported from core.constraints.fees so the two call-sites share a single
+# FeeConfig type — historical duplication broke mypy strict checks on engine.
+from core.constraints.fees import FeeConfig
+
 
 @dataclass
 class ViolationInfo:
@@ -16,14 +20,7 @@ class ViolationInfo:
     implied_arbitrage: float  # Estimated profit opportunity in percent
 
 
-@dataclass
-class FeeConfig:
-    """Fee configuration for net spread calculation."""
-
-    polymarket: float = 0.02
-    kalshi: float = 0.02
-    manifold: float = 0.01
-    metaculus: float = 0.00
+__all__ = ["FeeConfig", "ViolationInfo", "check"]
 
 
 def _get_platform_fee(platform: str, config: FeeConfig) -> float:

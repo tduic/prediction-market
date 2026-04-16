@@ -64,7 +64,7 @@ async def check_pnl_sanity(db: aiosqlite.Connection) -> InvariantResult:
              AND realized_pnl IS NOT NULL
              AND realized_pnl > entry_size * 1.001"""  # 0.1% tolerance for float rounding
     )
-    offenders = await cursor.fetchall()
+    offenders = list(await cursor.fetchall())
 
     if not offenders:
         return InvariantResult(
@@ -97,7 +97,7 @@ async def check_position_duration(db: aiosqlite.Connection) -> InvariantResult:
              AND closed_at IS NOT NULL
              AND opened_at IS NOT NULL
              AND closed_at <= opened_at""")
-    offenders = await cursor.fetchall()
+    offenders = list(await cursor.fetchall())
 
     if not offenders:
         return InvariantResult(
@@ -129,7 +129,7 @@ async def check_orphan_positions(db: aiosqlite.Connection) -> InvariantResult:
            FROM positions p
            LEFT JOIN signals s ON s.id = p.signal_id
            WHERE s.id IS NULL""")
-    offenders = await cursor.fetchall()
+    offenders = list(await cursor.fetchall())
 
     if not offenders:
         return InvariantResult(
@@ -163,8 +163,8 @@ async def check_fee_ratio(db: aiosqlite.Connection) -> InvariantResult:
              AND entry_size IS NOT NULL
              AND entry_price IS NOT NULL""")
     row = await cursor.fetchone()
-    total_fees = row[0] or 0.0
-    total_notional = row[1] or 0.0
+    total_fees = (row[0] if row else 0.0) or 0.0
+    total_notional = (row[1] if row else 0.0) or 0.0
 
     if total_notional == 0.0:
         return InvariantResult(

@@ -199,7 +199,7 @@ async def detect_violations_and_trade(
                     _pnl_cap,
                     size,
                 )
-                return None
+                continue
 
             pos_id = f"pos_{uuid.uuid4().hex[:12]}"
             try:

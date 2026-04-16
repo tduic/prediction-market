@@ -44,6 +44,8 @@ logger = logging.getLogger(__name__)
 class SecretsBackend(Protocol):
     """Interface that all secret backends must satisfy."""
 
+    name: str
+
     def get(self, name: str, default: str | None = None) -> str | None: ...
 
 
@@ -85,7 +87,7 @@ class GCPSecretManagerBackend:
             try:
                 # Lazy import so the rest of the system works without the
                 # google-cloud-secret-manager dependency installed.
-                from google.cloud import secretmanager  # type: ignore
+                from google.cloud import secretmanager
 
                 self._client = secretmanager.SecretManagerServiceClient()
             except ImportError:

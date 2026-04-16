@@ -15,18 +15,3 @@ no_implicit_optional = true
 #
 # Goal state: this overrides block is empty, and the root [tool.mypy]
 # section above is the only config.
-[[tool.mypy.overrides]]
-module = [
-    "core.analytics",
-    "core.constraints.engine",
-    "core.invariants",
-    "core.logging_config",
-    "core.secrets",
-    "core.snapshots.phase0",
-    "core.snapshots.pnl",
-    "core.storage.queries.markets",
-    "core.storage.queries.signals",
-    "core.strategies.batch",
-    "core.strategies.single_platform",
-]
-ignore_errors = true

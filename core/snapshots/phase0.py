@@ -23,10 +23,12 @@ async def take_phase0_baseline_snapshot(db: aiosqlite.Connection) -> None:
     now = datetime.now(timezone.utc).isoformat()
 
     cursor = await db.execute("SELECT COUNT(*) FROM market_pairs")
-    total_pairs = (await cursor.fetchone())[0]
+    row = await cursor.fetchone()
+    total_pairs = row[0] if row else 0
 
     cursor = await db.execute("SELECT COUNT(*) FROM market_pairs WHERE active=1")
-    active_pairs = (await cursor.fetchone())[0]
+    row = await cursor.fetchone()
+    active_pairs = row[0] if row else 0
 
     pnl_by_strategy: dict[str, float] = {}
     cursor = await db.execute(
@@ -36,7 +38,8 @@ async def take_phase0_baseline_snapshot(db: aiosqlite.Connection) -> None:
         pnl_by_strategy[row[0]] = row[1] or 0.0
 
     cursor = await db.execute("SELECT COUNT(*) FROM trade_outcomes")
-    total_trade_count = (await cursor.fetchone())[0]
+    row = await cursor.fetchone()
+    total_trade_count = row[0] if row else 0
     total_realized_pnl = sum(pnl_by_strategy.values())
 
     await db.execute(

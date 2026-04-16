@@ -161,7 +161,7 @@ async def get_recent_signals(
         List of signal records
     """
     where_clauses = ["datetime(fired_at) > datetime('now', '-' || ? || ' minutes')"]
-    params = [minutes]
+    params: list[Any] = [minutes]
 
     if strategy:
         where_clauses.append("strategy = ?")

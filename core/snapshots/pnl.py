@@ -172,11 +172,14 @@ async def print_analytics(db: aiosqlite.Connection):
     cursor = await db.execute(
         "SELECT COUNT(*) FROM markets WHERE platform = 'polymarket'"
     )
-    poly_count = (await cursor.fetchone())[0]
+    row = await cursor.fetchone()
+    poly_count = row[0] if row else 0
     cursor = await db.execute("SELECT COUNT(*) FROM markets WHERE platform = 'kalshi'")
-    kalshi_count = (await cursor.fetchone())[0]
+    row = await cursor.fetchone()
+    kalshi_count = row[0] if row else 0
     cursor = await db.execute("SELECT COUNT(*) FROM violations")
-    viol_count = (await cursor.fetchone())[0]
+    row = await cursor.fetchone()
+    viol_count = row[0] if row else 0
 
     print(f"\n  Markets: {poly_count} Polymarket + {kalshi_count} Kalshi")
     print(f"  Violations detected: {viol_count}")

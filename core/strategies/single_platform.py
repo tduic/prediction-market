@@ -102,6 +102,8 @@ async def _get_strategy_rolling_pnl(
         (strategy, cutoff),
     )
     row = await cursor.fetchone()
+    if row is None:
+        return 0, 0.0
     return row[0], row[1]
 
 

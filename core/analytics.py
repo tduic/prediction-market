@@ -334,7 +334,7 @@ class TradeLifecycleManager:
                 SELECT id, strategy, side, entry_price, entry_size, current_price
                 FROM positions WHERE status = 'open'
                 """)
-            open_rows = await cursor.fetchall()
+            open_rows = list(await cursor.fetchall())
             cols = [desc[0] for desc in cursor.description]
 
             open_notional = 0.0
@@ -393,8 +393,8 @@ class TradeLifecycleManager:
             cursor = await self.db.execute(
                 "SELECT SUM(realized_pnl) FROM positions WHERE status = 'closed'"
             )
-            row = await cursor.fetchone()
-            realized_pnl_total = row[0] if row[0] else 0.0
+            sum_row = await cursor.fetchone()
+            realized_pnl_total = sum_row[0] if sum_row and sum_row[0] else 0.0
 
             # Get total fees today and all time
             cursor = await self.db.execute(
@@ -403,12 +403,12 @@ class TradeLifecycleManager:
                 """,
                 (today_start,),
             )
-            row = await cursor.fetchone()
-            fees_today = row[0] if row[0] else 0.0
+            sum_row = await cursor.fetchone()
+            fees_today = sum_row[0] if sum_row and sum_row[0] else 0.0
 
             cursor = await self.db.execute("SELECT SUM(fees_paid) FROM positions")
-            row = await cursor.fetchone()
-            fees_total = row[0] if row[0] else 0.0
+            sum_row = await cursor.fetchone()
+            fees_total = sum_row[0] if sum_row and sum_row[0] else 0.0
 
             # Allocate capital across platforms (placeholder)
             capital_polymarket = total_capital * 0.6
@@ -449,7 +449,7 @@ class TradeLifecycleManager:
                 ),
             )
 
-            snapshot_id = cursor.lastrowid
+            snapshot_id = cursor.lastrowid or 0
             await self.db.commit()
 
             self.logger.info(

@@ -129,6 +129,7 @@ async def get_markets_by_platform(
     Returns:
         List of market records
     """
+    params: tuple[Any, ...]
     if status:
         sql = """
         SELECT * FROM markets
@@ -292,6 +293,7 @@ async def get_ingestor_runs(
     Returns:
         List of ingestor run records
     """
+    params: tuple[Any, ...]
     if platform:
         sql = """
         SELECT * FROM ingestor_runs
