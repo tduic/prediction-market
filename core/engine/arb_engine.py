@@ -54,7 +54,6 @@ class ArbitrageEngine:
         self.min_spread = min_spread
         self.trades: list[dict] = []
         self._trade_lock = asyncio.Lock()
-        self._pending_commit = 0
 
         # Phase 2: risk config and circuit breaker.
         # Phase 6: when execution_mode is provided and risk_config is not, use
@@ -718,11 +717,19 @@ class ArbitrageEngine:
                     signal_id,
                 )
 
-            # Batch commit
-            self._pending_commit += 1
-            if self._pending_commit >= 10:
+            # Commit per trade: batching delayed persistence by up to 9 trades,
+            # so a process crash between flushes could drop filled positions
+            # that already moved real capital on the exchange. Reconciliation
+            # can't repair what it can't see. SQLite in WAL mode handles
+            # single-row commits cheaply, so the throughput cost is negligible.
+            try:
                 await self.db.commit()
-                self._pending_commit = 0
+            except Exception:
+                logger.exception(
+                    "Failed to commit positions/trade_outcomes for pair=%s signal_id=%s",
+                    pair_id,
+                    signal_id,
+                )
 
             logger.info(
                 "  ARB FILLED: pnl=$%.4f fees=$%.4f | buy@%.4f sell@%.4f",
@@ -742,10 +749,13 @@ class ArbitrageEngine:
         return None
 
     async def flush(self):
-        """Commit any pending DB writes."""
-        if self._pending_commit > 0:
-            await self.db.commit()
-            self._pending_commit = 0
+        """Commit any pending DB writes.
+
+        No-op under the current per-trade-commit model; retained so callers
+        (trading_session shutdown, tests) can keep their "drain before exit"
+        semantics without caring how persistence is scheduled internally.
+        """
+        await self.db.commit()
 
     def stats(self) -> dict:
         total_pnl = sum(t.get("actual_pnl", 0) for t in self.trades)

@@ -195,6 +195,11 @@ class AlertManager:
         self.transports = transports
         self.dedup_window_s = dedup_window_s
         self._recent: dict[str, float] = {}
+        # Strong references to in-flight send_nowait tasks. asyncio only holds
+        # a weak reference to scheduled tasks, so without this the garbage
+        # collector can cancel a publish mid-flight before the transport
+        # completes. See https://docs.python.org/3/library/asyncio-task.html#asyncio.create_task
+        self._pending_tasks: set[asyncio.Task] = set()
 
     def _dedup_key(self, alert: Alert) -> str:
         # Hash of title+severity+component — body can vary (e.g. timestamps)
@@ -283,7 +288,7 @@ class AlertManager:
             logger.debug("send_nowait called outside running loop: %s", title)
             return
 
-        loop.create_task(
+        task = loop.create_task(
             self.send(
                 title=title,
                 message=message,
@@ -292,6 +297,10 @@ class AlertManager:
                 component=component,
             )
         )
+        # Retain a strong reference so the GC can't cancel the task, and
+        # drop it on completion so the set doesn't grow unboundedly.
+        self._pending_tasks.add(task)
+        task.add_done_callback(self._pending_tasks.discard)
 
 
 # ── Module-level factory ──────────────────────────────────────────────

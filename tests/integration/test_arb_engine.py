@@ -229,11 +229,11 @@ class TestArbTradeExecution:
 @pytest.mark.asyncio
 class TestFlushAndStats:
     async def test_flush_commits(self, db, matches):
+        """flush() should be safe to call on a fresh engine — per-trade commits
+        are the persistence model now, but flush() remains for shutdown drains."""
         await _seed_markets_for_engine(db, matches)
         engine = ArbitrageEngine(db, matches, min_spread=0.03)
-        engine._pending_commit = 5
-        await engine.flush()
-        assert engine._pending_commit == 0
+        await engine.flush()  # no-op commit, must not raise
 
     async def test_stats(self, db, matches):
         await _seed_markets_for_engine(db, matches)

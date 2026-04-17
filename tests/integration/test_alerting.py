@@ -197,6 +197,31 @@ async def test_send_nowait_schedules_task():
     assert len(t.alerts) == 1
 
 
+@pytest.mark.asyncio
+async def test_send_nowait_retains_strong_task_reference():
+    """Without a strong reference, asyncio only weakly holds scheduled tasks
+    and the GC can cancel them mid-flight. AlertManager must keep them in
+    _pending_tasks until they complete, then drop them."""
+    import asyncio as _a
+
+    t = CollectingTransport()
+    mgr = AlertManager(transports=[t], dedup_window_s=60)
+
+    mgr.send_nowait(title="ref", message="m", severity=Severity.INFO)
+
+    # While the task is pending it must be retained.
+    assert len(mgr._pending_tasks) == 1
+
+    # Explicitly await the scheduled task to completion, then yield once more
+    # so the done_callback (which .discard()s from _pending_tasks) runs.
+    pending = list(mgr._pending_tasks)
+    await _a.gather(*pending)
+    await _a.sleep(0)
+
+    assert len(t.alerts) == 1
+    assert len(mgr._pending_tasks) == 0  # cleaned up after done
+
+
 def test_send_nowait_outside_loop_is_safe():
     """send_nowait called with no running loop should not raise."""
     t = CollectingTransport()
