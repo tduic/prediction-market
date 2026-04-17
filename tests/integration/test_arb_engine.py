@@ -399,6 +399,40 @@ class TestUpdatePairs:
         assert engine._poly_to_pairs == {}
         assert engine._kalshi_to_pairs == {}
 
+    async def test_prunes_per_market_state_for_removed_markets(self, db, matches):
+        """Without pruning, _market_platform / _last_tick_at / prices grew by
+        ~2 entries per removed pair on every weekly refresh. Over the
+        lifetime of a long-running process this is a slow leak."""
+        await _seed_markets_for_engine(db, matches)
+        engine = ArbitrageEngine(db, matches, min_spread=0.03)
+
+        # Simulate ticks landing for all markets so _last_tick_at is populated.
+        import time as _time
+
+        for mid in ("poly_A", "kal_A", "poly_B", "kal_B", "poly_C", "kal_C"):
+            engine._last_tick_at[mid] = _time.time()
+
+        # Sanity: state is present for the market we're about to drop.
+        assert "poly_C" in engine._market_platform
+        assert "kal_C" in engine._market_platform
+        assert "poly_C" in engine._last_tick_at
+        assert "kal_C" in engine._last_tick_at
+
+        engine.update_pairs(matches[:2])  # drops the poly_C/kal_C pair
+
+        # Markets no longer referenced by any pair must be pruned.
+        assert "poly_C" not in engine._market_platform
+        assert "kal_C" not in engine._market_platform
+        assert "poly_C" not in engine._last_tick_at
+        assert "kal_C" not in engine._last_tick_at
+        assert "poly_C" not in engine.prices
+        assert "kal_C" not in engine.prices
+
+        # Retained markets must keep their state.
+        assert "poly_A" in engine._market_platform
+        assert "poly_A" in engine._last_tick_at
+        assert "poly_A" in engine.prices
+
 
 # ── execution_mode wiring: ScheduledStrategyRunner ────────────────────────────
 

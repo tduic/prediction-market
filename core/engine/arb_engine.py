@@ -166,15 +166,34 @@ class ArbitrageEngine:
         for pair_id in removed:
             self.fired_state.pop(pair_id, None)
 
+        # Prune per-market state for markets no longer referenced by any pair.
+        # Without this, _market_platform / _last_tick_at / prices grew by ~2
+        # entries per removed pair on every weekly refresh — a slow leak that
+        # accumulates over the lifetime of a long-running process.
+        live_market_ids: set[str] = set()
+        for m in self._pairs.values():
+            live_market_ids.add(m["poly_id"])
+            live_market_ids.add(m["kalshi_id"])
+
+        stale_market_ids = (
+            set(self._market_platform) | set(self._last_tick_at) | set(self.prices)
+        ) - live_market_ids
+        for mid in stale_market_ids:
+            self._market_platform.pop(mid, None)
+            self._last_tick_at.pop(mid, None)
+            self.prices.pop(mid, None)
+
         if added:
             self._needs_initial_sweep = True
 
         logger.info(
-            "ArbitrageEngine.update_pairs: added=%d removed=%d retained=%d total=%d",
+            "ArbitrageEngine.update_pairs: added=%d removed=%d retained=%d "
+            "total=%d pruned_markets=%d",
             len(added),
             len(removed),
             len(retained),
             len(self._pairs),
+            len(stale_market_ids),
         )
         return {
             "added": len(added),
