@@ -1,43 +1,45 @@
 # Prediction Market Trading System
 
-An async Python trading system for detecting and exploiting pricing inefficiencies across prediction market platforms (Polymarket, Kalshi). Covers the full quant lifecycle: data ingestion, arbitrage detection, signal generation, risk management, order execution, and post-trade analytics.
+An async Python trading system for detecting and exploiting pricing inefficiencies across Polymarket and Kalshi. Covers the full quant lifecycle: market ingestion, cross-platform pair matching, arbitrage detection, risk-managed order execution, and post-trade analytics — all in one process.
 
 ## Architecture
 
-The system runs as two async services communicating via Redis, with an embedded analytics dashboard:
+A single async process drives everything: websocket-fed price streams, latency-sensitive cross-platform arbitrage, scheduled single-platform strategies, reconciliation, and an embedded dashboard.
 
 ```
-┌─────────────────────────────┐       Redis        ┌─────────────────────────────┐
-│        Core Service         │  ───signals───────► │     Execution Service       │
-│                             │                     │                             │
-│  Ingestor → Constraint      │                     │  Signal Handler → Risk      │
-│  Engine → Signal Generator  │                     │  Checks → Router → Clients  │
-│  → Risk Checks              │                     │  → Position State           │
-└──────────┬──────────────────┘                     └──────────┬──────────────────┘
-           │                                                   │
-           └──────────────── SQLite (WAL) ─────────────────────┘
-                                  │
-                    ┌─────────────┴─────────────┐
-                    │   Dashboard (FastAPI +     │
-                    │   React on :8000)          │
-                    └───────────────────────────┘
+              ┌────────────────────────────────────────────────────────┐
+              │                   trading_session.py                   │
+              │                                                        │
+ Polymarket ─►│  Ingestor (WS)   ─► live price cache                   │
+ Kalshi     ─►│                                                        │
+              │                                                        │
+              │  ArbitrageEngine  (tick-driven, on every WS update)    │
+              │    → cross-platform arb (P1)                           │
+              │                                                        │
+              │  ScheduledStrategyRunner  (every ~120s)                │
+              │    → resolution pass                                   │
+              │    → mark-to-market close-out                          │
+              │    → reconciliation (every 5 cycles)                   │
+              │    → invariant checks                                  │
+              │    → single-platform strategies (P2–P5)                │
+              │                                                        │
+              │  Dashboard (FastAPI + React, embedded on :8000)        │
+              └──────────────────────────┬─────────────────────────────┘
+                                         │
+                                 SQLite (WAL mode)
 ```
 
-**Core Service** polls market data, detects arbitrage opportunities through constraint violations, generates trading signals with Kelly-criterion sizing, and validates them against risk limits.
+**Tick path** (latency-sensitive): `core/engine/arb_engine.py` reacts to every websocket price update. It checks the matched-pair book for cross-platform violations, sizes with Kelly, runs risk checks, and submits orders with exponential-backoff retries.
 
-**Execution Service** consumes signals from Redis, enforces risk checks (position limits, daily loss, exposure caps, deduplication, minimum edge), routes orders to the appropriate platform client, tracks fills, manages position state, monitors market resolutions to close positions and record realized PnL, and runs periodic exchange reconciliation to halt trading if local state drifts from exchange-reported balances.
+**Scheduled path** (every `--interval` seconds): `core/engine/scheduler.py` runs position lifecycle work — settle resolved markets, mark-to-market close expired holdings, reconcile internal state (orphaned positions, stuck pending orders, unbalanced arb legs), check invariants, then scan for P2–P5 opportunities.
 
-**Dashboard** is a React + FastAPI app embedded in the trading session process. Shows portfolio overview, per-strategy performance, equity curve, trade log, risk metrics, and fee breakdown — all updated every 30 seconds.
-
-Both services share a SQLite database (20 tables, WAL mode for concurrent access).
+**Dashboard**: React + Vite frontend built into `dashboard/dist/`, served by FastAPI from the same process. Portfolio overview, per-strategy scorecard, equity curve, trade log, risk metrics, fee breakdown. Time-range filter (1h–30d).
 
 ## Quick Start
 
 ### Prerequisites
-
-- Python 3.12+ (3.12 on GCE production VM, 3.14 on local dev)
-- Node.js 18+ (for dashboard frontend build)
-- Redis (for live two-service mode; not needed for paper trading)
+- Python 3.12+ (3.12 on the VM; 3.14 works locally)
+- Node.js 18+ (to build the dashboard frontend)
 
 ### Setup
 ```bash
@@ -46,354 +48,206 @@ cd prediction-market
 python -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
 
-# Build dashboard frontend
+# Build dashboard frontend once (or any time the React code changes)
 cd dashboard && npm install && npm run build && cd ..
 
 # Configure
 cp config/settings.example.env .env
-# Edit .env with your API credentials
+# Edit .env with API credentials and EXECUTION_MODE
 ```
 
-### Paper Trading (Recommended Start)
-
-The paper trading system fetches real markets from Polymarket (~49k) and Kalshi (~26k), matches identical events across platforms, and executes simulated trades with full analytics.
+### Run
 
 ```bash
-# Single command: stream prices, trade continuously, serve dashboard
-# (loads cached match pairs from DB; fast restart)
-python scripts/paper_trading_session.py --stream --dashboard
+# Normal start — loads cached market pairs from DB, streams prices,
+# trades continuously, serves the dashboard on :8000.
+python scripts/trading_session.py --dashboard
 
-# First run or forced re-match: fetch all markets and re-discover pairs (slow, ~30 min)
-python scripts/paper_trading_session.py --refresh --stream --dashboard
+# First run (or when you want fresh pair discovery, ~30 min):
+python scripts/refresh_markets.py
+python scripts/trading_session.py --dashboard
 
-# Then open http://localhost:8000
+# Dashboard at http://localhost:8000
 ```
 
-| Flag | Description |
-|------|-------------|
-| `--refresh` | Fetch all markets from both exchanges, run matcher, persist matched pairs. Slow (~30 min) but only needed to discover new matches. Omit on normal restarts — cached pairs load in seconds. |
-| `--once` | Load cached matches, run one trading cycle, exit. |
-| `--stream` | Open websocket connections for real-time prices, trade continuously until Ctrl+C. |
-| `--dashboard` | Serve the analytics dashboard on port 8000 (embedded in the same process). |
-| `--dashboard-port N` | Dashboard port (default: 8000). |
-| `--interval N` | Seconds between scheduled strategy cycles in stream mode (default: 120). |
-| `--min-spread X` | Minimum price spread to trigger a trade (default: 0.03). |
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--refresh` | off | Re-fetch all markets and re-run the matcher before streaming. Slow. Normal restarts skip this and load cached pairs. |
+| `--interval N` | 120 | Seconds between scheduled-strategy cycles. |
+| `--min-spread X` | 0.03 | Minimum cross-platform spread to open a P1 arb. Env var `MIN_SPREAD_CROSS_PLATFORM` overrides. |
+| `--dashboard` | off | Start the embedded dashboard server. |
+| `--dashboard-port` | 8000 | Dashboard port. |
+| `--dashboard-host` | 127.0.0.1 | Bind address. Use `0.0.0.0` to expose publicly (HTTP Basic Auth required — see `deploy/DEPLOY.md`). |
 
-### Model Training
+Market re-matching runs separately via `scripts/refresh_markets.py` (invoked ad-hoc or by the `predictor-refresh.timer` systemd unit every Sunday).
+
+### Tests
+
 ```bash
-# Train prediction models on historical trade data
-python scripts/train_models.py --days 30
-
-# Train a specific model
-python scripts/train_models.py --model calibration --days 90
+pytest tests/ -q
+# 520 tests, all self-contained (in-memory aiosqlite with real migration schema).
+# No external services required.
 ```
 
-### Signal Queue Administration
+Type-check:
 ```bash
-# Check queue health
-python scripts/queue_admin.py --status
-
-# List failed signals in dead letter queue
-python scripts/queue_admin.py --dlq-list
-
-# Retry all failed signals
-python scripts/queue_admin.py --dlq-retry
-```
-
-### Run Tests
-```bash
-pytest tests/ -v
-# 410+ tests covering constraints, matching, models, risk, sizing,
-# execution, ingestor, signal flow, arb engine, paper client,
-# dashboard API, schema compliance, resolution, reconciliation,
-# state management, and all five trading strategies (P1-P5).
-#
-# Note: 20 tests require a running Redis instance (signal hardening suite).
-# All other tests are self-contained with in-memory SQLite.
-```
-
-### Run Live Services (Two-Service Mode)
-```bash
-docker compose up -d   # Start Redis
-python -m core.main    # Terminal 1: ingestor + signal generation
-python -m execution.main  # Terminal 2: order execution
-```
-
-## GCP Deployment
-
-The system deploys to a GCE `e2-medium` VM (us-central1-a) with a separate persistent disk for SQLite. A lightweight `e2-micro` VM in europe-west4-a runs a Dante SOCKS5 proxy for Polymarket API calls.
-
-### First-Time Setup
-```bash
-# 1. Provision infrastructure (idempotent)
-bash deploy/provision.sh          # Main VM
-bash deploy/provision_proxy.sh    # EU proxy VM
-
-# 2. Bootstrap VMs
-bash deploy/vm_setup.sh           # Install Python 3.12, Node.js, Redis
-bash deploy/setup_proxy.sh        # Install Dante SOCKS5
-
-# 3. First deploy (code + systemd service + weekly refresh timer)
-bash deploy/push.sh
-```
-
-### Auto-Deploy on Release
-GitHub Actions (`deploy.yml`) auto-deploys on release publication:
-```bash
-git tag v2.x.y && git push origin v2.x.y
-gh release create v2.x.y --title "v2.x.y" --notes "..."
-```
-
-The workflow: authenticates to GCP → builds dashboard in CI → packages code → uploads to VM → rsyncs to `/data/predictor/prediction-market/` (preserving `.env` and DB) → installs Python deps → installs systemd units → restarts service → writes/merges secrets into `.env` → health check → Discord notification.
-
-### VM Management
-
-Access the VM via SSH:
-```bash
-gcloud compute ssh predictor-vm --zone=us-central1-a
-```
-
-Useful commands:
-```bash
-# Tail live logs
-sudo journalctl -u predictor -f
-
-# Check service health
-sudo systemctl is-active predictor
-sudo systemctl status predictor
-
-# Restart service (fast — loads cached market pairs from DB, ~5 seconds)
-sudo systemctl restart predictor
-
-# Force a full market re-match without restarting the service
-sudo systemctl start predictor-refresh.service
-sudo journalctl -u predictor-refresh -f
-
-# Check when the weekly market refresh timer last ran / next runs
-sudo systemctl list-timers predictor-refresh.timer
-
-# Check .env (secrets)
-sudo cat /data/predictor/.env
-
-# Flip to live trading mode
-sudo sed -i 's/EXECUTION_MODE=paper/EXECUTION_MODE=live/' /data/predictor/.env
-sudo systemctl restart predictor
-
-# SSH tunnel to dashboard (port 8000)
-# Run this locally:
-gcloud compute ssh predictor-vm --zone=us-central1-a -- -L 8000:localhost:8000
-# Then open http://localhost:8000
-```
-
-### State Across Deployments
-
-The following persists across deploys and is **never overwritten** by the deploy workflow:
-
-| What | Where | Notes |
-|------|-------|-------|
-| SQLite database | `/data/predictor/prediction_market.db` | All trade history, market pairs, signals, PnL. Excluded from rsync (`--exclude='*.db'`). |
-| Secrets & config | `/data/predictor/.env` | Credentials, risk limits, execution mode. Excluded from rsync. Deploy merges new values in without overwriting `EXECUTION_MODE` or other manually-set keys. |
-| Python venv | `/data/predictor/venv/` | Rebuilt from `requirements.txt` on each deploy. |
-| Kalshi RSA key | `/data/predictor/kalshi.pem` | Set once at provision time. Never touched by deploy. |
-
-The following is **replaced on each deploy**:
-
-| What | Notes |
-|------|-------|
-| Application code | `/data/predictor/prediction-market/` rsynced from CI |
-| Dashboard frontend | Rebuilt in CI (`npm ci && npm run build`), packed into tarball |
-| systemd service files | `predictor.service`, `predictor-refresh.service`, `predictor-refresh.timer` |
-
-**Service restart behavior**: The service starts in seconds (loads cached market pairs from `market_pairs` table). A full market re-fetch (~30 min) only runs when the DB is empty (first deploy) or when `predictor-refresh.service` is triggered. The weekly timer triggers this automatically every Sunday at 03:00 UTC.
-
-### EU Proxy Setup
-
-Polymarket CLOB API requires EU-region routing. A Dante SOCKS5 proxy runs on a separate e2-micro VM:
-
-```
-predictor-vm (us-central1-a)
-  └─── POLYMARKET_PROXY=socks5://10.164.0.2:1080 ───► predictor-proxy (europe-west4-a)
-                                                         └─── api.polymarket.com
-```
-
-The proxy IP `10.164.0.2` is the internal GCP address of the proxy VM. It's whitelisted in Dante's config to accept connections only from the trading VM's internal IP. Set via `.env`:
-```
-POLYMARKET_PROXY=socks5://10.164.0.2:1080
-```
-
-To verify the proxy is working:
-```bash
-# From the trading VM:
-curl --socks5-hostname 10.164.0.2:1080 https://api.polymarket.com/markets?limit=1
+mypy core/ execution/ scripts/
 ```
 
 ## Trading Strategies
 
-The system implements five strategy types (P1–P5). Each is assigned based on the detected violation type and triggers through `detect_violations_and_trade` (cross-platform) or `detect_single_platform_opportunities` (single-platform).
+One real strategy (P1) plus four spread-bucket labels (P2–P5) applied to same-platform signals for PnL attribution. P2–P5 are not distinct algorithms — they flow through the same execution path; the label is chosen by spread magnitude and pair type (see `core/strategies/assignment.py`).
 
-| Strategy | Where Detected | Signal |
-|----------|---------------|--------|
-| **P1 – Cross-Market Arb** | `ArbitrageEngine.on_price_update()` + `detect_violations_and_trade()` | Same event priced differently across Polymarket and Kalshi. Buy the cheap side, sell the expensive side simultaneously. |
-| **P2 – Structured Event** | `detect_single_platform_opportunities()` | Same-platform event series where YES prices sum > 1.05 (over-pricing of mutually exclusive outcomes). SELL the most overpriced member. |
-| **P3 – Calibration Bias** | `detect_single_platform_opportunities()` | Market price is far from center (>20% distance from 0.50), indicating systematic over- or under-pricing. Bet toward center. |
-| **P4 – Liquidity Timing** | `detect_single_platform_opportunities()` | Market in a "transition zone" (0.15–0.35 or 0.65–0.85) where liquidity premium can be captured. |
-| **P5 – Information Latency** | `detect_single_platform_opportunities()` | Wide bid-ask spread (≥8%) combined with an extreme price indicates market makers haven't caught up to recent information. Bet in the price direction. |
+| Label | Where | What it means |
+|-------|-------|---------------|
+| **P1 – Cross-Market Arb** | `ArbitrageEngine.on_price_update` | Same event priced differently on Polymarket vs Kalshi. Buy cheap / sell rich simultaneously. This is the only true arb. |
+| **P2 – Structured Event** | `detect_single_platform_opportunities` | Same-platform series where YES prices sum > 1.05. SELL the most overpriced leg. |
+| **P3 – Calibration Bias** | same | Spread ≥ 0.05 and < 0.10 — mid-range mispricing. |
+| **P4 – Liquidity Timing** | same | Complement-pair signals below the P3 threshold. |
+| **P5 – Information Latency** | same | Spread > 0.10 — large mispricing, bet the direction. |
 
-**Per-strategy slot caps** (applied in `detect_single_platform_opportunities`): P2 ≤ 15%, P3 ≤ 50%, P4 ≤ 25%, P5 ≤ remainder — so no single strategy can crowd out the others.
+Per-cycle slot caps (`core/strategies/single_platform.py`) keep any one label from crowding out the others. Per-strategy enable flags (`STRATEGY_P{2..5}_ENABLED`) and a rolling-PnL kill-switch (`STRATEGY_KILLSWITCH_*`) let you disable a label without a deploy.
 
 ## Risk Controls
 
-All monetary limits are expressed as percentages of portfolio value, so they scale automatically as the account grows or shrinks. Portfolio value is computed as `starting_capital + realized_pnl - fees`.
+All monetary limits are percentages of portfolio value, so they scale as the account grows. Portfolio value = `STARTING_CAPITAL + realized_pnl - fees`.
 
-Risk checks are enforced in the execution handler before any order reaches an exchange client. Every check result is logged to the `risk_check_log` table for audit.
+Every risk check result is logged to `risk_check_log` for audit. Enforced inline before any order is submitted (`core/signals/risk.py`).
 
-| Check | Config Variable | Default | Example ($10k portfolio) |
-|-------|----------------|---------|--------------------------|
+| Check | Env var | Default | Example ($10k portfolio) |
+|---|---|---|---|
 | Max position size | `MAX_POSITION_PCT` | 5% | $500 per trade |
 | Daily loss limit | `MAX_DAILY_LOSS_PCT` | 2% | $200/day |
 | Portfolio exposure cap | `MAX_PORTFOLIO_EXPOSURE_PCT` | 20% | $2,000 total deployed |
 | Minimum edge | `MIN_EDGE_TO_TRADE` | 2% | Signal must clear 2% edge |
 | Duplicate window | `DUPLICATE_SIGNAL_WINDOW_S` | 300s | No repeat trades within 5 min |
 | Kelly fraction | `KELLY_FRACTION` | 0.25 | Quarter-Kelly sizing |
+| Consecutive failures | `CONSECUTIVE_FAILURE_LIMIT` | 5 | Halt after N back-to-back order failures |
+
+A daily-loss circuit breaker (`execution/circuit_breaker.py`) halts the whole process — both the tick engine and the scheduled runner — when the daily loss limit is breached. Halt is sticky; it clears at the next UTC midnight.
 
 ## Key Components
 
-### Data Ingestion (`core/ingestor/`)
-Async pollers for Polymarket (CLOB API) and Kalshi (REST API) that fetch market metadata, prices, volume, and liquidity on configurable intervals. Real-time websocket feeds provide sub-second price updates in stream mode.
+### Ingestion (`core/ingestor/`)
+- `kalshi.py`, `polymarket.py` — REST pollers for market metadata, snapshots, and backfills.
+- `streamer.py` — websocket feeds (Polymarket CLOB, Kalshi stream) that drive the live price cache. Sub-second updates.
+- `store.py` — DB writes for market snapshots and price history.
 
-### Constraint Engine (`core/constraints/`)
-Evaluates four mathematical constraint rules across market pairs to detect arbitrage: subset/superset, mutual exclusivity, complementarity, and cross-platform price parity. Violations that exceed fee-adjusted thresholds are emitted as trading opportunities.
+### Matching (`core/matching/engine.py`)
+Pairs related markets across platforms using title normalization and `sentence-transformers/all-MiniLM-L6-v2` embeddings. Matched pairs persist in `market_pairs` and are loaded on restart — the heavy 30-min matching pass only runs when you explicitly call `scripts/refresh_markets.py`.
 
-### Market Matching (`core/matching/`)
-Pairs related markets across platforms using rule-based title matching and semantic embedding similarity (all-MiniLM-L6-v2). Matched pairs are stored in `market_pairs` and reused across restarts. A weekly systemd timer (`predictor-refresh.timer`) re-runs the matcher to pick up new markets without blocking the live service.
+### Engine (`core/engine/`)
+- `arb_engine.py` — tick-driven P1 cross-platform arb. Retries on transient failures with exponential backoff, logs `UNBALANCED_ARB` when exactly one leg fills.
+- `scheduler.py` — `ScheduledStrategyRunner.run_one_cycle()`: resolution → mark-to-market → reconciliation (every 5th) → invariants → P2–P5 scan.
+- `resolution.py` — closes positions for markets that settled (`markets.status IN ('resolved','closed')`), computes PnL at settlement price, sets `resolution_outcome`.
+- `reconciliation.py` — DB-level consistency: orphaned positions, stuck pending orders (>5 min), unbalanced arb pairs. Writes to `reconciliation_log`.
+- `fire_state.py` — per-pair cooldown + hysteresis state to prevent re-firing the same arb on jitter.
 
-### Signal Generation (`core/signals/`)
-Converts violations into actionable trading signals with Kelly criterion sizing and risk validation. The hardened signal queue (Redis-backed) provides message deduplication, a dead letter queue for failed signals, and backpressure monitoring.
+### Strategies (`core/strategies/`)
+- `assignment.py` — spread-bucket → strategy label mapping.
+- `single_platform.py` — P2–P5 detection + `mark_and_close_positions` for expired holdings.
+- `batch.py` — initial-sweep pass over all pairs on startup.
 
-### Prediction Models (`core/models/`)
-Event-specific probability models (FOMC, CPI, calibration) with a registry pattern. The training pipeline (`scripts/train_models.py`) handles feature engineering, temporal train/test splits, and evaluation (Brier score, calibration bins, classification metrics). Results persist to the `model_evaluations` table.
+### Signals (`core/signals/`)
+- `risk.py` — all pre-trade risk checks (position, daily loss, exposure, duplicate, min edge).
+- `sizing.py` — Kelly fractional sizing, capped by `MAX_POSITION_PCT`.
 
 ### Execution (`execution/`)
-Order routing with platform-specific clients:
+- `clients/kalshi.py`, `clients/polymarket.py` — live clients with RSA-PSS auth. Polymarket routes through a SOCKS5 proxy for EU compliance.
+- `clients/paper.py` — fills at real market prices with configurable slippage; writes identical DB rows to live mode so analytics work unchanged.
+- `factory.py` — builds the correct client per `EXECUTION_MODE`.
+- `circuit_breaker.py` — sticky daily-loss halt shared by tick and scheduled paths.
 
-- **Polymarket client** – CLOB API via `py-clob-client` with RSA-PSS auth; routes through SOCKS5 proxy for EU compliance
-- **Kalshi client** – REST API with RSA-PSS (SHA-256) authentication
-- **Paper client** – Executes against real market prices without placing orders; identical DB writes for analytics
-- **Mock client** – Simulates fills with configurable latency, slippage, partial fills, and rejection rates
-- **Order router** – Routes signal legs to the correct platform with retry logic and exponential backoff
-- **Signal handler** – Enforces all risk checks before routing; rejects signals that fail any check; blocks all trading if reconciliation detects a discrepancy
-- **Resolution monitor** – Detects market resolutions, closes positions with side-aware realized PnL, writes trade outcomes, and flags stale positions (open >72h)
-- **Reconciliation engine** – Hourly balance check against both exchanges; halts trading if discrepancy exceeds threshold (default 5%)
+### Dashboard (`scripts/dashboard_api.py`, `dashboard/`)
+FastAPI app embedded in the trading process. Serves the built React SPA and JSON endpoints for portfolio/strategy/trade/risk views. Optional HTTP Basic Auth via `DASHBOARD_USER` / `DASHBOARD_PASSWORD`.
 
-The execution mode is controlled by `EXECUTION_MODE` in the environment: `mock` (simulated), `paper` (real prices, no orders), or `live` (real orders).
+### Snapshots & analytics (`core/snapshots/`, `core/analytics.py`)
+Periodic PnL snapshots per strategy (`pnl_snapshots`, `strategy_pnl_snapshots`). `StrategyScorecard` produces summary/daily/comparison views for the dashboard.
 
-### Analytics Dashboard (`scripts/dashboard_api.py`, `dashboard/`)
-React + FastAPI dashboard served from the same process as the trading session. Features: portfolio overview cards (capital, PnL, fees, trades), per-strategy performance table (win rate, Sharpe, edge capture), strategy PnL over time chart, equity curve, risk metrics (drawdown, VaR, concentration, Sharpe), fee breakdown by platform and strategy, circuit-breaker status, and a filterable trade log. Global time-range selector (1h to 30d) across all views.
-
-### Event System (`core/events/`)
-Async pub/sub event bus connecting all components. 13 event types with error isolation between subscribers.
+### Invariants & alerting (`core/invariants.py`, `core/alerting.py`)
+Cross-table sanity checks (violations recorded to `invariant_violations`). Violations optionally forward to a Discord webhook via `core.alerting.AlertManager`.
 
 ## Configuration
 
-All settings are loaded from environment variables. Key settings:
+All settings load from environment variables. Key ones (see `core/config.py` for the full list):
 
 | Variable | Default | Description |
-|----------|---------|-------------|
-| `EXECUTION_MODE` | `paper` | `mock`, `paper`, or `live` |
-| `STARTING_CAPITAL` | `10000` | Starting capital for risk calculations |
-| `DB_PATH` | `prediction_market.db` | SQLite database location |
-| `REDIS_URL` | `redis://localhost:6379` | Redis connection for signal queue |
-| `KALSHI_API_KEY` | | Kalshi API key UUID |
-| `KALSHI_RSA_KEY_PATH` | | Path to Kalshi RSA private key PEM |
-| `POLYMARKET_PRIVATE_KEY` | | Ethereum hex private key for Polymarket |
-| `POLYMARKET_WALLET_ADDRESS` | | Proxy wallet address |
-| `POLYMARKET_PROXY` | | SOCKS5 proxy for EU routing (`socks5://host:port`) |
-| `SECRETS_BACKEND` | `env` | `env` (read from .env) or `gcp` (GCP Secret Manager) |
-| `GCP_PROJECT_ID` | | GCP project for Secret Manager lookups |
-| `MAX_POSITION_PCT` | `0.05` | Max position size as % of portfolio |
-| `MAX_DAILY_LOSS_PCT` | `0.02` | Daily loss limit as % of portfolio |
-| `MAX_PORTFOLIO_EXPOSURE_PCT` | `0.20` | Max total deployed capital as % of portfolio |
-| `KELLY_FRACTION` | `0.25` | Fractional Kelly multiplier |
-| `LOG_FORMAT` | `text` | `json` for structured production logging |
+|---|---|---|
+| `EXECUTION_MODE` | `paper` | `paper`, `shadow`, or `live`. Only `live` requires all platform credentials. |
+| `STARTING_CAPITAL` | `10000` | Baseline for portfolio-percentage risk limits. |
+| `DB_PATH` | `prediction_market.db` | SQLite location. |
+| `KALSHI_API_KEY` / `KALSHI_RSA_KEY_PATH` | — | Required in live mode. |
+| `POLYMARKET_PRIVATE_KEY` / `POLYMARKET_WALLET_ADDRESS` | — | Required in live mode. |
+| `POLYMARKET_PROXY` | — | `socks5://host:port` for EU routing. |
+| `SECRETS_BACKEND` | `env` | `env` or `gcp` (GCP Secret Manager). |
+| `GCP_PROJECT_ID` | — | Project for Secret Manager lookups. |
+| `MAX_POSITION_PCT` | `0.05` | See Risk Controls. |
+| `MAX_DAILY_LOSS_PCT` | `0.02` | See Risk Controls. |
+| `MAX_PORTFOLIO_EXPOSURE_PCT` | `0.20` | See Risk Controls. |
+| `KELLY_FRACTION` | `0.25` | Fractional Kelly. |
+| `MIN_SPREAD_CROSS_PLATFORM` | `0.03` | Overrides `--min-spread`. Set to `99.0` to pause P1. |
+| `STRATEGY_P{2,3,4,5}_ENABLED` | `true` | Per-label kill. |
+| `LOG_FORMAT` | `text` | `json` for structured prod logging. |
+| `DASHBOARD_PASSWORD` | — | Set to enable HTTP Basic Auth on the dashboard. |
 
 ## Database
 
-SQLite with WAL mode. 20 tables organized around the trading lifecycle:
+SQLite with WAL mode. 19 live tables after `migrations/010`:
 
-**Market data:** `markets`, `market_prices`, `ingestor_runs`
-**Pair analysis:** `market_pairs`, `pair_spread_history`
-**Trading pipeline:** `violations`, `signals`, `risk_check_log`, `signal_events`
-**Execution:** `orders`, `order_events`, `positions`
-**Analytics:** `pnl_snapshots`, `strategy_pnl_snapshots`, `trade_outcomes`
-**ML:** `model_predictions`, `model_versions`, `model_evaluations`
-**System:** `system_events`, `reconciliation_log`
+- **Market data:** `markets`, `market_prices`, `ingestor_runs`
+- **Pair analysis:** `market_pairs`, `pair_spread_history`
+- **Trading pipeline:** `violations`, `signals`, `risk_check_log`, `signal_events`
+- **Execution:** `orders`, `order_events`, `positions`
+- **Analytics:** `pnl_snapshots`, `strategy_pnl_snapshots`, `trade_outcomes`
+- **Operational:** `system_events`, `reconciliation_log`, `invariant_violations`, `phase0_baseline`
 
-Schema is in `core/storage/migrations/`. Query modules in `core/storage/queries/` provide 50+ typed async functions.
+Schema lives in `core/storage/migrations/` (numbered `001`–`010`). The migration runner tracks applied files in `migration_history` and is idempotent.
 
-## Project Structure
+## Project Layout
 
 ```
 prediction-market/
 ├── core/
-│   ├── config.py              # Configuration (all env-based, percentage limits)
-│   ├── analytics.py           # Post-trade analytics engine
-│   ├── logging_config.py      # Structured logging (JSON/text)
-│   ├── secrets.py             # Secret management (env or GCP Secret Manager)
-│   ├── alerting.py            # Discord webhook alerts (severity levels)
-│   ├── main.py                # Core service entry point
-│   ├── constraints/           # Constraint engine (4 rules + fees)
-│   ├── events/                # Async event bus (13 event types)
-│   ├── ingestor/              # Market data pollers (Polymarket, Kalshi, external)
-│   ├── matching/              # Market pair discovery (rule-based + semantic)
-│   ├── models/                # Prediction models + training pipeline
-│   ├── signals/               # Signal generation, risk, sizing, queue hardening
-│   └── storage/               # Database, migrations, query modules
+│   ├── config.py              # Env-driven config (percentage risk limits)
+│   ├── analytics.py           # StrategyScorecard (dashboard queries)
+│   ├── invariants.py          # Cross-table sanity checks
+│   ├── live_gate.py           # Live-mode guardrails
+│   ├── logging_config.py      # Structured JSON / text logging
+│   ├── secrets.py             # env or GCP Secret Manager
+│   ├── alerting.py            # Discord webhook alerts
+│   ├── engine/                # Tick + scheduled lifecycle (arb, resolution, reconciliation)
+│   ├── ingestor/              # Polymarket + Kalshi REST/WS
+│   ├── matching/              # Market-pair discovery
+│   ├── signals/               # Risk checks + Kelly sizing
+│   ├── snapshots/             # Periodic PnL snapshots
+│   ├── storage/               # DB + migrations
+│   └── strategies/            # P1 arb + P2–P5 spread buckets
 ├── execution/
-│   ├── main.py                # Execution service entry point
-│   ├── handler.py             # Signal processing + risk enforcement
-│   ├── router.py              # Order routing with retry logic
-│   ├── state.py               # In-memory position management + DB recovery
-│   ├── resolution.py          # Market resolution monitor + position closure
-│   ├── reconciliation.py      # Exchange balance reconciliation + halt logic
-│   ├── circuit_breaker.py     # Daily loss circuit breaker (sticky halt)
-│   ├── models.py              # Shared Pydantic models (TradingSignal, OrderLeg)
-│   └── clients/               # Platform clients (polymarket, kalshi, paper, mock)
-├── dashboard/
-│   ├── src/                   # React frontend (Vite + Tailwind + Recharts)
-│   └── dist/                  # Built frontend (served by FastAPI)
+│   ├── circuit_breaker.py     # Sticky daily-loss halt
+│   ├── factory.py             # Client selector
+│   ├── models.py              # Shared order models
+│   └── clients/               # paper, kalshi, polymarket
+├── dashboard/                 # React + Vite frontend
 ├── scripts/
-│   ├── paper_trading_session.py  # Single-command trading session + dashboard
-│   ├── dashboard_api.py          # FastAPI dashboard server (embeddable)
-│   ├── verify_prod_config.py     # Production config smoke test (secrets + alerting)
-│   ├── train_models.py           # Model training CLI
-│   ├── queue_admin.py            # Signal queue admin CLI
-│   ├── run_mock_session.py       # Mock harness (synthetic data)
-│   └── ...                       # Utilities (backfill, seed, validate, export)
-├── tests/
-│   ├── unit/                  # Unit tests (constraints, matching, models, risk, sizing, signal hardening, strategy assignment)
-│   ├── integration/           # Integration tests (execution, ingestor, signal flow)
-│   └── paper/                 # Paper trading tests (arb engine, initial sweep,
-│                              #   all 5 strategies, matching, paper client, schema,
-│                              #   resolution, reconciliation, state, circuit breaker,
-│                              #   alerting, dashboard API, DB persistence)
-├── deploy/
-│   ├── provision.sh              # GCE VM provisioning (idempotent)
-│   ├── provision_proxy.sh        # EU SOCKS5 proxy VM provisioning
-│   ├── vm_setup.sh               # VM bootstrap (Python, Node, Redis)
-│   ├── setup_proxy.sh            # Dante SOCKS5 proxy setup
-│   ├── push.sh                   # Code deployment (tar + scp + systemd restart)
-│   ├── setup_cicd.sh             # GitHub Actions service account setup
-│   ├── predictor.service         # systemd unit (paper_trading_session.py --stream --dashboard)
-│   ├── predictor-refresh.service # systemd oneshot for periodic market re-matching
-│   ├── predictor-refresh.timer   # Timer: Sunday 03:00 UTC, Persistent=true
-│   ├── env_merge.py              # Merge .env updates without overwriting existing keys
-│   └── DEPLOY.md                 # Deployment documentation
-├── .github/workflows/
-│   ├── ci.yml                 # CI pipeline
-│   └── deploy.yml             # Auto-deploy on release (9-step: build → scp → rsync → pip → systemd → secrets → health → Discord)
-├── ROADMAP.md                 # Feature roadmap and go-live checklist
-└── requirements.txt           # Python dependencies
+│   ├── trading_session.py     # Main entry (streams + scheduled + dashboard)
+│   ├── refresh_markets.py     # One-shot market re-fetch + re-match
+│   ├── dashboard_api.py       # FastAPI app (embedded)
+│   ├── take_baseline.py       # Phase 0 baseline snapshot tool
+│   ├── verify_api_auth.py     # Auth smoke test
+│   └── verify_prod_config.py  # Production config smoke test
+├── tests/                     # 520 tests, all in-memory aiosqlite
+├── deploy/                    # GCE provisioning, systemd units, CI/CD
+├── docs/
+│   └── archive/               # Phase 0–7 design docs (historical)
+├── ROADMAP.md
+└── requirements.txt
 ```
+
+## Deployment
+
+GCE `e2-medium` VM (us-central1-a) with a persistent data disk for SQLite. Optional `e2-micro` EU proxy VM running Dante SOCKS5 for Polymarket. systemd-managed service (`predictor.service`) with auto-restart; weekly market re-match via `predictor-refresh.timer`. GitHub Actions auto-deploys on release.
+
+Full walkthrough in [`deploy/DEPLOY.md`](deploy/DEPLOY.md).
 
 ## License
 

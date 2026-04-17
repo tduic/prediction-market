@@ -1,3 +1,12 @@
+> **Archived 2026-04-16.** This is the original Phase 0–7 bulletproofing plan
+> (written 2026-04-10). All phases have since landed — see
+> `post_implementation_0410.md` for the per-phase completion notes. File paths
+> referenced here (e.g. `paper_trading_session.py`, `execution/handler.py`,
+> `core/constraints/`) describe v1 and no longer exist in the current tree.
+> Kept for historical context only.
+
+---
+
   Implementation plan: bulletproof the predictor trading system
 
   Summary of findings across all five audits

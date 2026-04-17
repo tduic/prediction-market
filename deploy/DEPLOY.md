@@ -1,6 +1,6 @@
 # GCP Deployment Guide
 
-Deploys the paper trading system to a single GCE VM (e2-medium, Ubuntu 22.04) for the soak test. The VM runs the trading session as a systemd service with auto-restart, storing the SQLite database on a separate persistent disk so it survives instance restarts.
+Deploys the trading system to a single GCE VM (e2-medium, Ubuntu 22.04). The VM runs `scripts/trading_session.py` as a systemd service (`predictor.service`) with auto-restart, storing the SQLite database on a separate persistent disk so it survives instance restarts.
 
 **Estimated cost:** ~$35/month for the VM + ~$1/month for storage.
 
@@ -46,7 +46,7 @@ This will:
 bash deploy/vm_setup.sh
 ```
 
-SSHes into the VM and installs everything: Python 3.12 (deadsnakes PPA), Node.js 18, Redis, and creates a `predictor` system user. Takes about 5 minutes. Safe to re-run if it fails partway through.
+SSHes into the VM and installs everything: Python 3.12 (deadsnakes PPA), Node.js 18, and creates a `predictor` system user. Takes about 5 minutes. Safe to re-run if it fails partway through.
 
 ---
 
@@ -222,7 +222,7 @@ gcloud compute disks delete predictor-data --zone=us-central1-a --project=YOUR_P
 └── prediction-market/            # Project code (rsynced from local)
     ├── prediction_market.db      # SQLite database (persistent disk)
     ├── scripts/
-    │   └── paper_trading_session.py
+    │   └── trading_session.py
     └── ...
 ```
 
@@ -233,12 +233,6 @@ gcloud compute disks delete predictor-data --zone=us-central1-a --project=YOUR_P
 **Service won't start:**
 ```bash
 sudo journalctl -u predictor -n 100 --no-pager
-```
-
-**Redis not running:**
-```bash
-sudo systemctl status redis-server
-sudo systemctl restart redis-server
 ```
 
 **Dashboard not loading:**

@@ -1,3 +1,10 @@
+> **Archived 2026-04-16.** Companion to `implementation_0410.md`. All eight
+> phases (0–7) are complete; commit SHAs are cited inline. File paths here
+> reference the v1 layout (pre-Phase-E cleanup) — many modules have since been
+> deleted or moved. Kept for historical context only.
+
+---
+
   Post-implementation notes: bulletproof the predictor trading system
 
   Companion to implementation_0410.md. One section per phase. Updated as each

@@ -53,7 +53,6 @@ apt-get install -y -qq \
   build-essential \
   libssl-dev \
   libffi-dev \
-  redis-server \
   tmux \
   htop \
   rsync
@@ -79,15 +78,7 @@ if ! command -v node &>/dev/null; then
 fi
 echo "    Node version: $(node --version)"
 
-# ── 6. Redis ──────────────────────────────────────────────────────────────────
-log "Configuring Redis"
-# Bind to localhost only
-sed -i 's/^bind .*/bind 127.0.0.1/' /etc/redis/redis.conf
-systemctl enable redis-server
-systemctl restart redis-server
-echo "    Redis: $(systemctl is-active redis-server)"
-
-# ── 7. Prepare app directory ──────────────────────────────────────────────────
+# ── 6. Prepare app directory ──────────────────────────────────────────────────
 log "Preparing app directory: $APP_DIR"
 mkdir -p "$APP_DIR"
 chown -R "$PREDICTOR_USER:$PREDICTOR_USER" "$DATA_MOUNT/predictor"
