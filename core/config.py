@@ -113,6 +113,17 @@ class RiskControlConfig:
     arb_rearm_hysteresis: float = field(
         default_factory=lambda: float(os.getenv("ARB_REARM_HYSTERESIS", "0.005"))
     )
+    # Maximum age (seconds) of the cached price on either side of a pair
+    # before the arb engine refuses to fire. A price that hasn't been
+    # confirmed by a websocket tick within this window is assumed to be
+    # stale — firing on it would set a limit that the real market has
+    # already drifted past, producing the "Market price X below limit Y"
+    # rejections we saw on Kalshi. Seed prices (from the matcher) get a
+    # fresh tick-time stamp at engine startup, so the guard only kicks
+    # in once the seed window has elapsed without a real WS confirm.
+    max_price_age_s: float = field(
+        default_factory=lambda: float(os.getenv("MAX_PRICE_AGE_S", "10"))
+    )
     slippage_bps: float = field(
         default_factory=lambda: float(os.getenv("SLIPPAGE_BPS", "10"))
     )

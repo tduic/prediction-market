@@ -302,6 +302,79 @@ class TestInitialSweep:
 
 
 @pytest.mark.asyncio
+class TestStalenessGuard:
+    """Arb engine must refuse to fire when either side's cached price is
+    older than risk_config.max_price_age_s. Firing on stale cache sets a
+    limit the real market has drifted past — which is what produced the
+    98% Kalshi paper-order failure rate."""
+
+    async def test_skips_fire_when_counterpart_tick_is_stale(self, db, matches):
+        await _seed_markets_for_engine(db, matches)
+        # Tight 1s window; we'll force kal_A's tick time to look 5s old.
+        from core.config import RiskControlConfig
+
+        cfg = RiskControlConfig()
+        object.__setattr__(cfg, "max_price_age_s", 1.0)
+        engine = ArbitrageEngine(db, matches, min_spread=0.03, risk_config=cfg)
+
+        # Backdate kalshi side; poly side stays fresh-by-construction from seed.
+        engine._last_tick_at["kal_A"] = time.time() - 5.0
+
+        # Normal fire conditions: spread 0.10 > 0.03. But kal_A is stale.
+        await _simulate_price_update(engine, db, "poly_A", 0.45)
+
+        assert engine.trades == []
+        assert engine._skipped_stale >= 1
+        # Pair must remain eligible — no fired_state entry, so it can fire
+        # again once a fresh Kalshi tick arrives.
+        assert "poly_A_kal_A" not in engine.recently_fired
+
+    async def test_recovers_after_counterpart_refreshes(self, db, matches):
+        await _seed_markets_for_engine(db, matches)
+        from core.config import RiskControlConfig
+
+        cfg = RiskControlConfig()
+        object.__setattr__(cfg, "max_price_age_s", 1.0)
+        engine = ArbitrageEngine(db, matches, min_spread=0.03, risk_config=cfg)
+
+        # 1st attempt: kal_A stale → skip.
+        engine._last_tick_at["kal_A"] = time.time() - 5.0
+        await _simulate_price_update(engine, db, "poly_A", 0.45)
+        assert engine.trades == []
+        assert engine._skipped_stale == 1
+
+        # 2nd attempt: kal_A ticks fresh (value differs from seed so the
+        # on_price_update noise guard doesn't short-circuit). Spread is
+        # |0.45 − 0.56| = 0.11, well above the 0.03 threshold.
+        await _simulate_price_update(engine, db, "kal_A", 0.56)
+        assert len(engine.trades) == 1
+
+    async def test_skips_when_no_ticks_ever_received(self, db, matches):
+        """Periodic scan on a config with zero-age window must not fire even
+        on seeded-but-never-ticked prices — the guard treats pre-startup
+        state as unconfirmed."""
+        await _seed_markets_for_engine(db, matches)
+        from core.config import RiskControlConfig
+
+        cfg = RiskControlConfig()
+        object.__setattr__(cfg, "max_price_age_s", 1.0)
+        engine = ArbitrageEngine(db, matches, min_spread=0.03, risk_config=cfg)
+
+        # Wipe all tick times to simulate "WS never arrived".
+        engine._last_tick_at.clear()
+
+        await engine.periodic_scan()
+        assert engine.trades == []
+        assert engine._skipped_stale >= 1
+
+    async def test_stats_exposes_skipped_stale_counter(self, db, matches):
+        await _seed_markets_for_engine(db, matches)
+        engine = ArbitrageEngine(db, matches, min_spread=0.03)
+        stats = engine.stats()
+        assert stats["skipped_stale"] == 0
+
+
+@pytest.mark.asyncio
 class TestUpdatePairs:
     """Hot pair-list updates — used by the weekly refresh watcher."""
 
@@ -511,6 +584,9 @@ def _risk_config(**overrides):
         consecutive_failure_limit=5,
         arb_cooldown_s=60.0,
         arb_rearm_hysteresis=0.005,
+        # Large window so existing tests are not accidentally blocked by the
+        # staleness guard. The guard-specific tests override this.
+        max_price_age_s=3600.0,
         slippage_bps=10.0,
         strategy_holding_period_s=300,
         strategy_replay_cooldown_s=300,

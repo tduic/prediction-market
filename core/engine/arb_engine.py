@@ -80,6 +80,9 @@ class ArbitrageEngine:
         self._ticks_since_last_fire: int = 0
         self._last_tick_at: dict[str, float] = {}  # market_id -> time.time()
         self._market_platform: dict[str, str] = {}  # market_id -> "polymarket"/"kalshi"
+        # Count of fires suppressed because one side's cached price was
+        # older than risk_config.max_price_age_s. Surfaced in stats().
+        self._skipped_stale: int = 0
 
         # Build pair indexes for O(1) lookup on price update
         # poly_id -> list of (kalshi_id, match_dict)
@@ -88,6 +91,11 @@ class ArbitrageEngine:
         self._kalshi_to_pairs: dict[str, list[dict]] = defaultdict(list)
         self._pairs: dict[str, dict] = {}  # pair_id -> match
 
+        # Treat seeded prices as fresh at startup so initial_sweep has a
+        # window to fire. Once max_price_age_s elapses without a real WS
+        # tick, the staleness guard kicks in. Use a single timestamp across
+        # all seeds so the window is uniform.
+        seed_ts = time.time()
         for m in matches:
             pair_id = f"{m['poly_id']}_{m['kalshi_id']}"
             self._pairs[pair_id] = m
@@ -98,8 +106,10 @@ class ArbitrageEngine:
             # Seed prices from match data
             if m.get("poly_price"):
                 self.prices[m["poly_id"]] = m["poly_price"]
+                self._last_tick_at[m["poly_id"]] = seed_ts
             if m.get("kalshi_price"):
                 self.prices[m["kalshi_id"]] = m["kalshi_price"]
+                self._last_tick_at[m["kalshi_id"]] = seed_ts
 
         # Execution clients (live or paper depending on EXECUTION_MODE)
         execution_mode = os.getenv("EXECUTION_MODE", "paper")
@@ -149,6 +159,9 @@ class ArbitrageEngine:
         self._poly_to_pairs = defaultdict(list)
         self._kalshi_to_pairs = defaultdict(list)
 
+        # Single seed timestamp so newly-added markets share a uniform
+        # freshness window after a refresh.
+        seed_ts = time.time()
         for m in matches:
             pair_id = f"{m['poly_id']}_{m['kalshi_id']}"
             self._pairs[pair_id] = m
@@ -160,8 +173,10 @@ class ArbitrageEngine:
             # clobber live prices — match data is stale compared to the WS feed.
             if m.get("poly_price") and m["poly_id"] not in self.prices:
                 self.prices[m["poly_id"]] = m["poly_price"]
+                self._last_tick_at.setdefault(m["poly_id"], seed_ts)
             if m.get("kalshi_price") and m["kalshi_id"] not in self.prices:
                 self.prices[m["kalshi_id"]] = m["kalshi_price"]
+                self._last_tick_at.setdefault(m["kalshi_id"], seed_ts)
 
         for pair_id in removed:
             self.fired_state.pop(pair_id, None)
@@ -201,6 +216,21 @@ class ArbitrageEngine:
             "retained": len(retained),
         }
 
+    def _is_fresh(self, market_id: str, now: float | None = None) -> bool:
+        """Return True if ``market_id``'s cached price was updated within
+        ``risk_config.max_price_age_s`` seconds.
+
+        This is the staleness guard that prevents firing on cached prices
+        the live market has already drifted past. Missing tick times are
+        treated as stale (the guard's job is to be conservative).
+        """
+        t = self._last_tick_at.get(market_id)
+        if t is None:
+            return False
+        if now is None:
+            now = time.time()
+        return (now - t) <= self._risk_config.max_price_age_s
+
     def _is_eligible(self, pair_id: str) -> bool:
         """Return True if pair_id may fire (never fired, armed, and cooldown elapsed)."""
         state = self.fired_state.get(pair_id)
@@ -231,6 +261,7 @@ class ArbitrageEngine:
         self._needs_initial_sweep = False
 
         swept = 0
+        now = time.time()
         for match in self._pairs.values():
             pair_id = f"{match['poly_id']}_{match['kalshi_id']}"
             p_price = self.prices.get(match["poly_id"])
@@ -242,6 +273,12 @@ class ArbitrageEngine:
             if spread < self.min_spread:
                 continue
             if not self._is_eligible(pair_id):
+                continue
+            if not (
+                self._is_fresh(match["poly_id"], now)
+                and self._is_fresh(match["kalshi_id"], now)
+            ):
+                self._skipped_stale += 1
                 continue
             async with self._trade_lock:
                 self._check_rearm(pair_id, spread)
@@ -291,6 +328,7 @@ class ArbitrageEngine:
         if market_id in self._kalshi_to_pairs:
             affected.extend(self._kalshi_to_pairs[market_id])
 
+        now = time.time()
         for match in affected:
             pair_id = f"{match['poly_id']}_{match['kalshi_id']}"
 
@@ -307,6 +345,17 @@ class ArbitrageEngine:
                 continue
 
             if not self._is_eligible(pair_id):
+                continue
+
+            # Staleness guard: the market we just ticked is fresh by
+            # construction, but the other side may have gone silent. Firing
+            # against a cached counterpart price that the real market has
+            # drifted past produces guaranteed-reject limits.
+            if not (
+                self._is_fresh(match["poly_id"], now)
+                and self._is_fresh(match["kalshi_id"], now)
+            ):
+                self._skipped_stale += 1
                 continue
 
             # Execute immediately under lock (prevent concurrent trades on same pair)
@@ -341,6 +390,7 @@ class ArbitrageEngine:
         whose spread opened while both prices drifted simultaneously (no single
         tick would have triggered on_price_update for the pair).
         """
+        now = time.time()
         for match in self._pairs.values():
             pair_id = f"{match['poly_id']}_{match['kalshi_id']}"
             p_price = self.prices.get(match["poly_id"])
@@ -352,6 +402,12 @@ class ArbitrageEngine:
             if spread < self.min_spread:
                 continue
             if not self._is_eligible(pair_id):
+                continue
+            if not (
+                self._is_fresh(match["poly_id"], now)
+                and self._is_fresh(match["kalshi_id"], now)
+            ):
+                self._skipped_stale += 1
                 continue
             async with self._trade_lock:
                 self._check_rearm(pair_id, spread)
@@ -802,4 +858,5 @@ class ArbitrageEngine:
             "total_pnl": total_pnl,
             "prices_tracked": len(self.prices),
             "ws_last_tick_age_ms_by_platform": tick_age,
+            "skipped_stale": self._skipped_stale,
         }
