@@ -30,6 +30,19 @@ def _poly(cond_id, title, price):
     }
 
 
+def _poly_real_api(cond_id, title, price, yes_tok="111", no_tok="222"):
+    """Mimic the real Gamma API shape: camelCase + stringified clobTokenIds."""
+    import json as _j
+
+    return {
+        "conditionId": cond_id,
+        "question": title,
+        "tokens": [{"price": str(price)}],
+        "volume": "10000",
+        "clobTokenIds": _j.dumps([yes_tok, no_tok]),
+    }
+
+
 def _kalshi(ticker, title, bid, ask):
     return {
         "ticker": ticker,
@@ -96,6 +109,45 @@ class TestStoreMarkets:
     async def test_empty_input(self, db):
         count = await store_markets(db, [], [])
         assert count == 0
+
+    async def test_stores_polymarket_camelcase_condition_id(self, db):
+        """Real Gamma API uses `conditionId` (camelCase). Ingestor must read it."""
+        cond = "0xabc123def456"
+        poly = [_poly_real_api(cond, "CamelCase PM", 0.5)]
+        await store_markets(db, poly, [])
+
+        cursor = await db.execute(
+            "SELECT id, platform_id FROM markets WHERE platform = 'polymarket'"
+        )
+        row = await cursor.fetchone()
+        assert row is not None
+        # Full conditionId is preserved in both the internal id and platform_id.
+        assert row[0] == f"poly_{cond}"
+        assert row[1] == cond
+
+    async def test_stores_polymarket_clob_token_ids(self, db):
+        """clobTokenIds JSON must be split into yes_token_id / no_token_id."""
+        poly = [_poly_real_api("0xtok1", "Token IDs", 0.5, yes_tok="777", no_tok="888")]
+        await store_markets(db, poly, [])
+
+        cursor = await db.execute(
+            "SELECT yes_token_id, no_token_id FROM markets "
+            "WHERE platform = 'polymarket'"
+        )
+        row = await cursor.fetchone()
+        assert (row[0], row[1]) == ("777", "888")
+
+    async def test_stores_polymarket_missing_clob_token_ids_is_null(self, db):
+        """No clobTokenIds → token columns left NULL, market still stored."""
+        poly = [_poly("cond_no_tok", "No Token", 0.5)]
+        await store_markets(db, poly, [])
+
+        cursor = await db.execute(
+            "SELECT yes_token_id, no_token_id FROM markets "
+            "WHERE platform = 'polymarket'"
+        )
+        row = await cursor.fetchone()
+        assert (row[0], row[1]) == (None, None)
 
 
 @pytest.mark.asyncio

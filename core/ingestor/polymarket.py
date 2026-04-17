@@ -232,12 +232,38 @@ class PolymarketClient:
             return None
 
     def _parse_market(self, item: dict) -> MarketData | None:
-        """Parse Polymarket API response into MarketData."""
+        """Parse Polymarket API response into MarketData.
+
+        The CLOB `/markets/{conditionId}` endpoint does NOT populate
+        `lastPrice` (returns null); the live YES price must be read from the
+        first entry of the `tokens` array. Gamma responses, by contrast, may
+        include `lastPrice` directly. Try both so paper execution's live
+        price lookup works against whichever endpoint is used.
+        """
         try:
+            last_price_raw = item.get("lastPrice")
+            last_price: float = 0.0
+            if last_price_raw is not None:
+                try:
+                    last_price = float(last_price_raw)
+                except (TypeError, ValueError):
+                    last_price = 0.0
+            if last_price == 0.0:
+                tokens = item.get("tokens") or []
+                if tokens:
+                    try:
+                        last_price = float(tokens[0].get("price", 0) or 0)
+                    except (TypeError, ValueError):
+                        last_price = 0.0
+
+            # CLOB returns condition_id (snake_case); Gamma returns conditionId
+            # (camelCase). Accept both so this parser can be pointed at either.
+            market_id = item.get("conditionId") or item.get("condition_id") or ""
+
             return MarketData(
-                market_id=item.get("conditionId", ""),
+                market_id=str(market_id),
                 platform="polymarket",
-                symbol=item.get("slug", ""),
+                symbol=item.get("slug") or item.get("market_slug") or "",
                 question=item.get("question", ""),
                 description=item.get("description", ""),
                 resolution_date=(
@@ -245,7 +271,7 @@ class PolymarketClient:
                     if item.get("resolutionDate")
                     else None
                 ),
-                last_price=float(item.get("lastPrice", 0)),
+                last_price=last_price,
                 is_active=item.get("active", True),
                 metadata={
                     "liquidity": item.get("liquidity"),

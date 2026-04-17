@@ -265,12 +265,37 @@ async def store_markets(
     poly_price_rows = []
 
     for m in poly_markets:
-        market_id = m.get("condition_id", m.get("id", ""))
-        if not market_id:
+        # Gamma API returns camelCase `conditionId` (66-char hex). The old
+        # snake_case `condition_id` fallback is kept for legacy/mocked inputs,
+        # and `id` (numeric gamma id) is the last resort — but that one cannot
+        # be used for CLOB live trading or `/markets/{conditionId}` lookups.
+        condition_id = (
+            m.get("conditionId") or m.get("condition_id") or m.get("id") or ""
+        )
+        if not condition_id:
             continue
+        condition_id = str(condition_id)
         title = m.get("question", m.get("title", ""))
         if not title:
             continue
+
+        # clobTokenIds is a JSON-encoded string like
+        # '["<yes_token_id>", "<no_token_id>"]'. Order is [YES, NO] per CLOB
+        # convention. Accept already-parsed list form for test fixtures.
+        yes_token_id: str | None = None
+        no_token_id: str | None = None
+        raw_tokens = m.get("clobTokenIds") or m.get("clob_token_ids")
+        if raw_tokens:
+            try:
+                if isinstance(raw_tokens, str):
+                    parsed = _json.loads(raw_tokens)
+                else:
+                    parsed = raw_tokens
+                if isinstance(parsed, list) and len(parsed) >= 2:
+                    yes_token_id = str(parsed[0]) if parsed[0] else None
+                    no_token_id = str(parsed[1]) if parsed[1] else None
+            except Exception:
+                pass
 
         price = None
         tokens = m.get("tokens", [])
@@ -291,8 +316,14 @@ async def store_markets(
         if not price or price <= 0.01 or price >= 0.99:
             continue
 
-        mid = f"poly_{market_id[:20]}"
-        poly_market_rows.append((mid, market_id, title[:200], now, now))
+        # Use a stable prefix over the conditionId so the internal market_id
+        # maps 1:1 to the on-chain market. Hex conditionIds are 66 chars; we
+        # keep the whole value so downstream lookups (CLOB `/markets/{id}`)
+        # can reconstruct it from platform_id.
+        mid = f"poly_{condition_id}"
+        poly_market_rows.append(
+            (mid, condition_id, title[:200], yes_token_id, no_token_id, now, now)
+        )
         poly_price_rows.append(
             (
                 mid,
@@ -418,8 +449,9 @@ async def store_markets(
     try:
         await db.executemany(
             """INSERT OR REPLACE INTO markets
-               (id, platform, platform_id, title, status, created_at, updated_at)
-               VALUES (?, 'polymarket', ?, ?, 'open', ?, ?)""",
+               (id, platform, platform_id, title, yes_token_id, no_token_id,
+                status, created_at, updated_at)
+               VALUES (?, 'polymarket', ?, ?, ?, ?, 'open', ?, ?)""",
             poly_market_rows,
         )
         await db.executemany(

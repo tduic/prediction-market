@@ -158,6 +158,27 @@ class PolymarketExecutionClient(BaseExecutionClient):
             logger.error("Failed to configure proxy: %s", e, exc_info=True)
             raise
 
+    async def _resolve_token_id(self, market_id: str) -> str | None:
+        """Look up the ERC-1155 CLOB token_id for this market.
+
+        `leg.market_id` is our internal prefixed ID (e.g. ``poly_0x9c1a...``),
+        not a valid CLOB token_id. The actual 77-digit token IDs live in
+        ``markets.yes_token_id`` / ``markets.no_token_id`` (populated by the
+        ingestor from Gamma's ``clobTokenIds`` array). All our prices and
+        sizing decisions are YES-side, so we return the YES token.
+
+        TODO: when we support SELL-as-buy-NO semantics, branch on side and
+        return no_token_id for sells.
+        """
+        cursor = await self.db.execute(
+            "SELECT yes_token_id FROM markets WHERE id = ?",
+            (market_id,),
+        )
+        row = await cursor.fetchone()
+        if row and row[0]:
+            return str(row[0])
+        return None
+
     async def submit_order(
         self,
         leg: OrderLeg,
@@ -169,18 +190,43 @@ class PolymarketExecutionClient(BaseExecutionClient):
         start_time = time.time()
 
         try:
+            # Resolve BEFORE initializing the CLOB client: a missing token is
+            # a DB-resolvable problem, no point paying py-clob-client import +
+            # L1 auth cost just to emit a failure.
+            token_id = await self._resolve_token_id(leg.market_id)
+            if not token_id:
+                submission_latency_ms = int((time.time() - start_time) * 1000)
+                error_msg = (
+                    f"No CLOB token_id on file for market {leg.market_id}; "
+                    "cannot route order (run market refresh to populate "
+                    "yes_token_id/no_token_id)."
+                )
+                logger.error(error_msg)
+                result = OrderResult(
+                    order_id=f"FAILED-{leg.market_id}",
+                    platform="polymarket",
+                    status="failed",
+                    submission_latency_ms=submission_latency_ms,
+                    error_message=error_msg,
+                )
+                await self.write_order(
+                    leg, result, signal_id=signal_id, strategy=strategy
+                )
+                return result
+
             self._ensure_client()
 
             logger.info(
-                "Submitting to Polymarket: market=%s side=%s size=%f price=%s",
+                "Submitting to Polymarket: market=%s token=%s side=%s size=%f price=%s",
                 leg.market_id,
+                token_id,
                 leg.side,
                 leg.size,
                 leg.limit_price,
             )
 
             order_args = _OrderArgs(
-                token_id=leg.market_id,
+                token_id=token_id,
                 price=leg.limit_price or 0.50,
                 size=leg.size,
                 side=leg.side.upper(),
