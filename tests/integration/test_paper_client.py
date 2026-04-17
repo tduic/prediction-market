@@ -158,6 +158,132 @@ class TestPaperOrderSubmission:
 
 
 @pytest.mark.asyncio
+class TestInvalidPriceFallback:
+    """
+    Regression guard for the paper-fill 0.0 bug.
+
+    Kalshi / Polymarket ingestor code paths default ``last_price`` to 0.0
+    when the field is missing from the upstream API response, and the DB
+    can hold a stale 0.0 row too. Paper fills must reject non-positive
+    prices and fall back to the limit price (or fail when there is none)
+    instead of booking a fill at $0.00 and inflating realized PnL.
+    """
+
+    async def test_live_zero_price_falls_back_to_limit(self, db, monkeypatch):
+        """A 0.0 price from the live fetch is treated as 'no price'."""
+        await _seed_market_with_price(db, "mkt_zero_live", "kalshi", 0.45)
+        signal_id = "sig_zero_live"
+        await _create_signal(db, signal_id, "mkt_zero_live")
+
+        client = PaperExecutionClient(db, platform_label="paper_kalshi")
+
+        async def _zero_live(self, platform, platform_id):
+            return 0.0
+
+        monkeypatch.setattr(PaperExecutionClient, "_fetch_live_price", _zero_live)
+
+        # Force the DB fallback to also return 0.0, mirroring the prod case
+        # where every cached price for this market is stale/zero.
+        async def _zero_db(self, market_id):
+            return 0.0
+
+        monkeypatch.setattr(PaperExecutionClient, "_get_db_price", _zero_db)
+
+        leg = OrderLeg(
+            market_id="mkt_zero_live",
+            platform="kalshi",
+            side="BUY",
+            size=45.8,
+            limit_price=0.0505,
+            order_type="LIMIT",
+        )
+        result = await client.submit_order(leg, signal_id=signal_id)
+        await db.commit()
+
+        assert result.status == "filled"
+        assert result.filled_price == 0.0505
+        # Fee must be non-zero when a real fill occurs.
+        assert result.fee_paid > 0
+
+    async def test_db_zero_price_falls_back_to_limit(self, db, monkeypatch):
+        """A stale 0.0 row in market_prices is treated as 'no price'."""
+        now = datetime.now(timezone.utc).isoformat()
+        await db.execute(
+            """INSERT INTO markets
+               (id, platform, platform_id, title, status, created_at, updated_at)
+               VALUES (?, 'kalshi', ?, 'Stale Zero', 'open', ?, ?)""",
+            ("mkt_zero_db", "mkt_zero_db", now, now),
+        )
+        await db.execute(
+            """INSERT INTO market_prices
+               (market_id, yes_price, no_price, spread, liquidity, polled_at)
+               VALUES (?, 0.0, 1.0, 0.0, 10000, ?)""",
+            ("mkt_zero_db", now),
+        )
+        signal_id = "sig_zero_db"
+        await _create_signal(db, signal_id, "mkt_zero_db")
+        await db.commit()
+
+        client = PaperExecutionClient(db, platform_label="paper_kalshi")
+
+        # Disable the live path so we exercise the DB fallback only.
+        async def _none_live(self, platform, platform_id):
+            return None
+
+        monkeypatch.setattr(PaperExecutionClient, "_fetch_live_price", _none_live)
+
+        leg = OrderLeg(
+            market_id="mkt_zero_db",
+            platform="kalshi",
+            side="BUY",
+            size=45.8,
+            limit_price=0.0505,
+            order_type="LIMIT",
+        )
+        result = await client.submit_order(leg, signal_id=signal_id)
+        await db.commit()
+
+        assert result.status == "filled"
+        assert result.filled_price == 0.0505
+        assert result.fee_paid > 0
+
+    async def test_invalid_price_no_limit_fails(self, db, monkeypatch):
+        """No valid price and no limit → order fails (not filled at 0)."""
+        now = datetime.now(timezone.utc).isoformat()
+        await db.execute(
+            """INSERT INTO markets
+               (id, platform, platform_id, title, status, created_at, updated_at)
+               VALUES (?, 'kalshi', ?, 'Invalid Only', 'open', ?, ?)""",
+            ("mkt_invalid_only", "mkt_invalid_only", now, now),
+        )
+        signal_id = "sig_invalid_only"
+        await _create_signal(db, signal_id, "mkt_invalid_only")
+        await db.commit()
+
+        client = PaperExecutionClient(db, platform_label="paper_kalshi")
+
+        async def _zero(self, *args, **kwargs):
+            return 0.0
+
+        monkeypatch.setattr(PaperExecutionClient, "_fetch_live_price", _zero)
+        monkeypatch.setattr(PaperExecutionClient, "_get_db_price", _zero)
+
+        leg = OrderLeg(
+            market_id="mkt_invalid_only",
+            platform="kalshi",
+            side="BUY",
+            size=10.0,
+            limit_price=None,
+            order_type="MARKET",
+        )
+        result = await client.submit_order(leg, signal_id=signal_id)
+        await db.commit()
+
+        assert result.status == "failed"
+        assert "No market price" in result.error_message
+
+
+@pytest.mark.asyncio
 class TestLimitOrderRejection:
     async def test_buy_above_limit_rejected(self, db):
         """BUY rejected when market price > limit price."""

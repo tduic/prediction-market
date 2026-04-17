@@ -27,6 +27,18 @@ FEE_RATES = {
 }
 
 
+def _is_valid_price(price: float | None) -> bool:
+    """Prediction-market prices must be strictly in (0, 1).
+
+    The Kalshi and Polymarket ingestors default ``last_price`` to 0.0 when
+    the field is missing from the upstream response, and the DB can also
+    hold stale 0.0 rows. Treat anything outside the open interval as a
+    "no price" signal so the caller falls back to the limit price or
+    rejects the order, instead of booking a fill at $0.00.
+    """
+    return price is not None and 0.0 < price < 1.0
+
+
 class PaperExecutionClient(BaseExecutionClient):
     """
     Paper trading client: real prices, no real orders.
@@ -81,12 +93,13 @@ class PaperExecutionClient(BaseExecutionClient):
             if row:
                 platform, platform_id = row[0], row[1]
                 live_price = await self._fetch_live_price(platform, platform_id)
-                if live_price is not None:
+                if _is_valid_price(live_price):
                     return live_price
         except Exception as e:
             logger.debug("[PAPER] Live price lookup failed for %s: %s", market_id, e)
 
-        return await self._get_db_price(market_id)
+        db_price = await self._get_db_price(market_id)
+        return db_price if _is_valid_price(db_price) else None
 
     async def _fetch_live_price(self, platform: str, platform_id: str) -> float | None:
         """Call the exchange API for the current price."""
