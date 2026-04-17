@@ -86,6 +86,151 @@ async def refresh_markets_and_matches(db: aiosqlite.Connection, cfg) -> list[dic
     return matches
 
 
+async def _build_subscription_lists(
+    db: aiosqlite.Connection, matches: list[dict]
+) -> tuple[list[str], dict[str, str], list[str]]:
+    """Derive Polymarket asset IDs + Kalshi tickers from a match set.
+
+    Returns ``(poly_platform_ids, poly_id_map, kalshi_tickers)`` where
+    ``poly_id_map`` maps the exchange-facing asset_id back to our internal
+    ``poly_XXX`` id so websocket ticks can be attributed to the right market.
+    """
+    kalshi_tickers = [m["kalshi_id"].replace("kal_", "") for m in matches]
+    poly_internal_ids = list({m["poly_id"] for m in matches})
+    poly_platform_ids: list[str] = []
+    poly_id_map: dict[str, str] = {}
+    for pid in poly_internal_ids:
+        cursor = await db.execute(
+            "SELECT platform_id FROM markets WHERE id = ?", (pid,)
+        )
+        row = await cursor.fetchone()
+        if row and row[0]:
+            poly_platform_ids.append(row[0])
+            poly_id_map[row[0]] = pid
+    return poly_platform_ids, poly_id_map, kalshi_tickers
+
+
+def _spawn_ws_tasks(
+    poly_platform_ids: list[str],
+    poly_id_map: dict[str, str],
+    kalshi_tickers: list[str],
+    stop_event: asyncio.Event,
+    on_price,
+    cfg,
+) -> list[asyncio.Task]:
+    """Create websocket streaming tasks for the given asset/ticker sets."""
+    from core.ingestor.streamer import (
+        stream_prices_kalshi,
+        stream_prices_polymarket,
+    )
+
+    tasks: list[asyncio.Task] = []
+    if poly_platform_ids:
+        tasks.append(
+            asyncio.create_task(
+                stream_prices_polymarket(
+                    asset_ids=poly_platform_ids,
+                    stop_event=stop_event,
+                    on_price=on_price,
+                    id_map=poly_id_map,
+                )
+            )
+        )
+    if kalshi_tickers:
+        tasks.append(
+            asyncio.create_task(
+                stream_prices_kalshi(
+                    tickers=kalshi_tickers,
+                    stop_event=stop_event,
+                    on_price=on_price,
+                    api_key=cfg.platform_credentials.kalshi_api_key,
+                    rsa_key_path=cfg.platform_credentials.kalshi_rsa_key_path,
+                )
+            )
+        )
+    return tasks
+
+
+async def _pair_refresh_loop(
+    db: aiosqlite.Connection,
+    arb_engine,
+    ws_state: dict,
+    stop_event: asyncio.Event,
+    cfg,
+    on_price,
+    interval: int = 1800,
+) -> None:
+    """Periodically reload cached matches and hot-swap the engine's pair list.
+
+    The weekly ``predictor-refresh.service`` writes fresh ``market_pairs`` rows
+    to the DB. Without this loop, the running trading session would keep
+    trading the pair set it loaded at startup until someone restarted it. This
+    loop checks every ``interval`` seconds and:
+
+      1. loads the current cached matches,
+      2. calls ``arb_engine.update_pairs()`` which diffs added / removed,
+      3. if the websocket subscription set changed, cancels the WS tasks and
+         spawns fresh ones with the new asset / ticker lists,
+      4. runs an ``initial_sweep`` so new pairs already above the spread
+         threshold fire immediately instead of waiting for a price delta.
+    """
+    from core.matching.engine import load_cached_matches
+
+    while not stop_event.is_set():
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=interval)
+            return
+        except asyncio.TimeoutError:
+            pass
+
+        try:
+            matches = await load_cached_matches(db)
+            if not matches:
+                logger.debug("pair refresh: no matches in DB")
+                continue
+
+            delta = arb_engine.update_pairs(matches)
+            if delta["added"] == 0 and delta["removed"] == 0:
+                logger.debug("pair refresh: no change")
+                continue
+
+            new_poly, new_map, new_kalshi = await _build_subscription_lists(db, matches)
+            if (
+                set(new_poly) == ws_state["poly_ids"]
+                and set(new_kalshi) == ws_state["kalshi_tickers"]
+            ):
+                # Pair set changed but the underlying markets are the same
+                # (e.g. one pair swapped for another using the same markets).
+                logger.info(
+                    "pair refresh: added=%d removed=%d (WS set unchanged)",
+                    delta["added"],
+                    delta["removed"],
+                )
+                await arb_engine.initial_sweep()
+                continue
+
+            logger.info(
+                "pair refresh: added=%d removed=%d — restarting WS streams "
+                "(%d poly, %d kalshi)",
+                delta["added"],
+                delta["removed"],
+                len(new_poly),
+                len(new_kalshi),
+            )
+            old_tasks = ws_state["tasks"]
+            for t in old_tasks:
+                t.cancel()
+            await asyncio.gather(*old_tasks, return_exceptions=True)
+            ws_state["tasks"] = _spawn_ws_tasks(
+                new_poly, new_map, new_kalshi, stop_event, on_price, cfg
+            )
+            ws_state["poly_ids"] = set(new_poly)
+            ws_state["kalshi_tickers"] = set(new_kalshi)
+            await arb_engine.initial_sweep()
+        except Exception:
+            logger.exception("pair refresh loop error")
+
+
 async def main():
     configure_from_env()
 
@@ -229,10 +374,6 @@ async def main():
 
         # ── Step 2: Stream ──
         from core.engine import ArbitrageEngine, ScheduledStrategyRunner
-        from core.ingestor.streamer import (
-            stream_prices_kalshi,
-            stream_prices_polymarket,
-        )
 
         stop_event = asyncio.Event()
 
@@ -286,57 +427,44 @@ async def main():
             price_cache=_live_prices,
         )
 
-        # Build asset ID maps for websocket subscriptions
-        # Polymarket WS needs platform_ids (condition_id), not our internal IDs
-        poly_platform_ids = []
-        poly_id_map: dict[str, str] = {}  # platform_id -> internal poly_XXX id
-        kalshi_tickers = []
-
-        for m in matches:
-            kalshi_tickers.append(m["kalshi_id"].replace("kal_", ""))
-
-        poly_internal_ids = list({m["poly_id"] for m in matches})
-        for pid in poly_internal_ids:
-            cursor = await db.execute(
-                "SELECT platform_id FROM markets WHERE id = ?", (pid,)
-            )
-            row = await cursor.fetchone()
-            if row and row[0]:
-                poly_platform_ids.append(row[0])
-                poly_id_map[row[0]] = pid
-
+        # Build asset ID maps for websocket subscriptions.
+        # Polymarket WS needs platform_ids (condition_id), not our internal IDs.
+        poly_platform_ids, poly_id_map, kalshi_tickers = (
+            await _build_subscription_lists(db, matches)
+        )
         logger.info(
             "Starting streams: %d Polymarket assets + %d Kalshi tickers",
             len(poly_platform_ids),
             len(kalshi_tickers),
         )
 
-        ws_tasks = []
+        # ws_state is the shared handle for the pair-refresh loop: when the
+        # weekly refresh lands new matches, the loop replaces ws_state["tasks"]
+        # with new streams subscribed to the updated asset/ticker sets.
+        ws_state: dict = {
+            "tasks": _spawn_ws_tasks(
+                poly_platform_ids,
+                poly_id_map,
+                kalshi_tickers,
+                stop_event,
+                on_price,
+                cfg,
+            ),
+            "poly_ids": set(poly_platform_ids),
+            "kalshi_tickers": set(kalshi_tickers),
+        }
 
-        if poly_platform_ids:
-            ws_tasks.append(
-                asyncio.create_task(
-                    stream_prices_polymarket(
-                        asset_ids=poly_platform_ids,
-                        stop_event=stop_event,
-                        on_price=on_price,
-                        id_map=poly_id_map,
-                    )
-                )
+        pair_refresh_task = asyncio.create_task(
+            _pair_refresh_loop(
+                db,
+                arb_engine,
+                ws_state,
+                stop_event,
+                cfg,
+                on_price,
+                interval=1800,
             )
-
-        if kalshi_tickers:
-            ws_tasks.append(
-                asyncio.create_task(
-                    stream_prices_kalshi(
-                        tickers=kalshi_tickers,
-                        stop_event=stop_event,
-                        on_price=on_price,
-                        api_key=cfg.platform_credentials.kalshi_api_key,
-                        rsa_key_path=cfg.platform_credentials.kalshi_rsa_key_path,
-                    )
-                )
-            )
+        )
 
         scheduled_task = asyncio.create_task(scheduled.run(stop_event))
 
@@ -371,23 +499,31 @@ async def main():
 
         status_task = asyncio.create_task(_log_status())
 
-        all_tasks = [
-            *ws_tasks,
+        # Supervisor tasks whose identity is stable for the lifetime of the
+        # session. WS tasks live in ws_state["tasks"] and may be swapped out
+        # by the pair refresh loop — we gather them separately at shutdown.
+        supervisor_tasks = [
             scheduled_task,
             status_task,
+            pair_refresh_task,
             *([dashboard_task] if dashboard_task else []),
         ]
 
         try:
-            await asyncio.gather(*all_tasks, return_exceptions=True)
+            await asyncio.gather(
+                *supervisor_tasks, *ws_state["tasks"], return_exceptions=True
+            )
         except KeyboardInterrupt:
             logger.info("Shutting down...")
         finally:
             stop_event.set()
             await arb_engine.flush()
-            for t in all_tasks:
+            current_ws_tasks = ws_state["tasks"]
+            for t in [*supervisor_tasks, *current_ws_tasks]:
                 t.cancel()
-            await asyncio.gather(*all_tasks, return_exceptions=True)
+            await asyncio.gather(
+                *supervisor_tasks, *current_ws_tasks, return_exceptions=True
+            )
             total_arb = len(arb_engine.trades)
             total_sched = scheduled.total_trades
             logger.info(

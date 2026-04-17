@@ -16,9 +16,6 @@ uvicorn>=0.34.0
 # ── Task scheduling ─────────────────────────────────────────────
 APScheduler==3.11.1
 
-# ── Redis (optional, for signal queue) ──────────────────────────
-redis==5.0.0
-
 # ── Data validation ─────────────────────────────────────────────
 pydantic>=2.10.0
 pydantic-settings>=2.7.0

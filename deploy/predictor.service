@@ -1,9 +1,8 @@
 [Unit]
 Description=Predictor Trading System
 Documentation=https://github.com/tyjodu/prediction-market
-After=network-online.target redis.service
+After=network-online.target
 Wants=network-online.target
-Requires=redis.service
 
 [Service]
 Type=simple

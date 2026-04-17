@@ -124,6 +124,65 @@ class ArbitrageEngine:
         """Backward-compatible view of all pairs that have ever fired."""
         return set(self.fired_state.keys())
 
+    def update_pairs(self, matches: list[dict]) -> dict:
+        """Replace the pair index with ``matches``. Safe to call while running.
+
+        Retains ``fired_state`` and live ``prices`` for markets still present.
+        Adds new pairs, drops pairs no longer in the match set, and seeds
+        prices for newly-added markets from the match data only when we
+        don't already have a live price from the websocket feed.
+
+        Flags the next ``initial_sweep()`` call to fire so the caller can
+        pick up any new pairs that are already above the spread threshold
+        at refresh time.
+
+        Returns counts: ``{"added": N, "removed": N, "retained": N}``.
+        """
+        new_pair_ids = {f"{m['poly_id']}_{m['kalshi_id']}" for m in matches}
+        old_pair_ids = set(self._pairs)
+        added = new_pair_ids - old_pair_ids
+        removed = old_pair_ids - new_pair_ids
+        retained = new_pair_ids & old_pair_ids
+
+        # Rebuild indexes from scratch. At weekly refresh scale this is
+        # cheap and avoids subtle drift between the forward and reverse maps.
+        self._pairs = {}
+        self._poly_to_pairs = defaultdict(list)
+        self._kalshi_to_pairs = defaultdict(list)
+
+        for m in matches:
+            pair_id = f"{m['poly_id']}_{m['kalshi_id']}"
+            self._pairs[pair_id] = m
+            self._poly_to_pairs[m["poly_id"]].append(m)
+            self._kalshi_to_pairs[m["kalshi_id"]].append(m)
+            self._market_platform.setdefault(m["poly_id"], "polymarket")
+            self._market_platform.setdefault(m["kalshi_id"], "kalshi")
+            # Seed prices for markets we've never seen a tick for. Don't
+            # clobber live prices — match data is stale compared to the WS feed.
+            if m.get("poly_price") and m["poly_id"] not in self.prices:
+                self.prices[m["poly_id"]] = m["poly_price"]
+            if m.get("kalshi_price") and m["kalshi_id"] not in self.prices:
+                self.prices[m["kalshi_id"]] = m["kalshi_price"]
+
+        for pair_id in removed:
+            self.fired_state.pop(pair_id, None)
+
+        if added:
+            self._needs_initial_sweep = True
+
+        logger.info(
+            "ArbitrageEngine.update_pairs: added=%d removed=%d retained=%d total=%d",
+            len(added),
+            len(removed),
+            len(retained),
+            len(self._pairs),
+        )
+        return {
+            "added": len(added),
+            "removed": len(removed),
+            "retained": len(retained),
+        }
+
     def _is_eligible(self, pair_id: str) -> bool:
         """Return True if pair_id may fire (never fired, armed, and cooldown elapsed)."""
         state = self.fired_state.get(pair_id)

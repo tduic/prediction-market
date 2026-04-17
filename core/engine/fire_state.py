@@ -2,8 +2,7 @@
 Fire state dataclasses for ArbitrageEngine risk management.
 
 These lightweight dataclasses satisfy the duck-typing interface expected by
-run_all_checks() without requiring the full Signal dataclass from
-core/signals/generator.py (which pulls in Redis and other heavy deps).
+run_all_checks() without requiring the full Signal dataclass.
 """
 
 from dataclasses import dataclass

@@ -301,6 +301,105 @@ class TestInitialSweep:
         assert len(engine.trades) == 0
 
 
+@pytest.mark.asyncio
+class TestUpdatePairs:
+    """Hot pair-list updates — used by the weekly refresh watcher."""
+
+    async def test_add_new_pair(self, db, matches):
+        await _seed_markets_for_engine(db, matches)
+        engine = ArbitrageEngine(db, matches, min_spread=0.03)
+
+        new_match = _make_match("poly_D", "kal_D", 0.30, 0.35)
+        delta = engine.update_pairs([*matches, new_match])
+
+        assert delta == {"added": 1, "removed": 0, "retained": 3}
+        assert "poly_D_kal_D" in engine._pairs
+        assert "poly_D" in engine._poly_to_pairs
+        assert engine.prices["poly_D"] == 0.30
+        assert engine._market_platform["poly_D"] == "polymarket"
+        assert engine._market_platform["kal_D"] == "kalshi"
+
+    async def test_remove_dropped_pair(self, db, matches):
+        await _seed_markets_for_engine(db, matches)
+        engine = ArbitrageEngine(db, matches, min_spread=0.03)
+
+        delta = engine.update_pairs(matches[:2])  # drop poly_C/kal_C
+
+        assert delta == {"added": 0, "removed": 1, "retained": 2}
+        assert "poly_C_kal_C" not in engine._pairs
+        assert "poly_C" not in engine._poly_to_pairs
+
+    async def test_preserves_live_prices_for_retained_markets(self, db, matches):
+        await _seed_markets_for_engine(db, matches)
+        engine = ArbitrageEngine(db, matches, min_spread=0.03)
+
+        # Simulate a live price coming in via the websocket feed.
+        engine.prices["poly_A"] = 0.99
+
+        # Refresh with stale match data — the seed price should NOT clobber live.
+        stale = [_make_match("poly_A", "kal_A", 0.50, 0.55), *matches[1:]]
+        engine.update_pairs(stale)
+
+        assert engine.prices["poly_A"] == 0.99
+
+    async def test_retains_fired_state_for_retained_pairs(self, db, matches):
+        await _seed_markets_for_engine(db, matches)
+        engine = ArbitrageEngine(db, matches, min_spread=0.03)
+
+        # Put poly_A/kal_A into fired_state (simulate a prior trade).
+        from core.engine.fire_state import PairFireState
+
+        engine.fired_state["poly_A_kal_A"] = PairFireState(
+            last_fired_at=time.time(), armed=False
+        )
+
+        # Refresh with the same set — fired_state must persist so cooldown holds.
+        engine.update_pairs(matches)
+        assert "poly_A_kal_A" in engine.fired_state
+
+    async def test_drops_fired_state_for_removed_pairs(self, db, matches):
+        await _seed_markets_for_engine(db, matches)
+        engine = ArbitrageEngine(db, matches, min_spread=0.03)
+
+        from core.engine.fire_state import PairFireState
+
+        engine.fired_state["poly_C_kal_C"] = PairFireState(
+            last_fired_at=time.time(), armed=False
+        )
+
+        engine.update_pairs(matches[:2])  # drops poly_C/kal_C
+        assert "poly_C_kal_C" not in engine.fired_state
+
+    async def test_sets_initial_sweep_flag_on_add(self, db, matches):
+        await _seed_markets_for_engine(db, matches)
+        engine = ArbitrageEngine(db, matches, min_spread=0.03)
+        await engine.initial_sweep()
+        assert engine._needs_initial_sweep is False
+
+        new_match = _make_match("poly_D", "kal_D", 0.30, 0.35)
+        engine.update_pairs([*matches, new_match])
+        assert engine._needs_initial_sweep is True
+
+    async def test_no_sweep_flag_when_nothing_added(self, db, matches):
+        await _seed_markets_for_engine(db, matches)
+        engine = ArbitrageEngine(db, matches, min_spread=0.03)
+        await engine.initial_sweep()
+        assert engine._needs_initial_sweep is False
+
+        engine.update_pairs(matches[:2])  # pure removal
+        assert engine._needs_initial_sweep is False
+
+    async def test_empty_refresh_removes_everything(self, db, matches):
+        await _seed_markets_for_engine(db, matches)
+        engine = ArbitrageEngine(db, matches, min_spread=0.03)
+
+        delta = engine.update_pairs([])
+        assert delta == {"added": 0, "removed": 3, "retained": 0}
+        assert engine._pairs == {}
+        assert engine._poly_to_pairs == {}
+        assert engine._kalshi_to_pairs == {}
+
+
 # ── execution_mode wiring: ScheduledStrategyRunner ────────────────────────────
 
 
