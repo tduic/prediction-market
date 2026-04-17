@@ -243,6 +243,54 @@ async def test_day_rollover_auto_resets(db):
 
 
 @pytest.mark.asyncio
+async def test_day_rollover_logs_reset_event_when_tripped(db):
+    """A UTC-day rollover on a tripped breaker must emit a CIRCUIT_BREAKER_RESET
+    event and dispatch an alert, so operators are notified that trading has
+    resumed rather than silently un-halting overnight."""
+    breaker = DailyLossCircuitBreaker(
+        db=db, starting_capital=10_000, max_daily_loss_pct=0.02
+    )
+    await _seed_loss(db, 300.0)
+    assert await breaker.should_halt() is True
+
+    # Simulate rollover: force the breaker into "it's a new day" state.
+    breaker._utc_day = "1999-01-01"
+    await db.execute("DELETE FROM trade_outcomes")
+    await db.commit()
+
+    assert await breaker.should_halt() is False
+
+    cursor = await db.execute(
+        "SELECT event_type, severity, component FROM system_events "
+        "WHERE event_type = 'CIRCUIT_BREAKER_RESET'"
+    )
+    rows = await cursor.fetchall()
+    assert len(rows) == 1
+    assert rows[0][0] == "CIRCUIT_BREAKER_RESET"
+    assert rows[0][1] == "warning"
+    assert rows[0][2] == "circuit_breaker"
+
+
+@pytest.mark.asyncio
+async def test_day_rollover_no_reset_event_when_not_tripped(db):
+    """A rollover on a clean breaker should NOT emit a RESET event — there
+    was nothing to reset."""
+    breaker = DailyLossCircuitBreaker(
+        db=db, starting_capital=10_000, max_daily_loss_pct=0.02
+    )
+    # Force rollover without ever tripping.
+    breaker._utc_day = "1999-01-01"
+
+    assert await breaker.should_halt() is False
+
+    cursor = await db.execute(
+        "SELECT COUNT(*) FROM system_events WHERE event_type = 'CIRCUIT_BREAKER_RESET'"
+    )
+    row = await cursor.fetchone()
+    assert row[0] == 0
+
+
+@pytest.mark.asyncio
 async def test_trip_logged_to_system_events(db):
     breaker = DailyLossCircuitBreaker(
         db=db, starting_capital=10_000, max_daily_loss_pct=0.02

@@ -85,7 +85,7 @@ Market re-matching runs separately via `scripts/refresh_markets.py` (invoked ad-
 
 ```bash
 pytest tests/ -q
-# 532 tests, all self-contained (in-memory aiosqlite with real migration schema).
+# 538 tests, all self-contained (in-memory aiosqlite with real migration schema).
 # No external services required.
 ```
 

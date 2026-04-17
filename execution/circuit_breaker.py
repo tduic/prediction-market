@@ -282,9 +282,12 @@ class DailyLossCircuitBreaker:
         """Auto-reset at UTC day boundary."""
         today = self._today()
         if today != self._utc_day:
+            was_tripped = self._tripped
+            previous_reason = self._reason
+            previous_day = self._utc_day
             logger.info(
                 "Circuit breaker day rollover %s → %s, auto-reset",
-                self._utc_day,
+                previous_day,
                 today,
             )
             self._utc_day = today
@@ -292,6 +295,35 @@ class DailyLossCircuitBreaker:
             self._reason = None
             self._tripped_at = None
             self._consecutive_failures = 0
+            if was_tripped:
+                detail = (
+                    f"UTC day rollover {previous_day} → {today}; "
+                    f"previous trip reason: {previous_reason}"
+                )
+                await self._log_event(
+                    "CIRCUIT_BREAKER_RESET",
+                    severity="warning",
+                    detail=detail,
+                    context={
+                        "reset_type": "utc_day_rollover",
+                        "previous_reason": previous_reason,
+                        "previous_day": previous_day,
+                        "new_day": today,
+                    },
+                )
+                logger.warning(
+                    "Circuit breaker auto-reset on UTC day rollover (was tripped: %s)",
+                    previous_reason,
+                )
+                try:
+                    await get_alert_manager().send(
+                        title="Circuit breaker auto-reset — UTC day rollover",
+                        message=detail,
+                        severity=Severity.WARNING,
+                        component="circuit_breaker",
+                    )
+                except Exception as e:
+                    logger.error("Failed to send auto-reset alert: %s", e)
 
     async def _trip(self, reason: str, context: dict[str, Any]) -> None:
         """Mark the breaker tripped and persist a system event."""

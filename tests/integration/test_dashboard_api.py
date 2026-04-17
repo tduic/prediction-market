@@ -397,3 +397,44 @@ class TestInvariantsEndpoint:
         data = resp.json()
         assert data["violation_count"] == 0
         assert data["recent_violations"] == []
+
+
+# ── Fail-closed host auth policy ─────────────────────────────────────────────
+
+
+class TestHostAuthPolicy:
+    """_enforce_host_auth_policy must refuse to bind non-loopback without a password.
+
+    A prior bug in _build_app attached the auth middleware ONLY when
+    DASHBOARD_PASSWORD was non-empty, so an unset password on 0.0.0.0 served
+    every endpoint to anyone on the network. The policy helper is the
+    single choke point that enforces the fail-closed invariant.
+    """
+
+    def test_loopback_is_always_allowed(self, monkeypatch):
+        from scripts.dashboard_api import _enforce_host_auth_policy
+
+        monkeypatch.delenv("DASHBOARD_PASSWORD", raising=False)
+        assert _enforce_host_auth_policy("127.0.0.1") == "127.0.0.1"
+        assert _enforce_host_auth_policy("localhost") == "localhost"
+        assert _enforce_host_auth_policy("::1") == "::1"
+
+    def test_non_loopback_without_password_falls_back_to_loopback(self, monkeypatch):
+        from scripts.dashboard_api import _enforce_host_auth_policy
+
+        monkeypatch.delenv("DASHBOARD_PASSWORD", raising=False)
+        assert _enforce_host_auth_policy("0.0.0.0") == "127.0.0.1"
+        assert _enforce_host_auth_policy("10.0.0.5") == "127.0.0.1"
+
+    def test_non_loopback_with_empty_password_also_falls_back(self, monkeypatch):
+        from scripts.dashboard_api import _enforce_host_auth_policy
+
+        monkeypatch.setenv("DASHBOARD_PASSWORD", "")
+        assert _enforce_host_auth_policy("0.0.0.0") == "127.0.0.1"
+
+    def test_non_loopback_with_password_is_honored(self, monkeypatch):
+        from scripts.dashboard_api import _enforce_host_auth_policy
+
+        monkeypatch.setenv("DASHBOARD_PASSWORD", "s3cret")
+        assert _enforce_host_auth_policy("0.0.0.0") == "0.0.0.0"
+        assert _enforce_host_auth_policy("10.0.0.5") == "10.0.0.5"

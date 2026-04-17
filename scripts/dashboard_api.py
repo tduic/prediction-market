@@ -11,6 +11,7 @@ Or embedded in trading_session.py as a background asyncio task:
 
 import argparse
 import base64
+import logging
 import math
 import os
 import secrets
@@ -29,6 +30,8 @@ from starlette.requests import Request
 from starlette.responses import Response
 
 from core.config import get_config
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Module-level DB path (set by configure() or create_dashboard_app())
@@ -668,6 +671,33 @@ def create_dashboard_app(
     return _build_app(static_dir=static_dir)
 
 
+_LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
+
+
+def _is_loopback_host(host: str) -> bool:
+    return host in _LOOPBACK_HOSTS
+
+
+def _enforce_host_auth_policy(host: str) -> str:
+    """Fail-closed auth guard for dashboard host binding.
+
+    If the caller asked to bind to a non-loopback interface but no
+    DASHBOARD_PASSWORD is set, refuse to expose the dashboard publicly and
+    force-bind to 127.0.0.1 instead. Previously the auth middleware was only
+    attached when DASHBOARD_PASSWORD was non-empty, so an unset password on
+    0.0.0.0 silently served every endpoint unauthenticated.
+    """
+    if not _is_loopback_host(host) and not os.getenv("DASHBOARD_PASSWORD", ""):
+        logger.error(
+            "Refusing to bind dashboard to %s with no DASHBOARD_PASSWORD set — "
+            "falling back to 127.0.0.1. Set DASHBOARD_PASSWORD in the "
+            "environment to expose publicly.",
+            host,
+        )
+        return "127.0.0.1"
+    return host
+
+
 async def start_dashboard_server(
     app: FastAPI,
     host: str = "127.0.0.1",
@@ -678,6 +708,8 @@ async def start_dashboard_server(
     Designed to be launched as an asyncio.create_task() inside
     trading_session.py.
     """
+    host = _enforce_host_auth_policy(host)
+
     config = uvicorn.Config(
         app,
         host=host,
@@ -715,7 +747,9 @@ def main():
 
     app = create_dashboard_app(db_path=args.db, static_dir=static_dir)
 
-    uvicorn.run(app, host=args.host, port=args.port, log_level="info")
+    host = _enforce_host_auth_policy(args.host)
+
+    uvicorn.run(app, host=host, port=args.port, log_level="info")
 
 
 if __name__ == "__main__":

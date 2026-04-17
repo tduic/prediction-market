@@ -673,7 +673,12 @@ class ArbitrageEngine:
                     ),
                 )
             except Exception:
-                pass
+                logger.exception(
+                    "Failed to insert positions row for pair=%s signal_id=%s pos_id=%s",
+                    pair_id,
+                    signal_id,
+                    pos_id,
+                )
 
             try:
                 await self.db.execute(
@@ -707,7 +712,11 @@ class ArbitrageEngine:
                     ),
                 )
             except Exception:
-                pass
+                logger.exception(
+                    "Failed to insert trade_outcomes row for pair=%s signal_id=%s",
+                    pair_id,
+                    signal_id,
+                )
 
             # Batch commit
             self._pending_commit += 1
