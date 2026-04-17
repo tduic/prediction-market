@@ -85,7 +85,7 @@ Market re-matching runs separately via `scripts/refresh_markets.py` (invoked ad-
 
 ```bash
 pytest tests/ -q
-# 531 tests, all self-contained (in-memory aiosqlite with real migration schema).
+# 532 tests, all self-contained (in-memory aiosqlite with real migration schema).
 # No external services required.
 ```
 
@@ -235,7 +235,7 @@ prediction-market/
 │   ├── take_baseline.py       # Phase 0 baseline snapshot tool
 │   ├── verify_api_auth.py     # Auth smoke test
 │   └── verify_prod_config.py  # Production config smoke test
-├── tests/                     # 531 tests, all in-memory aiosqlite
+├── tests/                     # 532 tests, all in-memory aiosqlite
 ├── deploy/                    # GCE provisioning, systemd units, CI/CD
 ├── docs/
 │   └── archive/               # Phase 0–7 design docs (historical)

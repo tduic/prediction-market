@@ -86,24 +86,28 @@ async def check_pnl_sanity(db: aiosqlite.Connection) -> InvariantResult:
 
 
 async def check_position_duration(db: aiosqlite.Connection) -> InvariantResult:
-    """Verify all closed positions were held for at least 100ms.
+    """Verify no closed position has a close timestamp earlier than its open.
 
-    Instant open→close is a sign of a coding error (position opened and
-    closed in the same atomic write, which should never happen in normal flow).
+    Atomic arbitrage trades legitimately open and close in the same tick
+    (``ArbitrageEngine._execute_arb_trade`` writes ``opened_at == closed_at``
+    when both legs fill), so zero-duration positions are allowed. What is
+    never legitimate is a close timestamp *strictly before* the open — that
+    would indicate a real timestamp bug in ``mark_and_close_positions`` or
+    the settlement path.
     """
     cursor = await db.execute("""SELECT id, opened_at, closed_at
            FROM positions
            WHERE status = 'closed'
              AND closed_at IS NOT NULL
              AND opened_at IS NOT NULL
-             AND closed_at <= opened_at""")
+             AND closed_at < opened_at""")
     offenders = list(await cursor.fetchall())
 
     if not offenders:
         return InvariantResult(
             name="position_duration",
             passed=True,
-            message="All closed positions have closed_at > opened_at.",
+            message="All closed positions have closed_at >= opened_at.",
         )
 
     ids = ", ".join(str(r[0]) for r in offenders[:3])
@@ -111,7 +115,7 @@ async def check_position_duration(db: aiosqlite.Connection) -> InvariantResult:
         name="position_duration",
         passed=False,
         message=(
-            f"{len(offenders)} position(s) were closed at or before they were opened "
+            f"{len(offenders)} position(s) have closed_at < opened_at "
             f"(first offenders: {ids}). "
             "Indicates a timestamp bug in mark_and_close_positions or settlement."
         ),

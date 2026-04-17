@@ -160,7 +160,8 @@ class TestPositionDuration:
         result = await check_position_duration(db)
         assert result.passed
 
-    async def test_zero_duration_fails(self, db):
+    async def test_zero_duration_passes(self, db):
+        """Atomic arb legitimately writes opened_at == closed_at."""
         await _seed_signal(db, "sig1")
         now = _now()
         pos_id = f"pos_{uuid.uuid4().hex[:8]}"
@@ -169,13 +170,33 @@ class TestPositionDuration:
                (id, signal_id, market_id, strategy, side, entry_price, entry_size,
                 exit_price, realized_pnl, fees_paid, status,
                 opened_at, closed_at, updated_at, pnl_model)
-               VALUES (?, 'sig1', 'm1', 'P3_calibration_bias', 'BUY',
+               VALUES (?, 'sig1', 'm1', 'P1_cross_market_arb', 'BUY',
                        0.50, 50.0, 0.55, 2.5, 1.0, 'closed', ?, ?, ?, 'realistic')""",
             (pos_id, now, now, now),
         )
         await db.commit()
         result = await check_position_duration(db)
+        assert result.passed
+
+    async def test_negative_duration_fails(self, db):
+        """closed_at strictly before opened_at indicates a real timestamp bug."""
+        await _seed_signal(db, "sig1")
+        later = _now()
+        earlier = "2020-01-01T00:00:00+00:00"
+        pos_id = f"pos_{uuid.uuid4().hex[:8]}"
+        await db.execute(
+            """INSERT INTO positions
+               (id, signal_id, market_id, strategy, side, entry_price, entry_size,
+                exit_price, realized_pnl, fees_paid, status,
+                opened_at, closed_at, updated_at, pnl_model)
+               VALUES (?, 'sig1', 'm1', 'P3_calibration_bias', 'BUY',
+                       0.50, 50.0, 0.55, 2.5, 1.0, 'closed', ?, ?, ?, 'realistic')""",
+            (pos_id, later, earlier, later),
+        )
+        await db.commit()
+        result = await check_position_duration(db)
         assert not result.passed
+        assert "closed_at < opened_at" in result.message
 
     async def test_open_positions_excluded(self, db):
         await _seed_signal(db, "sig1")
