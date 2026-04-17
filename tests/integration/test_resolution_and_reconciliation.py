@@ -40,8 +40,16 @@ async def _seed_market(
            (id, platform, platform_id, title, status, outcome, outcome_value,
             created_at, updated_at)
            VALUES (?, 'kalshi', ?, ?, ?, ?, ?, ?, ?)""",
-        (market_id, market_id, f"Market {market_id}", status, outcome,
-         outcome_value, now, now),
+        (
+            market_id,
+            market_id,
+            f"Market {market_id}",
+            status,
+            outcome,
+            outcome_value,
+            now,
+            now,
+        ),
     )
 
 
@@ -77,8 +85,18 @@ async def _seed_position(
            (id, signal_id, market_id, strategy, side, entry_price, entry_size,
             fees_paid, status, opened_at, updated_at)
            VALUES (?, ?, ?, 'P1_cross_market_arb', ?, ?, ?, ?, ?, ?, ?)""",
-        (pos_id, signal_id, market_id, side, entry_price, entry_size,
-         fees_paid, status, now, now),
+        (
+            pos_id,
+            signal_id,
+            market_id,
+            side,
+            entry_price,
+            entry_size,
+            fees_paid,
+            status,
+            now,
+            now,
+        ),
     )
 
 
@@ -100,8 +118,7 @@ async def _seed_order(
            (id, signal_id, platform, market_id, side, order_type,
             requested_size, filled_price, status, submitted_at, updated_at)
            VALUES (?, ?, ?, ?, 'buy', 'market', 100.0, ?, ?, ?, ?)""",
-        (order_id, signal_id, platform, market_id, filled_price, status,
-         str(ts), now),
+        (order_id, signal_id, platform, market_id, filled_price, status, str(ts), now),
     )
 
 
@@ -110,11 +127,17 @@ async def _seed_order(
 
 @pytest.mark.asyncio
 async def test_resolution_closes_yes_winner(db):
-    await _seed_market(db, "mkt1", status="resolved", outcome="yes",
-                       outcome_value=1.0)
+    await _seed_market(db, "mkt1", status="resolved", outcome="yes", outcome_value=1.0)
     await _seed_signal(db, "sig1", "mkt1")
-    await _seed_position(db, "pos1", signal_id="sig1", market_id="mkt1",
-                         side="BUY", entry_price=0.40, entry_size=100.0)
+    await _seed_position(
+        db,
+        "pos1",
+        signal_id="sig1",
+        market_id="mkt1",
+        side="BUY",
+        entry_price=0.40,
+        entry_size=100.0,
+    )
     await db.commit()
 
     summary = await close_resolved_positions(db)
@@ -137,11 +160,17 @@ async def test_resolution_closes_yes_winner(db):
 
 @pytest.mark.asyncio
 async def test_resolution_closes_no_loser(db):
-    await _seed_market(db, "mkt2", status="resolved", outcome="no",
-                       outcome_value=0.0)
+    await _seed_market(db, "mkt2", status="resolved", outcome="no", outcome_value=0.0)
     await _seed_signal(db, "sig2", "mkt2")
-    await _seed_position(db, "pos2", signal_id="sig2", market_id="mkt2",
-                         side="BUY", entry_price=0.40, entry_size=100.0)
+    await _seed_position(
+        db,
+        "pos2",
+        signal_id="sig2",
+        market_id="mkt2",
+        side="BUY",
+        entry_price=0.40,
+        entry_size=100.0,
+    )
     await db.commit()
 
     summary = await close_resolved_positions(db)
@@ -170,11 +199,17 @@ async def test_resolution_skips_open_markets(db):
 @pytest.mark.asyncio
 async def test_resolution_infers_outcome_from_label_when_no_value(db):
     """If outcome_value is NULL, fall back to YES→1.0 / NO→0.0."""
-    await _seed_market(db, "mkt4", status="resolved", outcome="YES",
-                       outcome_value=None)
+    await _seed_market(db, "mkt4", status="resolved", outcome="YES", outcome_value=None)
     await _seed_signal(db, "sig4", "mkt4")
-    await _seed_position(db, "pos4", signal_id="sig4", market_id="mkt4",
-                         side="BUY", entry_price=0.30, entry_size=50.0)
+    await _seed_position(
+        db,
+        "pos4",
+        signal_id="sig4",
+        market_id="mkt4",
+        side="BUY",
+        entry_price=0.30,
+        entry_size=50.0,
+    )
     await db.commit()
 
     summary = await close_resolved_positions(db)
@@ -187,11 +222,17 @@ async def test_resolution_infers_outcome_from_label_when_no_value(db):
 @pytest.mark.asyncio
 async def test_resolution_sell_side_pnl(db):
     """SELL side PnL = (entry - exit) * size."""
-    await _seed_market(db, "mkt5", status="resolved", outcome="no",
-                       outcome_value=0.0)
+    await _seed_market(db, "mkt5", status="resolved", outcome="no", outcome_value=0.0)
     await _seed_signal(db, "sig5", "mkt5")
-    await _seed_position(db, "pos5", signal_id="sig5", market_id="mkt5",
-                         side="SELL", entry_price=0.60, entry_size=100.0)
+    await _seed_position(
+        db,
+        "pos5",
+        signal_id="sig5",
+        market_id="mkt5",
+        side="SELL",
+        entry_price=0.60,
+        entry_size=100.0,
+    )
     await db.commit()
 
     summary = await close_resolved_positions(db)
@@ -210,8 +251,7 @@ async def test_reconciliation_flags_orphaned_position(db):
     await _seed_market(db, "mktA", status="open")
     await _seed_signal(db, "sigA", "mktA")
     await _seed_position(db, "posA", signal_id="sigA", market_id="mktA")
-    await _seed_order(db, "ordA", signal_id="sigA", market_id="mktA",
-                      status="failed")
+    await _seed_order(db, "ordA", signal_id="sigA", market_id="mktA", status="failed")
     await db.commit()
 
     summary = await reconcile_internal_state(db)
@@ -231,8 +271,14 @@ async def test_reconciliation_clean_when_everything_consistent(db):
     await _seed_market(db, "mktB", status="open")
     await _seed_signal(db, "sigB", "mktB")
     await _seed_position(db, "posB", signal_id="sigB", market_id="mktB")
-    await _seed_order(db, "ordB", signal_id="sigB", market_id="mktB",
-                      status="filled", filled_price=0.40)
+    await _seed_order(
+        db,
+        "ordB",
+        signal_id="sigB",
+        market_id="mktB",
+        status="filled",
+        filled_price=0.40,
+    )
     await db.commit()
 
     summary = await reconcile_internal_state(db)
@@ -248,8 +294,12 @@ async def test_reconciliation_flags_stuck_pending_order(db):
     await _seed_signal(db, "sigC", "mktC")
     # Submitted an hour ago, still pending
     await _seed_order(
-        db, "ordC", signal_id="sigC", market_id="mktC",
-        status="pending", submitted_at=int(time.time()) - 3600,
+        db,
+        "ordC",
+        signal_id="sigC",
+        market_id="mktC",
+        status="pending",
+        submitted_at=int(time.time()) - 3600,
     )
     await db.commit()
 
@@ -271,8 +321,12 @@ async def test_reconciliation_skips_recent_pending_order(db):
     await _seed_market(db, "mktD", status="open")
     await _seed_signal(db, "sigD", "mktD")
     await _seed_order(
-        db, "ordD", signal_id="sigD", market_id="mktD",
-        status="pending", submitted_at=int(time.time()) - 10,
+        db,
+        "ordD",
+        signal_id="sigD",
+        market_id="mktD",
+        status="pending",
+        submitted_at=int(time.time()) - 10,
     )
     await db.commit()
 
@@ -286,10 +340,15 @@ async def test_reconciliation_flags_unbalanced_arb_pair(db):
     await _seed_market(db, "mktE1", status="open")
     await _seed_market(db, "mktE2", status="open")
     await _seed_signal(db, "sigE", "mktE1")
-    await _seed_order(db, "ordE1", signal_id="sigE", market_id="mktE1",
-                      status="filled", filled_price=0.40)
-    await _seed_order(db, "ordE2", signal_id="sigE", market_id="mktE2",
-                      status="failed")
+    await _seed_order(
+        db,
+        "ordE1",
+        signal_id="sigE",
+        market_id="mktE1",
+        status="filled",
+        filled_price=0.40,
+    )
+    await _seed_order(db, "ordE2", signal_id="sigE", market_id="mktE2", status="failed")
     # No position row — arb never completed.
     await db.commit()
 
@@ -311,10 +370,22 @@ async def test_reconciliation_skips_balanced_arb_pair(db):
     await _seed_market(db, "mktF1", status="open")
     await _seed_market(db, "mktF2", status="open")
     await _seed_signal(db, "sigF", "mktF1")
-    await _seed_order(db, "ordF1", signal_id="sigF", market_id="mktF1",
-                      status="filled", filled_price=0.40)
-    await _seed_order(db, "ordF2", signal_id="sigF", market_id="mktF2",
-                      status="filled", filled_price=0.55)
+    await _seed_order(
+        db,
+        "ordF1",
+        signal_id="sigF",
+        market_id="mktF1",
+        status="filled",
+        filled_price=0.40,
+    )
+    await _seed_order(
+        db,
+        "ordF2",
+        signal_id="sigF",
+        market_id="mktF2",
+        status="filled",
+        filled_price=0.55,
+    )
     await _seed_position(db, "posF", signal_id="sigF", market_id="mktF1")
     await db.commit()
 

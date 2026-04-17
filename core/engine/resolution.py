@@ -26,16 +26,14 @@ async def close_resolved_positions(db: aiosqlite.Connection) -> dict[str, float]
     """
     summary: dict[str, float] = {"checked": 0.0, "closed": 0.0, "total_pnl": 0.0}
 
-    cursor = await db.execute(
-        """
+    cursor = await db.execute("""
         SELECT p.id, p.market_id, p.side, p.entry_price, p.entry_size,
                p.fees_paid, m.status, m.outcome, m.outcome_value
         FROM positions p
         JOIN markets m ON m.id = p.market_id
         WHERE p.status = 'open'
           AND m.status IN ('resolved', 'closed')
-        """
-    )
+        """)
     rows = list(await cursor.fetchall())
     summary["checked"] = float(len(rows))
 

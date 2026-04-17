@@ -50,9 +50,7 @@ async def reconcile_internal_state(db: aiosqlite.Connection) -> dict[str, int]:
 
     total = sum(summary.values())
     if total:
-        logger.warning(
-            "RECONCILIATION found %d discrepancies: %s", total, summary
-        )
+        logger.warning("RECONCILIATION found %d discrepancies: %s", total, summary)
     else:
         logger.info("RECONCILIATION clean: no discrepancies")
 
@@ -65,16 +63,14 @@ async def _check_orphaned_positions(db: aiosqlite.Connection) -> int:
     If an order is 'failed' or 'cancelled' but a position is still marked
     'open' for the same signal_id + market_id, that's state drift.
     """
-    cursor = await db.execute(
-        """
+    cursor = await db.execute("""
         SELECT p.id, p.signal_id, p.market_id,
                (SELECT o.status FROM orders o
                  WHERE o.signal_id = p.signal_id AND o.market_id = p.market_id
                  ORDER BY o.submitted_at DESC LIMIT 1) AS order_status
         FROM positions p
         WHERE p.status = 'open'
-        """
-    )
+        """)
     rows = await cursor.fetchall()
     count = 0
     for pos_id, signal_id, market_id, order_status in rows:
@@ -146,8 +142,7 @@ async def _check_unbalanced_arb_pairs(db: aiosqlite.Connection) -> int:
     UNBALANCED_ARB log in arb_engine warns about, and we record it here
     so it persists past the log ring buffer.
     """
-    cursor = await db.execute(
-        """
+    cursor = await db.execute("""
         SELECT o.signal_id,
                SUM(CASE WHEN o.status IN ('filled','partially_filled') THEN 1 ELSE 0 END) AS filled_count,
                COUNT(*) AS leg_count
@@ -157,8 +152,7 @@ async def _check_unbalanced_arb_pairs(db: aiosqlite.Connection) -> int:
         )
         GROUP BY o.signal_id
         HAVING filled_count = 1
-        """
-    )
+        """)
     rows = await cursor.fetchall()
     count = 0
     for signal_id, filled_count, leg_count in rows:
