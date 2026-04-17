@@ -8,7 +8,10 @@ Features and improvements, roughly ordered by priority within each section.
 Unified `scripts/trading_session.py` runs the ingestor websocket feeds, tick-driven `ArbitrageEngine`, periodic `ScheduledStrategyRunner` (P2–P5 spread-bucket opportunities), and the embedded dashboard in one async process. Replaced the earlier v1 two-service + Redis-queue design.
 
 ### Real-Time Price Feeds ✓
-Websocket connections to Polymarket's CLOB feed and Kalshi's streaming API. Sub-second price updates drive `ArbitrageEngine.on_tick()`, which is critical for latency-sensitive cross-market arbitrage. Implemented in `core/ingestor/polymarket.py` and `core/ingestor/kalshi.py`.
+Websocket connections to Polymarket's CLOB feed and Kalshi's streaming API. Sub-second price updates drive `ArbitrageEngine.on_price_update()`, which is critical for latency-sensitive cross-market arbitrage. Implemented in `core/ingestor/streamer.py` (one connection per exchange, Polymarket chunked at 450 assets/socket).
+
+### Hot Pair Refresh ✓
+`ArbitrageEngine.update_pairs()` supports diffing a new match set against the in-memory index — adds new pairs, drops stale ones, preserves `fired_state` and live prices for retained markets. A background loop in `scripts/trading_session.py` polls cached matches every 30 minutes; if the websocket subscription set changed, it cancels and respawns the Polymarket / Kalshi streams against the new asset and ticker lists. Closes the gap where the weekly `predictor-refresh.service` wrote new matches but the running process kept trading the old set until a restart.
 
 ### Web Dashboard ✓
 React + FastAPI analytics dashboard served from the same process as the trading session. Shows portfolio overview, per-strategy performance, equity curve, trade log, risk metrics, and fee breakdown. Runs on `--dashboard` flag — no separate terminal needed.
@@ -24,7 +27,7 @@ SQLite migration runner with history tracking (`migration_history` table), dupli
 _All blockers resolved. The system is architecturally ready for `EXECUTION_MODE=live`._
 
 ### ~~Enforce Risk Controls in Execution Path~~ ✓
-All five risk checks (position limit, daily loss, exposure cap, duplicate, min edge) are enforced in `execution/handler.py` via `run_all_checks()` before any order reaches an exchange client. Failed signals are logged to `risk_check_log` and rejected. All limits are percentage-based, scaling with portfolio value.
+All five risk checks (position limit, daily loss, exposure cap, duplicate, min edge) are enforced via `core/signals/risk.py::run_all_checks()` before any order reaches an exchange client. Called inline from `ArbitrageEngine._execute_arb_trade` (P1) and from `core/strategies/single_platform.py` (P2–P5). Failed signals are logged to `risk_check_log` and rejected. All limits are percentage-based, scaling with portfolio value.
 
 ### ~~Position Close and Market Resolution~~ ✓
 `core/engine/resolution.py` closes positions once their market resolves. Called from `ScheduledStrategyRunner.run_one_cycle` before mark-to-market. Settlement price comes from `markets.outcome_value` when present, falling back to YES/NO label inference. Computes side-aware realized PnL (BUY: `(exit-entry)*size - fees`, SELL reversed), writes `trades` rows, and updates `positions.status` to `resolved` with `resolution_outcome`.
@@ -38,6 +41,9 @@ Deployment pipeline for GCE. Main VM (`e2-medium`, us-central1-a) with persisten
 ### Event Loop Fix for Dashboard ✓
 The market-match routine processed ~75k markets in a synchronous loop, blocking the asyncio event loop and starving the dashboard server. Fixed by extracting the CPU-bound matching into a sync helper and calling it via `asyncio.to_thread()`.
 
+### Redis Dependency Removed ✓
+The v1 signal queue / event bus lived on Redis. After the Phase E rewrite to a single-process tick-driven design, Redis served no purpose. Dropped from `requirements.txt`, the GitHub Actions service container, the `predictor.service` / `predictor-refresh.service` unit dependencies, and `config/settings.example.env`. The running VM no longer needs a Redis install.
+
 ## Pre-Launch Checklist
 
 _Required before the first real trade, but not architectural blockers._
@@ -49,7 +55,7 @@ System deployed to GCE and running with ~49k Polymarket + ~26k Kalshi markets. M
 Production Polymarket and Kalshi API keys currently live in plaintext `.env`. Generate fresh credentials and move them to a secrets vault (GCP Secret Manager or HashiCorp Vault).
 
 ### Alerting (Partial)
-`core/alerting.py` emits structured log events for risk breaches and reconciliation discrepancies, but nothing is wired to Slack/PagerDuty yet. Remaining: delivery channel, paging rules for stuck positions (open >72h), execution failures (>3 in 10 minutes), and DB errors.
+`core/alerting.py` ships an `AlertManager` with a Discord webhook transport (enabled via `ALERT_DISCORD_WEBHOOK_URL`; the deployed systemd unit already sets it). Wired to invariant-violation checks and reconciliation discrepancies. Remaining: paging rules for stuck positions (open >72h), execution failures (>3 in 10 minutes), and DB errors; optional second transport (PagerDuty or email) for severity tiering.
 
 ### Circuit Breaker ✓ (wiring pending live mode)
 `execution/circuit_breaker.py` halts trading on daily loss limit, consecutive order failures, or reconciliation discrepancy above threshold. Checked at the start of `ScheduledStrategyRunner.run_one_cycle`. Manual kill switch and on-call dashboard control still TODO.

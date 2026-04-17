@@ -63,7 +63,7 @@ cp config/settings.example.env .env
 # trades continuously, serves the dashboard on :8000.
 python scripts/trading_session.py --dashboard
 
-# First run (or when you want fresh pair discovery, ~30 min):
+# First run (or when you want fresh pair discovery — matching takes tens of minutes):
 python scripts/refresh_markets.py
 python scripts/trading_session.py --dashboard
 
@@ -79,13 +79,13 @@ python scripts/trading_session.py --dashboard
 | `--dashboard-port` | 8000 | Dashboard port. |
 | `--dashboard-host` | 127.0.0.1 | Bind address. Use `0.0.0.0` to expose publicly (HTTP Basic Auth required — see `deploy/DEPLOY.md`). |
 
-Market re-matching runs separately via `scripts/refresh_markets.py` (invoked ad-hoc or by the `predictor-refresh.timer` systemd unit every Sunday).
+Market re-matching runs separately via `scripts/refresh_markets.py` (invoked ad-hoc or by the `predictor-refresh.timer` systemd unit every Sunday). While the trading session is running, a background task reloads cached matches from the DB every 30 minutes and hot-swaps the `ArbitrageEngine`'s pair list — no restart needed to pick up newly discovered pairs.
 
 ### Tests
 
 ```bash
 pytest tests/ -q
-# 520 tests, all self-contained (in-memory aiosqlite with real migration schema).
+# 528 tests, all self-contained (in-memory aiosqlite with real migration schema).
 # No external services required.
 ```
 
@@ -134,10 +134,10 @@ A daily-loss circuit breaker (`execution/circuit_breaker.py`) halts the whole pr
 - `store.py` — DB writes for market snapshots and price history.
 
 ### Matching (`core/matching/engine.py`)
-Pairs related markets across platforms using title normalization and `sentence-transformers/all-MiniLM-L6-v2` embeddings. Matched pairs persist in `market_pairs` and are loaded on restart — the heavy 30-min matching pass only runs when you explicitly call `scripts/refresh_markets.py`.
+Pairs related markets across platforms using title normalization plus an inverted-index blocking strategy: tokenize every title, build a Kalshi token → market index, then score each Polymarket market against only the Kalshi candidates that share ≥2 meaningful tokens. Scoring combines Jaccard (0.50), `SequenceMatcher` ratio (0.30), and number-consistency (0.20), with semantic guards that hard-reject O/U-vs-N+ and threshold-mismatch false positives. Matched pairs persist in `market_pairs` and are loaded on restart — the heavy matching pass only runs when you explicitly call `scripts/refresh_markets.py` (and is trivially picked up by the running process via the 30-minute pair-refresh loop).
 
 ### Engine (`core/engine/`)
-- `arb_engine.py` — tick-driven P1 cross-platform arb. Retries on transient failures with exponential backoff, logs `UNBALANCED_ARB` when exactly one leg fills.
+- `arb_engine.py` — tick-driven P1 cross-platform arb. Retries on transient failures with exponential backoff, logs `UNBALANCED_ARB` when exactly one leg fills. `update_pairs()` supports hot-swapping the pair index while the engine is running (used by the weekly refresh loop).
 - `scheduler.py` — `ScheduledStrategyRunner.run_one_cycle()`: resolution → mark-to-market → reconciliation (every 5th) → invariants → P2–P5 scan.
 - `resolution.py` — closes positions for markets that settled (`markets.status IN ('resolved','closed')`), computes PnL at settlement price, sets `resolution_outcome`.
 - `reconciliation.py` — DB-level consistency: orphaned positions, stuck pending orders (>5 min), unbalanced arb pairs. Writes to `reconciliation_log`.
@@ -235,7 +235,7 @@ prediction-market/
 │   ├── take_baseline.py       # Phase 0 baseline snapshot tool
 │   ├── verify_api_auth.py     # Auth smoke test
 │   └── verify_prod_config.py  # Production config smoke test
-├── tests/                     # 520 tests, all in-memory aiosqlite
+├── tests/                     # 528 tests, all in-memory aiosqlite
 ├── deploy/                    # GCE provisioning, systemd units, CI/CD
 ├── docs/
 │   └── archive/               # Phase 0–7 design docs (historical)
