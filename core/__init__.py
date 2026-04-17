@@ -11,12 +11,6 @@ def __getattr__(name: str):
         )
         return globals()[name]
 
-    if name in ("EventBus", "Event"):
-        from .events import Event, EventBus
-
-        globals().update({"EventBus": EventBus, "Event": Event})
-        return globals()[name]
-
     if name == "Database":
         from .storage import Database
 
@@ -30,7 +24,5 @@ __all__ = [
     "Config",
     "get_config",
     "load_config",
-    "EventBus",
-    "Event",
     "Database",
 ]

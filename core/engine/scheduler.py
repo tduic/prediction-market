@@ -56,6 +56,10 @@ class ScheduledStrategyRunner:
         self._circuit_breaker = circuit_breaker
         # Phase 7: alert_manager forwards invariant violations to Discord.
         self._alert_manager = alert_manager
+        # Reconciliation runs every N cycles to catch DB-level state drift
+        # (orphaned positions, stuck pending orders, unbalanced arb legs).
+        self._cycle_count = 0
+        self._reconcile_every = 5
 
     async def run_one_cycle(self) -> list:
         """Execute a single strategy cycle. Returns list of opened positions.
@@ -76,12 +80,32 @@ class ScheduledStrategyRunner:
                     "CIRCUIT_BREAKER halted — skipping scheduled strategy cycle"
                 )
                 return []
+        # Resolution pass: close positions for markets that have settled.
+        # Runs before mark_and_close so resolved markets close at their
+        # settlement price rather than at a stale tape price.
+        try:
+            from core.engine.resolution import close_resolved_positions
+
+            await close_resolved_positions(self.db)
+        except Exception as e:
+            logger.error("resolution pass failed: %s", e, exc_info=True)
         # Mark-to-market pass: close expired open positions at current prices
         await mark_and_close_positions(
             self.db,
             holding_period_s=self._risk_config.strategy_holding_period_s,
             price_cache=self._price_cache,
         )
+        # Reconciliation: every N cycles, check DB-level state consistency.
+        # Catches orphaned positions, stuck pending orders, and unbalanced
+        # arb legs — writes discrepancies to reconciliation_log.
+        self._cycle_count += 1
+        if self._cycle_count % self._reconcile_every == 0:
+            try:
+                from core.engine.reconciliation import reconcile_internal_state
+
+                await reconcile_internal_state(self.db)
+            except Exception as e:
+                logger.error("reconciliation pass failed: %s", e, exc_info=True)
         # Phase 7: run invariant checks before opening new positions.
         # alert_manager forwards violations to Discord when configured.
         from core.invariants import check_all_invariants

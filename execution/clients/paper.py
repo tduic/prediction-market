@@ -217,7 +217,14 @@ class PaperExecutionClient(BaseExecutionClient):
         else:
             filled_price = market_price
         filled_size = leg.size
-        slippage = abs(filled_price - (leg.limit_price or filled_price))
+        # For LIMIT orders, slippage is fill vs. requested limit.
+        # For MARKET orders (limit_price=None), compare against the observed
+        # market price at fill time so the simulated adverse movement is
+        # actually reported instead of collapsing to 0.
+        reference_price = (
+            leg.limit_price if leg.limit_price is not None else market_price
+        )
+        slippage = abs(filled_price - reference_price)
 
         # Use override fee rate if provided, else platform default
         if self._fee_rate_override is not None:

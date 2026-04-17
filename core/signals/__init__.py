@@ -1,10 +1,5 @@
-"""Signal generator module for trading signals."""
+"""Signal risk checks and position sizing."""
 
-from core.signals.backpressure import BackpressureMonitor
-from core.signals.dedup import SignalDeduplicator
-from core.signals.dlq import DeadLetterQueue
-from core.signals.generator import SignalGenerator
-from core.signals.queue import HardenedSignalQueue
 from core.signals.risk import (
     RiskCheckResult,
     check_daily_loss_limit,
@@ -17,7 +12,6 @@ from core.signals.risk import (
 from core.signals.sizing import compute_kelly_fraction, compute_position_size
 
 __all__ = [
-    "SignalGenerator",
     "RiskCheckResult",
     "check_position_limit",
     "check_daily_loss_limit",
@@ -27,8 +21,4 @@ __all__ = [
     "run_all_checks",
     "compute_kelly_fraction",
     "compute_position_size",
-    "SignalDeduplicator",
-    "DeadLetterQueue",
-    "BackpressureMonitor",
-    "HardenedSignalQueue",
 ]

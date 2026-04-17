@@ -8,6 +8,7 @@ cross-platform arb trades when websocket price updates reveal spread violations.
 import asyncio
 import logging
 import os
+import random
 import time
 import uuid
 from collections import defaultdict
@@ -15,8 +16,10 @@ from datetime import datetime, timezone
 
 import aiosqlite
 
-from core.config import RiskControlConfig
+from core.config import RiskControlConfig, get_config
 from core.engine.fire_state import PairFireState, _RiskLeg, _RiskSignal
+from execution.clients.base import BaseExecutionClient, OrderResult
+from execution.models import OrderLeg
 
 # Circuit-breaker: if actual_pnl > size * this ratio the DB write is skipped.
 # P1 false-positive trades book ~40% of size; 10% catches fakes without blocking
@@ -294,6 +297,89 @@ class ArbitrageEngine:
                     self.last_arb_fired_at = time.time()
                     self._ticks_since_last_fire = 0
 
+    async def _submit_with_retry(
+        self,
+        client: BaseExecutionClient,
+        leg: OrderLeg,
+        signal_id: str | None,
+        strategy: str | None,
+    ) -> OrderResult:
+        """Submit an order with exponential backoff on transient failures.
+
+        Retries up to `execution.max_order_retries` attempts when the venue
+        returns a non-filled status, with delay `retry_backoff_base_s * 2**n`
+        plus jitter between attempts. Each retry opens a new venue order
+        (submit_order is not idempotent), which is safe because the prior
+        attempt reported no fill. Every attempt's orders row is written by
+        the client; an `order_events` row is appended here to record the
+        retry reason so post-mortems can trace the sequence.
+
+        Returns the last OrderResult (filled if any attempt fills, otherwise
+        the final failure).
+        """
+        cfg = get_config().execution
+        max_attempts = max(1, cfg.max_order_retries)
+        base_s = cfg.retry_backoff_base_s
+
+        last_result: OrderResult | None = None
+        for attempt in range(1, max_attempts + 1):
+            result = await client.submit_order(
+                leg, signal_id=signal_id, strategy=strategy
+            )
+            last_result = result
+            # Accept any partial or full fill; only retry on clean failure.
+            if result.status in ("filled", "partially_filled"):
+                if attempt > 1:
+                    logger.info(
+                        "ORDER_RETRY_SUCCESS order=%s market=%s attempt=%d/%d",
+                        result.order_id,
+                        leg.market_id,
+                        attempt,
+                        max_attempts,
+                    )
+                return result
+
+            if attempt < max_attempts:
+                delay = base_s * (2 ** (attempt - 1)) * (1 + random.random() * 0.25)
+                logger.warning(
+                    "ORDER_RETRY order=%s market=%s attempt=%d/%d status=%s err=%r "
+                    "next_delay=%.2fs",
+                    result.order_id,
+                    leg.market_id,
+                    attempt,
+                    max_attempts,
+                    result.status,
+                    result.error_message,
+                    delay,
+                )
+                try:
+                    await self.db.execute(
+                        """INSERT INTO order_events
+                           (order_id, event_type, detail, occurred_at)
+                           VALUES (?, 'retry', ?, ?)""",
+                        (
+                            result.order_id,
+                            f"attempt={attempt} status={result.status} "
+                            f"err={result.error_message or ''}",
+                            int(time.time()),
+                        ),
+                    )
+                except Exception:
+                    logger.debug("order_events retry log failed", exc_info=True)
+                await asyncio.sleep(delay)
+            else:
+                logger.error(
+                    "ORDER_RETRY_EXHAUSTED order=%s market=%s attempts=%d status=%s err=%r",
+                    result.order_id,
+                    leg.market_id,
+                    max_attempts,
+                    result.status,
+                    result.error_message,
+                )
+
+        assert last_result is not None  # max_attempts >= 1
+        return last_result
+
     async def _execute_arb_trade(
         self,
         match: dict,
@@ -305,7 +391,6 @@ class ArbitrageEngine:
         """Execute a single arbitrage trade on a matched pair."""
         from core.signals.risk import run_all_checks
         from core.signals.sizing import compute_kelly_fraction, compute_position_size
-        from execution.models import OrderLeg
 
         now = datetime.now(timezone.utc).isoformat()
         strategy = "P1_cross_market_arb"
@@ -422,7 +507,6 @@ class ArbitrageEngine:
         )
 
         try:
-            kelly = min(edge / 0.50, 0.25)
             await self.db.execute(
                 """INSERT OR IGNORE INTO signals
                    (id, violation_id, strategy, signal_type, market_id_a, market_id_b,
@@ -436,7 +520,7 @@ class ArbitrageEngine:
                     buy_id,
                     sell_id,
                     edge,
-                    kelly,
+                    kelly_f,
                     size,
                     size,
                     size * 2,
@@ -468,12 +552,24 @@ class ArbitrageEngine:
             limit_price=sell_price,
             order_type="LIMIT",
         )
-        buy_result = await buy_client.submit_order(
-            buy_leg, signal_id=signal_id, strategy=strategy
+        buy_result = await self._submit_with_retry(
+            buy_client, buy_leg, signal_id=signal_id, strategy=strategy
         )
-        sell_result = await sell_client.submit_order(
-            sell_leg, signal_id=signal_id, strategy=strategy
+        sell_result = await self._submit_with_retry(
+            sell_client, sell_leg, signal_id=signal_id, strategy=strategy
         )
+
+        # Flag unbalanced fills so reconciliation/close-out can pick them up.
+        buy_filled = buy_result.filled_price is not None
+        sell_filled = sell_result.filled_price is not None
+        if buy_filled != sell_filled:
+            logger.error(
+                "UNBALANCED_ARB pair=%s buy_filled=%s sell_filled=%s — "
+                "one leg open without hedge. Reconciliation will flag this.",
+                pair_id,
+                buy_filled,
+                sell_filled,
+            )
 
         if buy_result.filled_price and sell_result.filled_price:
             actual_spread = sell_result.filled_price - buy_result.filled_price

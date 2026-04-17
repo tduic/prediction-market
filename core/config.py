@@ -2,8 +2,7 @@
 Configuration management for the prediction market trading system.
 Loads all settings from environment variables with sensible defaults.
 
-This is the single source of truth for all configuration. Both the
-core service and execution service use get_config() to read settings.
+This is the single source of truth for all configuration.
 """
 
 import os
@@ -56,21 +55,6 @@ class DatabaseConfig:
 
 
 @dataclass
-class RedisConfig:
-    """Redis connection settings."""
-
-    redis_url: str = field(
-        default_factory=lambda: os.getenv("REDIS_URL", "redis://localhost:6379")
-    )
-    signal_queue_name: str = field(
-        default_factory=lambda: os.getenv("SIGNAL_QUEUE_NAME", "trading_signals")
-    )
-    signal_queue_timeout_s: int = field(
-        default_factory=lambda: int(os.getenv("SIGNAL_QUEUE_TIMEOUT_S", "5"))
-    )
-
-
-@dataclass
 class IngestorConfig:
     """Market data ingestor settings."""
 
@@ -85,28 +69,6 @@ class IngestorConfig:
     )
     max_markets_per_poll: int = field(
         default_factory=lambda: int(os.getenv("MAX_MARKETS_PER_POLL", "500"))
-    )
-
-
-@dataclass
-class ConstraintEngineConfig:
-    """Constraint engine and fee settings."""
-
-    min_net_spread_single_platform: float = field(
-        default_factory=lambda: float(
-            os.getenv("MIN_NET_SPREAD_SINGLE_PLATFORM", "0.03")
-        )
-    )
-    min_net_spread_cross_platform: float = field(
-        default_factory=lambda: float(
-            os.getenv("MIN_NET_SPREAD_CROSS_PLATFORM", "0.04")
-        )
-    )
-    fee_rate_polymarket: float = field(
-        default_factory=lambda: float(os.getenv("FEE_RATE_POLYMARKET", "0.02"))
-    )
-    fee_rate_kalshi: float = field(
-        default_factory=lambda: float(os.getenv("FEE_RATE_KALSHI", "0.02"))
     )
 
 
@@ -188,38 +150,6 @@ class RiskControlConfig:
 
 
 @dataclass
-class ModelServiceConfig:
-    """Model training and deployment settings."""
-
-    model_refit_cron: str = field(
-        default_factory=lambda: os.getenv("MODEL_REFIT_CRON", "0 2 * * *")
-    )
-    min_edge_to_signal: float = field(
-        default_factory=lambda: float(os.getenv("MIN_EDGE_TO_SIGNAL", "0.05"))
-    )
-    min_training_samples: int = field(
-        default_factory=lambda: int(os.getenv("MIN_TRAINING_SAMPLES", "30"))
-    )
-
-
-@dataclass
-class MatchingConfig:
-    """Market matching and verification settings."""
-
-    embedding_model: str = field(
-        default_factory=lambda: os.getenv("EMBEDDING_MODEL", "all-MiniLM-L6-v2")
-    )
-    similarity_threshold: float = field(
-        default_factory=lambda: float(os.getenv("SIMILARITY_THRESHOLD", "0.85"))
-    )
-    auto_trade_verified_only: bool = field(
-        default_factory=lambda: (
-            os.getenv("AUTO_TRADE_VERIFIED_ONLY", "true").lower() == "true"
-        )
-    )
-
-
-@dataclass
 class ExecutionConfig:
     """Order execution and settlement settings."""
 
@@ -256,14 +186,8 @@ class Config:
         default_factory=PlatformCredentials
     )
     database: DatabaseConfig = field(default_factory=DatabaseConfig)
-    redis: RedisConfig = field(default_factory=RedisConfig)
     ingestor: IngestorConfig = field(default_factory=IngestorConfig)
-    constraint_engine: ConstraintEngineConfig = field(
-        default_factory=ConstraintEngineConfig
-    )
     risk_controls: RiskControlConfig = field(default_factory=RiskControlConfig)
-    model_service: ModelServiceConfig = field(default_factory=ModelServiceConfig)
-    matching: MatchingConfig = field(default_factory=MatchingConfig)
     execution: ExecutionConfig = field(default_factory=ExecutionConfig)
     observability: ObservabilityConfig = field(default_factory=ObservabilityConfig)
 
@@ -320,32 +244,6 @@ class Config:
             raise ValueError(
                 f"STARTING_CAPITAL must be > 0, "
                 f"got {self.risk_controls.starting_capital}"
-            )
-
-        # Spread validation
-        max_fee_rate = max(
-            self.constraint_engine.fee_rate_polymarket,
-            self.constraint_engine.fee_rate_kalshi,
-        )
-        if self.constraint_engine.min_net_spread_single_platform <= max_fee_rate:
-            raise ValueError(
-                "MIN_NET_SPREAD_SINGLE_PLATFORM must be > "
-                "max(FEE_RATE_POLYMARKET, FEE_RATE_KALSHI)"
-            )
-        if self.constraint_engine.min_net_spread_cross_platform <= max(
-            self.constraint_engine.fee_rate_polymarket,
-            self.constraint_engine.fee_rate_kalshi,
-        ):
-            raise ValueError(
-                "MIN_NET_SPREAD_CROSS_PLATFORM must be > "
-                "max(FEE_RATE_POLYMARKET, FEE_RATE_KALSHI)"
-            )
-
-        # min_edge_to_signal validation
-        if self.model_service.min_edge_to_signal <= 0:
-            raise ValueError(
-                f"MIN_EDGE_TO_SIGNAL must be > 0, "
-                f"got {self.model_service.min_edge_to_signal}"
             )
 
 
