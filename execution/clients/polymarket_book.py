@@ -64,11 +64,15 @@ class BookResolver:
             )
             return None
 
+        # _valid_price returned True, so limit_price is non-None here.
+        assert limit_price is not None  # noqa: S101  (validated above)
+        price: float = float(limit_price)
+
         if side is Side.BUY:
             return ResolvedOrder(
                 token_id=yes_tok,
                 side=Side.BUY,
-                limit_price=float(limit_price),  # already validated
+                limit_price=price,
                 size=size,
                 book=Book.YES,
                 translated=False,
@@ -80,7 +84,7 @@ class BookResolver:
             return ResolvedOrder(
                 token_id=yes_tok,
                 side=Side.SELL,
-                limit_price=float(limit_price),
+                limit_price=price,
                 size=size,
                 book=Book.YES,
                 translated=False,
@@ -102,7 +106,7 @@ class BookResolver:
         return ResolvedOrder(
             token_id=no_tok,
             side=Side.BUY,
-            limit_price=round(1.0 - float(limit_price), 4),
+            limit_price=round(1.0 - price, 4),
             size=size,
             book=Book.NO,
             translated=True,
@@ -126,7 +130,9 @@ class BookResolver:
 
     @staticmethod
     def _translation_enabled() -> bool:
-        return os.getenv("POLYMARKET_ALLOW_SHORT_TRANSLATION", "true").lower() != "false"
+        return (
+            os.getenv("POLYMARKET_ALLOW_SHORT_TRANSLATION", "true").lower() != "false"
+        )
 
     async def _tokens(self, market_id: str) -> tuple[str | None, str | None] | None:
         cur = await self.db.execute(
@@ -149,7 +155,7 @@ class BookResolver:
             (market_id,),
         )
         row = await cur.fetchone()
-        return float(row[0] or 0.0)
+        return float(row[0] if row is not None else 0.0)
 
     # TODO[B2]: price-aware NO-book routing. When we have a live NO-book
     # price feed, compare (YES best-bid) vs (1 - NO best-ask) and pick the

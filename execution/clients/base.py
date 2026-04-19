@@ -91,6 +91,7 @@ class BaseExecutionClient:
         and rows get book='YES' via the column default.
         """
         now = int(time.time())
+        requested_price: float | None
         if resolved is not None:
             side_str = resolved.side.value
             requested_price = resolved.limit_price
@@ -133,7 +134,11 @@ class BaseExecutionClient:
                     result.order_id,
                     leg.market_id,
                     side_str,
-                    leg.order_type.lower() if isinstance(leg.order_type, str) else leg.order_type,
+                    (
+                        leg.order_type.lower()
+                        if isinstance(leg.order_type, str)
+                        else leg.order_type
+                    ),
                     requested_price,
                     leg.size,
                     result.filled_price,

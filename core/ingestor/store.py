@@ -328,8 +328,16 @@ async def store_markets(
         # can reconstruct it from platform_id.
         mid = f"poly_{condition_id}"
         poly_market_rows.append(
-            (mid, condition_id, title[:200], yes_token_id, no_token_id,
-             last_price_no, now, now)
+            (
+                mid,
+                condition_id,
+                title[:200],
+                yes_token_id,
+                no_token_id,
+                last_price_no,
+                now,
+                now,
+            )
         )
         poly_price_rows.append(
             (

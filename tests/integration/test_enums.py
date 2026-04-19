@@ -44,8 +44,11 @@ def test_order_leg_accepts_side_enum():
     from execution.models import OrderLeg
 
     leg = OrderLeg(
-        market_id="m1", platform="polymarket",
-        side=Side.BUY, size=10, limit_price=0.5,
+        market_id="m1",
+        platform="polymarket",
+        side=Side.BUY,
+        size=10,
+        limit_price=0.5,
     )
     assert leg.side is Side.BUY
 
@@ -54,7 +57,10 @@ def test_order_leg_coerces_string_side_to_enum():
     from execution.models import OrderLeg
 
     leg = OrderLeg(
-        market_id="m1", platform="polymarket",
-        side="SELL", size=10, limit_price=0.5,
+        market_id="m1",
+        platform="polymarket",
+        side="SELL",
+        size=10,
+        limit_price=0.5,
     )
     assert leg.side is Side.SELL

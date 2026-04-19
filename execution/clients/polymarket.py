@@ -245,7 +245,10 @@ class PolymarketExecutionClient(BaseExecutionClient):
                         error_message=error_msg,
                     )
                     await self.write_order(
-                        leg, result, signal_id=signal_id, strategy=strategy,
+                        leg,
+                        result,
+                        signal_id=signal_id,
+                        strategy=strategy,
                         resolved=resolved,
                     )
                     return result
@@ -263,7 +266,10 @@ class PolymarketExecutionClient(BaseExecutionClient):
                 submission_latency_ms=submission_latency_ms,
             )
             await self.write_order(
-                leg, pending_result, signal_id=signal_id, strategy=strategy,
+                leg,
+                pending_result,
+                signal_id=signal_id,
+                strategy=strategy,
                 resolved=resolved,
             )
 
@@ -284,7 +290,10 @@ class PolymarketExecutionClient(BaseExecutionClient):
                 error_message=str(e),
             )
             await self.write_order(
-                leg, result, signal_id=signal_id, strategy=strategy,
+                leg,
+                result,
+                signal_id=signal_id,
+                strategy=strategy,
                 resolved=resolved if resolved is not None else None,
             )
             return result

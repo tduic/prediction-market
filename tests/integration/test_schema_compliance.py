@@ -655,9 +655,10 @@ class TestMigration012OrderBookColumns:
                    VALUES ('o1', 'sig_chk', 'polymarket', 'm1', 'buy', 'limit',
                            10, 'pending', 'now', 'now', 'MAYBE')""",
             )
-        assert "CHECK constraint" in str(exc_info.value) or "constraint" in str(
-            exc_info.value
-        ).lower()
+        assert (
+            "CHECK constraint" in str(exc_info.value)
+            or "constraint" in str(exc_info.value).lower()
+        )
 
     async def test_positions_market_book_status_index_exists(self, db):
         cursor = await db.execute(
@@ -701,9 +702,7 @@ class TestPositionBookWriting:
         )
         await db.commit()
 
-        cursor = await db.execute(
-            "SELECT book FROM positions WHERE id = 'p_sp'"
-        )
+        cursor = await db.execute("SELECT book FROM positions WHERE id = 'p_sp'")
         row = await cursor.fetchone()
         assert row is not None
         assert row[0] == "YES"

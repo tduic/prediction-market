@@ -150,15 +150,24 @@ class TestWriteOrderWithResolvedOrder:
 
         client = _Client(db, platform_label="polymarket")
         leg = OrderLeg(
-            market_id="poly_m", platform="polymarket",
-            side=Side.SELL, size=10, limit_price=0.62,
+            market_id="poly_m",
+            platform="polymarket",
+            side=Side.SELL,
+            size=10,
+            limit_price=0.62,
         )
         resolved = ResolvedOrder(
-            token_id="222", side=Side.BUY, limit_price=0.38,
-            size=10, book=Book.NO, translated=True,
+            token_id="222",
+            side=Side.BUY,
+            limit_price=0.38,
+            size=10,
+            book=Book.NO,
+            translated=True,
         )
         result = OrderResult(
-            order_id="ord_x", platform="polymarket", status="pending",
+            order_id="ord_x",
+            platform="polymarket",
+            status="pending",
             submission_latency_ms=0,
         )
         await client.write_order(leg, result, signal_id="sig_w", resolved=resolved)
@@ -169,9 +178,9 @@ class TestWriteOrderWithResolvedOrder:
         )
         row = await cursor.fetchone()
         assert row is not None
-        assert row[0] == "BUY"     # resolved side, not original SELL
-        assert row[1] == "NO"      # resolved book
-        assert row[2] == 0.38      # translated price
+        assert row[0] == "BUY"  # resolved side, not original SELL
+        assert row[1] == "NO"  # resolved book
+        assert row[2] == 0.38  # translated price
 
     async def test_write_order_without_resolved_uses_leg_values(self, db):
         """Kalshi (and any other caller without a resolver) keeps today's
@@ -202,11 +211,16 @@ class TestWriteOrderWithResolvedOrder:
 
         client = _Client(db, platform_label="kalshi")
         leg = OrderLeg(
-            market_id="kal_m", platform="kalshi",
-            side=Side.BUY, size=10, limit_price=0.35,
+            market_id="kal_m",
+            platform="kalshi",
+            side=Side.BUY,
+            size=10,
+            limit_price=0.35,
         )
         result = OrderResult(
-            order_id="ord_k", platform="kalshi", status="pending",
+            order_id="ord_k",
+            platform="kalshi",
+            status="pending",
             submission_latency_ms=0,
         )
         await client.write_order(leg, result, signal_id="sig_k")
@@ -224,9 +238,7 @@ class TestWriteOrderWithResolvedOrder:
 
 @pytest.mark.asyncio
 class TestSubmitOrderTranslation:
-    async def test_translates_sell_to_buy_no_when_no_inventory(
-        self, db, monkeypatch
-    ):
+    async def test_translates_sell_to_buy_no_when_no_inventory(self, db, monkeypatch):
         """End-to-end: arb-engine-style SELL on Polymarket with no
         inventory on file hits CLOB as BUY on the NO token."""
         from execution.clients.polymarket import PolymarketExecutionClient
@@ -290,8 +302,11 @@ class TestSubmitOrderTranslation:
         client._initialized = True  # skip _ensure_client
 
         leg = OrderLeg(
-            market_id="poly_t1", platform="polymarket",
-            side=Side.SELL, size=10, limit_price=0.62,
+            market_id="poly_t1",
+            platform="polymarket",
+            side=Side.SELL,
+            size=10,
+            limit_price=0.62,
             order_type="LIMIT",
         )
         result = await client.submit_order(leg, signal_id="sig_t1")
@@ -378,8 +393,11 @@ class TestSubmitOrderTranslation:
         client._initialized = True
 
         leg = OrderLeg(
-            market_id="poly_t2", platform="polymarket",
-            side=Side.SELL, size=10, limit_price=0.55,
+            market_id="poly_t2",
+            platform="polymarket",
+            side=Side.SELL,
+            size=10,
+            limit_price=0.55,
         )
         result = await client.submit_order(leg, signal_id="sig_t2")
 

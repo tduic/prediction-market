@@ -53,8 +53,11 @@ class TestPaperPolymarketTranslation:
 
         client = PaperExecutionClient(db, platform_label="polymarket")
         leg = OrderLeg(
-            market_id="poly_p", platform="polymarket",
-            side=Side.SELL, size=10, limit_price=0.60,
+            market_id="poly_p",
+            platform="polymarket",
+            side=Side.SELL,
+            size=10,
+            limit_price=0.60,
             order_type="LIMIT",
         )
         result = await client.submit_order(leg, signal_id="sig_p")
@@ -79,8 +82,11 @@ class TestPaperPolymarketTranslation:
 
         client = PaperExecutionClient(db, platform_label="polymarket")
         leg = OrderLeg(
-            market_id="poly_p", platform="polymarket",
-            side=Side.SELL, size=10, limit_price=0.62,
+            market_id="poly_p",
+            platform="polymarket",
+            side=Side.SELL,
+            size=10,
+            limit_price=0.62,
             order_type="LIMIT",
         )
         result = await client.submit_order(leg, signal_id="sig_p")

@@ -7,7 +7,6 @@ BUY on the NO book at (1 - p) otherwise. Returns None for unresolvable
 requests (missing tokens, invalid price/size, kill-switch).
 """
 
-import os
 import sys
 from pathlib import Path
 
@@ -62,7 +61,11 @@ class TestBookResolver:
         r = await BookResolver(db).resolve("poly_0xA", Side.BUY, 10, 0.6)
         assert r is not None
         assert (r.token_id, r.side, r.limit_price, r.book, r.translated) == (
-            "111", Side.BUY, 0.6, Book.YES, False,
+            "111",
+            Side.BUY,
+            0.6,
+            Book.YES,
+            False,
         )
 
     async def test_sell_with_no_inventory_translates_to_buy_no(self, db):

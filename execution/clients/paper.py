@@ -110,7 +110,9 @@ class PaperExecutionClient(BaseExecutionClient):
                     if _is_valid_price(live_price):
                         return live_price
             except Exception as e:
-                logger.debug("[PAPER] Live price lookup failed for %s: %s", market_id, e)
+                logger.debug(
+                    "[PAPER] Live price lookup failed for %s: %s", market_id, e
+                )
 
         db_price = await self._get_db_price(market_id, book)
         return db_price if _is_valid_price(db_price) else None
@@ -239,7 +241,10 @@ class PaperExecutionClient(BaseExecutionClient):
                     error_message="No market price available",
                 )
                 await self.write_order(
-                    leg, result, signal_id=signal_id, strategy=strategy,
+                    leg,
+                    result,
+                    signal_id=signal_id,
+                    strategy=strategy,
                     resolved=resolved,
                 )
                 return result
@@ -258,7 +263,10 @@ class PaperExecutionClient(BaseExecutionClient):
                     ),
                 )
                 await self.write_order(
-                    leg, result, signal_id=signal_id, strategy=strategy,
+                    leg,
+                    result,
+                    signal_id=signal_id,
+                    strategy=strategy,
                     resolved=resolved,
                 )
                 return result
@@ -274,7 +282,10 @@ class PaperExecutionClient(BaseExecutionClient):
                     ),
                 )
                 await self.write_order(
-                    leg, result, signal_id=signal_id, strategy=strategy,
+                    leg,
+                    result,
+                    signal_id=signal_id,
+                    strategy=strategy,
                     resolved=resolved,
                 )
                 return result
@@ -326,8 +337,9 @@ class PaperExecutionClient(BaseExecutionClient):
             slippage=round(slippage, 4),
         )
 
-        await self.write_order(leg, result, signal_id=signal_id, strategy=strategy,
-                               resolved=resolved)
+        await self.write_order(
+            leg, result, signal_id=signal_id, strategy=strategy, resolved=resolved
+        )
         await self.write_fill_event(result)
 
         logger.info(
