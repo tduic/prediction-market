@@ -298,12 +298,18 @@ async def store_markets(
                 pass
 
         price = None
+        last_price_no: float | None = None
         tokens = m.get("tokens", [])
         if tokens and len(tokens) > 0:
             try:
                 price = float(tokens[0].get("price", 0))
             except (ValueError, TypeError):
                 pass
+        if tokens and len(tokens) >= 2:
+            try:
+                last_price_no = float(tokens[1].get("price", 0) or 0) or None
+            except (ValueError, TypeError):
+                last_price_no = None
         if not price:
             try:
                 op = m.get("outcomePrices", "")
@@ -322,7 +328,8 @@ async def store_markets(
         # can reconstruct it from platform_id.
         mid = f"poly_{condition_id}"
         poly_market_rows.append(
-            (mid, condition_id, title[:200], yes_token_id, no_token_id, now, now)
+            (mid, condition_id, title[:200], yes_token_id, no_token_id,
+             last_price_no, now, now)
         )
         poly_price_rows.append(
             (
@@ -450,8 +457,8 @@ async def store_markets(
         await db.executemany(
             """INSERT OR REPLACE INTO markets
                (id, platform, platform_id, title, yes_token_id, no_token_id,
-                status, created_at, updated_at)
-               VALUES (?, 'polymarket', ?, ?, ?, ?, 'open', ?, ?)""",
+                last_price_no, status, created_at, updated_at)
+               VALUES (?, 'polymarket', ?, ?, ?, ?, ?, 'open', ?, ?)""",
             poly_market_rows,
         )
         await db.executemany(

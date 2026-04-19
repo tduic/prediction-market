@@ -261,3 +261,27 @@ class TestEndToEndPipeline:
         for m in matches:
             assert m["poly_id"] in loaded_poly_ids
             assert m["kalshi_id"] in loaded_kalshi_ids
+
+
+@pytest.mark.asyncio
+async def test_store_persists_last_price_no_to_markets(db):
+    """Polymarket ingestor must write tokens[1].price to
+    markets.last_price_no so paper execution can read it later."""
+    poly = {
+        "conditionId": "0xNO_PRICE_TEST",
+        "question": "NO-price roundtrip",
+        "clobTokenIds": '["111", "222"]',
+        "tokens": [
+            {"price": 0.60},
+            {"price": 0.40},
+        ],
+    }
+    await store_markets(db, [poly], [])
+
+    cursor = await db.execute(
+        "SELECT last_price_no FROM markets WHERE id = ?",
+        ("poly_0xNO_PRICE_TEST",),
+    )
+    row = await cursor.fetchone()
+    assert row is not None
+    assert row[0] == 0.40
