@@ -46,12 +46,20 @@ async def _seed_markets(db, matches):
             (m["poly_id"], "polymarket", m["poly_price"]),
             (m["kalshi_id"], "kalshi", m["kalshi_price"]),
         ]:
-            await db.execute(
-                """INSERT OR IGNORE INTO markets
-                   (id, platform, platform_id, title, status, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, 'open', ?, ?)""",
-                (mid, platform, mid, f"Title {mid}", now, now),
-            )
+            if platform == "polymarket":
+                await db.execute(
+                    """INSERT OR IGNORE INTO markets
+                       (id, platform, platform_id, title, yes_token_id, status, created_at, updated_at)
+                       VALUES (?, ?, ?, ?, ?, 'open', ?, ?)""",
+                    (mid, platform, mid, f"Title {mid}", "11111", now, now),
+                )
+            else:
+                await db.execute(
+                    """INSERT OR IGNORE INTO markets
+                       (id, platform, platform_id, title, status, created_at, updated_at)
+                       VALUES (?, ?, ?, ?, 'open', ?, ?)""",
+                    (mid, platform, mid, f"Title {mid}", now, now),
+                )
             if price is not None:
                 await db.execute(
                     """INSERT INTO market_prices
