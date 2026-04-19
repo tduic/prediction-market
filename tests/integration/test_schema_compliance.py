@@ -605,3 +605,64 @@ class TestOrderEventsInsert:
         parsed = json.loads(row["detail"])
         assert parsed["signal_id"] == signal_id
         assert parsed["leg_index"] == 0
+
+
+@pytest.mark.asyncio
+class TestMigration012OrderBookColumns:
+    async def test_orders_has_book_column(self, db):
+        cursor = await db.execute("PRAGMA table_info(orders)")
+        cols = {row[1]: row for row in await cursor.fetchall()}
+        assert "book" in cols
+        # row format: (cid, name, type, notnull, dflt_value, pk)
+        assert cols["book"][3] == 1  # NOT NULL
+        assert cols["book"][4] == "'YES'"  # DEFAULT 'YES'
+
+    async def test_positions_has_book_column(self, db):
+        cursor = await db.execute("PRAGMA table_info(positions)")
+        cols = {row[1]: row for row in await cursor.fetchall()}
+        assert "book" in cols
+        assert cols["book"][3] == 1
+        assert cols["book"][4] == "'YES'"
+
+    async def test_markets_has_last_price_no_column(self, db):
+        cursor = await db.execute("PRAGMA table_info(markets)")
+        cols = {row[1]: row for row in await cursor.fetchall()}
+        assert "last_price_no" in cols
+        # Nullable — Kalshi rows won't have it.
+        assert cols["last_price_no"][3] == 0
+
+    async def test_orders_book_check_constraint_rejects_invalid(self, db):
+        # Seed market first (FK required by signals.market_id_a), then signal
+        await db.execute(
+            """INSERT INTO markets
+               (id, platform, platform_id, title, status, created_at, updated_at)
+               VALUES ('m1', 'polymarket', '0xm1', 't', 'open', 'now', 'now')""",
+        )
+        await db.execute(
+            """INSERT INTO signals
+               (id, strategy, signal_type, market_id_a, market_id_b,
+                model_edge, kelly_fraction, position_size_a,
+                total_capital_at_risk, status, fired_at, updated_at)
+               VALUES ('sig_chk', 's', 'arb_pair', 'm1', 'm1',
+                       0.01, 0.01, 10.0, 10.0, 'fired', 'now', 'now')""",
+        )
+        await db.commit()
+        with pytest.raises(Exception) as exc_info:
+            await db.execute(
+                """INSERT INTO orders
+                   (id, signal_id, platform, market_id, side, order_type,
+                    requested_size, status, submitted_at, updated_at, book)
+                   VALUES ('o1', 'sig_chk', 'polymarket', 'm1', 'buy', 'limit',
+                           10, 'pending', 'now', 'now', 'MAYBE')""",
+            )
+        assert "CHECK constraint" in str(exc_info.value) or "constraint" in str(
+            exc_info.value
+        ).lower()
+
+    async def test_positions_market_book_status_index_exists(self, db):
+        cursor = await db.execute(
+            "SELECT name FROM sqlite_master WHERE type='index' "
+            "AND name='idx_positions_market_book_status'"
+        )
+        row = await cursor.fetchone()
+        assert row is not None
