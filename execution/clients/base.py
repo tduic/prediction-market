@@ -11,6 +11,7 @@ from dataclasses import dataclass
 
 import aiosqlite
 
+from execution.clients.polymarket_book import ResolvedOrder
 from execution.models import OrderLeg
 
 logger = logging.getLogger(__name__)
@@ -78,14 +79,30 @@ class BaseExecutionClient:
         result: OrderResult,
         signal_id: str | None = None,
         strategy: str | None = None,
+        resolved: "ResolvedOrder | None" = None,
     ) -> None:
         """
         Write an order record to the orders table.
 
-        This is the single source of truth for all order data. Every client
-        (mock, paper, kalshi, polymarket) calls this with the same fields.
+        When ``resolved`` is provided, ``side``, ``requested_price``, and
+        ``book`` are pulled from it — reflecting what actually hit the
+        exchange rather than the strategy's original intent. Callers that
+        don't route through a resolver (Kalshi, paper-Kalshi) pass None
+        and rows get book='YES' via the column default.
         """
         now = int(time.time())
+        if resolved is not None:
+            side_str = resolved.side.value
+            requested_price = resolved.limit_price
+            book_str = resolved.book.value
+        else:
+            # Normalize to uppercase for consistency with new enum-typed writers.
+            side_str = (
+                leg.side.value if hasattr(leg.side, "value") else str(leg.side).upper()
+            )
+            requested_price = leg.limit_price
+            book_str = "YES"
+
         try:
             await self.db.execute(
                 """
@@ -97,7 +114,7 @@ class BaseExecutionClient:
                     status, failure_reason,
                     retry_count, submitted_at,
                     filled_at, submission_latency_ms, fill_latency_ms,
-                    strategy, updated_at
+                    strategy, updated_at, book
                 ) VALUES (
                     ?, ?, ?, ?,
                     ?, ?, ?,
@@ -106,7 +123,7 @@ class BaseExecutionClient:
                     ?, ?,
                     0, ?,
                     ?, ?, ?,
-                    ?, ?
+                    ?, ?, ?
                 )
                 """,
                 (
@@ -115,9 +132,9 @@ class BaseExecutionClient:
                     result.platform,
                     result.order_id,
                     leg.market_id,
-                    leg.side.lower(),
-                    leg.order_type.lower(),
-                    leg.limit_price,
+                    side_str,
+                    leg.order_type.lower() if isinstance(leg.order_type, str) else leg.order_type,
+                    requested_price,
                     leg.size,
                     result.filled_price,
                     result.filled_size,
@@ -131,6 +148,7 @@ class BaseExecutionClient:
                     result.fill_latency_ms,
                     strategy,
                     now,
+                    book_str,
                 ),
             )
             # Note: caller is responsible for committing in batches

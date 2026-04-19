@@ -101,3 +101,112 @@ class TestSubmitOrderRouting:
         row = await cursor.fetchone()
         assert row is not None
         assert row[0] == "failed"
+
+
+@pytest.mark.asyncio
+class TestWriteOrderWithResolvedOrder:
+    async def test_write_order_uses_resolved_side_price_and_book(self, db):
+        """When write_order gets a ResolvedOrder, the orders row
+        reflects what hit the exchange (resolved values), not the
+        original strategy intent."""
+        from execution.clients.base import BaseExecutionClient
+        from execution.clients.base import OrderResult
+        from execution.clients.polymarket_book import ResolvedOrder
+        from execution.enums import Book, Side
+        from execution.models import OrderLeg
+
+        # Seed market first (FK dependency for signals).
+        await db.execute(
+            """INSERT INTO markets
+               (id, platform, platform_id, title, yes_token_id, no_token_id,
+                status, created_at, updated_at)
+               VALUES ('poly_m', 'polymarket', '0xm', 't', '111', '222',
+                       'open', 'now', 'now')""",
+        )
+        # Seed signal for FK.
+        await db.execute(
+            """INSERT INTO signals
+               (id, strategy, signal_type, market_id_a, market_id_b,
+                model_edge, kelly_fraction, position_size_a,
+                total_capital_at_risk, status, fired_at, updated_at)
+               VALUES ('sig_w', 's', 'arb_pair', 'poly_m', 'poly_m',
+                       0.01, 0.01, 10, 10, 'fired', 'now', 'now')""",
+        )
+        await db.commit()
+
+        class _Client(BaseExecutionClient):
+            async def submit_order(self, leg, **kw):
+                raise NotImplementedError
+
+        client = _Client(db, platform_label="polymarket")
+        leg = OrderLeg(
+            market_id="poly_m", platform="polymarket",
+            side=Side.SELL, size=10, limit_price=0.62,
+        )
+        resolved = ResolvedOrder(
+            token_id="222", side=Side.BUY, limit_price=0.38,
+            size=10, book=Book.NO, translated=True,
+        )
+        result = OrderResult(
+            order_id="ord_x", platform="polymarket", status="pending",
+            submission_latency_ms=0,
+        )
+        await client.write_order(leg, result, signal_id="sig_w", resolved=resolved)
+        await db.commit()
+
+        cursor = await db.execute(
+            "SELECT side, book, requested_price FROM orders WHERE id = 'ord_x'"
+        )
+        row = await cursor.fetchone()
+        assert row is not None
+        assert row[0] == "BUY"     # resolved side, not original SELL
+        assert row[1] == "NO"      # resolved book
+        assert row[2] == 0.38      # translated price
+
+    async def test_write_order_without_resolved_uses_leg_values(self, db):
+        """Kalshi (and any other caller without a resolver) keeps today's
+        behavior: orders row reflects leg.side and leg.limit_price,
+        book defaults to 'YES' via migration 012."""
+        from execution.clients.base import BaseExecutionClient, OrderResult
+        from execution.enums import Side
+        from execution.models import OrderLeg
+
+        await db.execute(
+            """INSERT INTO markets
+               (id, platform, platform_id, title, status, created_at, updated_at)
+               VALUES ('kal_m', 'kalshi', 'KXM', 't', 'open', 'now', 'now')""",
+        )
+        await db.execute(
+            """INSERT INTO signals
+               (id, strategy, signal_type, market_id_a, market_id_b,
+                model_edge, kelly_fraction, position_size_a,
+                total_capital_at_risk, status, fired_at, updated_at)
+               VALUES ('sig_k', 's', 'arb_pair', 'kal_m', 'kal_m',
+                       0.01, 0.01, 10, 10, 'fired', 'now', 'now')""",
+        )
+        await db.commit()
+
+        class _Client(BaseExecutionClient):
+            async def submit_order(self, leg, **kw):
+                raise NotImplementedError
+
+        client = _Client(db, platform_label="kalshi")
+        leg = OrderLeg(
+            market_id="kal_m", platform="kalshi",
+            side=Side.BUY, size=10, limit_price=0.35,
+        )
+        result = OrderResult(
+            order_id="ord_k", platform="kalshi", status="pending",
+            submission_latency_ms=0,
+        )
+        await client.write_order(leg, result, signal_id="sig_k")
+        await db.commit()
+
+        cursor = await db.execute(
+            "SELECT side, book, requested_price FROM orders WHERE id = 'ord_k'"
+        )
+        row = await cursor.fetchone()
+        assert row is not None
+        assert row[0] == "BUY"
+        assert row[1] == "YES"
+        assert row[2] == 0.35
