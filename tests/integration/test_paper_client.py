@@ -184,7 +184,7 @@ class TestInvalidPriceFallback:
 
         # Force the DB fallback to also return 0.0, mirroring the prod case
         # where every cached price for this market is stale/zero.
-        async def _zero_db(self, market_id):
+        async def _zero_db(self, market_id, book=None):
             return 0.0
 
         monkeypatch.setattr(PaperExecutionClient, "_get_db_price", _zero_db)
