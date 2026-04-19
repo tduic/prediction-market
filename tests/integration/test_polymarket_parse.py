@@ -68,3 +68,39 @@ def test_parse_returns_zero_price_when_nothing_usable():
     md = _client()._parse_market(item)
     assert md is not None
     assert md.last_price == 0.0
+
+
+def test_parse_extracts_no_token_price_from_tokens_array():
+    """CLOB tokens[1] is the NO token; its price must land on
+    MarketData.last_price_no so paper can read it for translated fills."""
+    item = {
+        "condition_id": "0xabc",
+        "question": "Will X happen?",
+        "lastPrice": None,
+        "tokens": [
+            {"token_id": "t1", "outcome": "Yes", "price": 0.535},
+            {"token_id": "t2", "outcome": "No", "price": 0.465},
+        ],
+    }
+    md = _client()._parse_market(item)
+    assert md is not None
+    assert md.last_price == 0.535
+    assert md.last_price_no == 0.465
+
+
+def test_parse_no_price_none_when_no_second_token():
+    item = {
+        "conditionId": "0xone",
+        "question": "q",
+        "tokens": [{"price": 0.5}],  # only YES token, no NO
+    }
+    md = _client()._parse_market(item)
+    assert md is not None
+    assert md.last_price_no is None
+
+
+def test_parse_no_price_none_when_tokens_missing():
+    item = {"conditionId": "0xbare", "question": "q"}
+    md = _client()._parse_market(item)
+    assert md is not None
+    assert md.last_price_no is None

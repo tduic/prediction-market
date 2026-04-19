@@ -42,6 +42,7 @@ class MarketData:
     description: str
     resolution_date: datetime | None
     last_price: float
+    last_price_no: float | None = None
     order_book: OrderBook | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
@@ -256,6 +257,17 @@ class PolymarketClient:
                     except (TypeError, ValueError):
                         last_price = 0.0
 
+            # Extract NO-token price from tokens[1] for paper-fidelity on
+            # translated SELL legs. Optional — Kalshi has no NO book, and
+            # some sparse Polymarket payloads only expose one token.
+            last_price_no: float | None = None
+            tokens_for_no = item.get("tokens") or []
+            if len(tokens_for_no) >= 2:
+                try:
+                    last_price_no = float(tokens_for_no[1].get("price", 0) or 0) or None
+                except (TypeError, ValueError):
+                    last_price_no = None
+
             # CLOB returns condition_id (snake_case); Gamma returns conditionId
             # (camelCase). Accept both so this parser can be pointed at either.
             market_id = item.get("conditionId") or item.get("condition_id") or ""
@@ -272,6 +284,7 @@ class PolymarketClient:
                     else None
                 ),
                 last_price=last_price,
+                last_price_no=last_price_no,
                 is_active=item.get("active", True),
                 metadata={
                     "liquidity": item.get("liquidity"),
