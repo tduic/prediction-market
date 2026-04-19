@@ -563,9 +563,9 @@ async def detect_single_platform_opportunities(
             try:
                 await db.execute(
                     """INSERT INTO positions
-                       (id, signal_id, market_id, strategy, side, entry_price,
+                       (id, signal_id, market_id, strategy, side, book, entry_price,
                         entry_size, fees_paid, pnl_model, status, opened_at, updated_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'realistic', 'open', ?, ?)""",
+                       VALUES (?, ?, ?, ?, ?, 'YES', ?, ?, ?, 'realistic', 'open', ?, ?)""",
                     (
                         pos_id,
                         signal_id,

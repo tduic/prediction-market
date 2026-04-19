@@ -727,10 +727,12 @@ class ArbitrageEngine:
             try:
                 await self.db.execute(
                     """INSERT INTO positions
-                       (id, signal_id, market_id, strategy, side, entry_price,
+                       (id, signal_id, market_id, strategy, side, book, entry_price,
                         entry_size, exit_price, exit_size, realized_pnl, fees_paid,
                         status, opened_at, closed_at, updated_at)
-                       VALUES (?, ?, ?, ?, 'BUY', ?, ?, ?, ?, ?, ?, 'closed', ?, ?, ?)""",
+                       VALUES (?, ?, ?, ?, 'BUY', 'YES', ?, ?, ?, ?, ?, ?, 'closed', ?, ?, ?)""",
+                    # TODO[no-naked-shorts]: when the translated-NO path becomes live
+                    # for arbs, propagate the resolved book here instead of 'YES'.
                     (
                         pos_id,
                         signal_id,

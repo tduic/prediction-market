@@ -206,10 +206,10 @@ async def detect_violations_and_trade(
             try:
                 await db.execute(
                     """INSERT INTO positions
-                       (id, signal_id, market_id, strategy, side, entry_price,
+                       (id, signal_id, market_id, strategy, side, book, entry_price,
                         entry_size, exit_price, exit_size, realized_pnl, fees_paid,
                         status, opened_at, closed_at, updated_at)
-                       VALUES (?, ?, ?, ?, 'BUY', ?, ?, ?, ?, ?, ?, 'closed', ?, ?, ?)""",
+                       VALUES (?, ?, ?, ?, 'BUY', 'YES', ?, ?, ?, ?, ?, ?, 'closed', ?, ?, ?)""",
                     (
                         pos_id,
                         signal_id,
