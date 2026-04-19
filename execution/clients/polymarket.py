@@ -15,6 +15,7 @@ import aiosqlite
 
 from core.secrets import get_secret
 from execution.clients.base import BaseExecutionClient, OrderResult
+from execution.clients.polymarket_book import BookResolver
 from execution.enums import Side  # noqa: F401  (future call-site refactors may use it)
 from execution.models import OrderLeg
 
@@ -56,6 +57,7 @@ class PolymarketExecutionClient(BaseExecutionClient):
         proxy_url: str | None = None,
     ) -> None:
         super().__init__(db_connection, platform_label="polymarket")
+        self._book_resolver = BookResolver(db_connection)
 
         self.private_key = private_key or get_secret("POLYMARKET_PRIVATE_KEY", "") or ""
         self.funder = funder or get_secret("POLYMARKET_WALLET_ADDRESS", "") or ""
@@ -159,27 +161,6 @@ class PolymarketExecutionClient(BaseExecutionClient):
             logger.error("Failed to configure proxy: %s", e, exc_info=True)
             raise
 
-    async def _resolve_token_id(self, market_id: str) -> str | None:
-        """Look up the ERC-1155 CLOB token_id for this market.
-
-        `leg.market_id` is our internal prefixed ID (e.g. ``poly_0x9c1a...``),
-        not a valid CLOB token_id. The actual 77-digit token IDs live in
-        ``markets.yes_token_id`` / ``markets.no_token_id`` (populated by the
-        ingestor from Gamma's ``clobTokenIds`` array). All our prices and
-        sizing decisions are YES-side, so we return the YES token.
-
-        TODO: when we support SELL-as-buy-NO semantics, branch on side and
-        return no_token_id for sells.
-        """
-        cursor = await self.db.execute(
-            "SELECT yes_token_id FROM markets WHERE id = ?",
-            (market_id,),
-        )
-        row = await cursor.fetchone()
-        if row and row[0]:
-            return str(row[0])
-        return None
-
     async def submit_order(
         self,
         leg: OrderLeg,
@@ -190,17 +171,21 @@ class PolymarketExecutionClient(BaseExecutionClient):
         await self._acquire_rate_limit()
         start_time = time.time()
 
+        resolved = None
         try:
             # Resolve BEFORE initializing the CLOB client: a missing token is
             # a DB-resolvable problem, no point paying py-clob-client import +
             # L1 auth cost just to emit a failure.
-            token_id = await self._resolve_token_id(leg.market_id)
-            if not token_id:
+            resolved = await self._book_resolver.resolve(
+                leg.market_id, leg.side, leg.size, leg.limit_price
+            )
+            if resolved is None:
                 submission_latency_ms = int((time.time() - start_time) * 1000)
                 error_msg = (
-                    f"No CLOB token_id on file for market {leg.market_id}; "
-                    "cannot route order (run market refresh to populate "
-                    "yes_token_id/no_token_id)."
+                    f"BookResolver rejected order for {leg.market_id} "
+                    f"(side={leg.side.value}, size={leg.size}, "
+                    f"price={leg.limit_price}) — missing tokens, invalid "
+                    f"price/size, or short translation disabled."
                 )
                 logger.error(error_msg)
                 result = OrderResult(
@@ -218,19 +203,22 @@ class PolymarketExecutionClient(BaseExecutionClient):
             self._ensure_client()
 
             logger.info(
-                "Submitting to Polymarket: market=%s token=%s side=%s size=%f price=%s",
+                "Submitting to Polymarket: market=%s token=%s side=%s size=%f "
+                "price=%s book=%s translated=%s",
                 leg.market_id,
-                token_id,
-                leg.side,
-                leg.size,
-                leg.limit_price,
+                resolved.token_id,
+                resolved.side.value,
+                resolved.size,
+                resolved.limit_price,
+                resolved.book.value,
+                resolved.translated,
             )
 
             order_args = _OrderArgs(
-                token_id=token_id,
-                price=leg.limit_price or 0.50,
-                size=leg.size,
-                side=leg.side.value,
+                token_id=resolved.token_id,
+                price=resolved.limit_price,
+                size=resolved.size,
+                side=resolved.side.value,
             )
 
             signed_order = self._client.create_order(order_args)
@@ -257,7 +245,8 @@ class PolymarketExecutionClient(BaseExecutionClient):
                         error_message=error_msg,
                     )
                     await self.write_order(
-                        leg, result, signal_id=signal_id, strategy=strategy
+                        leg, result, signal_id=signal_id, strategy=strategy,
+                        resolved=resolved,
                     )
                     return result
             else:
@@ -274,7 +263,8 @@ class PolymarketExecutionClient(BaseExecutionClient):
                 submission_latency_ms=submission_latency_ms,
             )
             await self.write_order(
-                leg, pending_result, signal_id=signal_id, strategy=strategy
+                leg, pending_result, signal_id=signal_id, strategy=strategy,
+                resolved=resolved,
             )
 
             # Poll for fill
@@ -293,7 +283,10 @@ class PolymarketExecutionClient(BaseExecutionClient):
                 submission_latency_ms=submission_latency_ms,
                 error_message=str(e),
             )
-            await self.write_order(leg, result, signal_id=signal_id, strategy=strategy)
+            await self.write_order(
+                leg, result, signal_id=signal_id, strategy=strategy,
+                resolved=resolved if resolved is not None else None,
+            )
             return result
 
     async def _poll_for_fill(
