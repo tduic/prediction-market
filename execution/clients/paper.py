@@ -16,6 +16,7 @@ import uuid
 import aiosqlite
 
 from execution.clients.base import BaseExecutionClient, OrderResult
+from execution.enums import Side
 from execution.models import OrderLeg
 
 logger = logging.getLogger(__name__)
@@ -189,7 +190,7 @@ class PaperExecutionClient(BaseExecutionClient):
 
         # For limit orders, check if price is executable
         if leg.order_type.upper() == "LIMIT" and leg.limit_price is not None:
-            if leg.side.upper() == "BUY" and market_price > leg.limit_price:
+            if leg.side is Side.BUY and market_price > leg.limit_price:
                 result = OrderResult(
                     order_id=order_id,
                     platform=self.platform_label,
@@ -201,7 +202,7 @@ class PaperExecutionClient(BaseExecutionClient):
                     leg, result, signal_id=signal_id, strategy=strategy
                 )
                 return result
-            if leg.side.upper() == "SELL" and market_price < leg.limit_price:
+            if leg.side is Side.SELL and market_price < leg.limit_price:
                 result = OrderResult(
                     order_id=order_id,
                     platform=self.platform_label,
@@ -223,7 +224,7 @@ class PaperExecutionClient(BaseExecutionClient):
         slippage_factor = self.slippage_bps / 10000.0
         if slippage_factor > 0:
             adverse = market_price * slippage_factor * random.uniform(0, 1)
-            if leg.side.upper() == "BUY":
+            if leg.side is Side.BUY:
                 filled_price = min(round(market_price + adverse, 6), 0.99)
             else:
                 filled_price = max(round(market_price - adverse, 6), 0.01)

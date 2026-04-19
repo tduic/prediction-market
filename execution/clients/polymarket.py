@@ -15,6 +15,7 @@ import aiosqlite
 
 from core.secrets import get_secret
 from execution.clients.base import BaseExecutionClient, OrderResult
+from execution.enums import Side  # noqa: F401  (future call-site refactors may use it)
 from execution.models import OrderLeg
 
 logger = logging.getLogger(__name__)
@@ -229,7 +230,7 @@ class PolymarketExecutionClient(BaseExecutionClient):
                 token_id=token_id,
                 price=leg.limit_price or 0.50,
                 size=leg.size,
-                side=leg.side.upper(),
+                side=leg.side.value,
             )
 
             signed_order = self._client.create_order(order_args)

@@ -19,6 +19,7 @@ import aiosqlite
 from core.config import RiskControlConfig, get_config
 from core.engine.fire_state import PairFireState, _RiskLeg, _RiskSignal
 from execution.clients.base import BaseExecutionClient, OrderResult
+from execution.enums import Side
 from execution.models import OrderLeg
 
 # Circuit-breaker: if actual_pnl > size * this ratio the DB write is skipped.
@@ -672,7 +673,7 @@ class ArbitrageEngine:
         buy_leg = OrderLeg(
             market_id=buy_id,
             platform=buy_platform,
-            side="BUY",
+            side=Side.BUY,
             size=size,
             limit_price=buy_price,
             order_type="LIMIT",
@@ -680,7 +681,7 @@ class ArbitrageEngine:
         sell_leg = OrderLeg(
             market_id=sell_id,
             platform=sell_platform,
-            side="SELL",
+            side=Side.SELL,
             size=size,
             limit_price=sell_price,
             order_type="LIMIT",

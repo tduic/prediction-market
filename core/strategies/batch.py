@@ -33,6 +33,7 @@ async def detect_violations_and_trade(
     """
     from core.signals.sizing import compute_kelly_fraction, compute_position_size
     from core.strategies.assignment import assign_strategy
+    from execution.enums import Side
     from execution.factory import _make_execution_clients
     from execution.models import OrderLeg
 
@@ -163,7 +164,7 @@ async def detect_violations_and_trade(
         buy_leg = OrderLeg(
             market_id=buy_id,
             platform=buy_platform,
-            side="BUY",
+            side=Side.BUY,
             size=size,
             limit_price=buy_price,
             order_type="LIMIT",
@@ -171,7 +172,7 @@ async def detect_violations_and_trade(
         sell_leg = OrderLeg(
             market_id=sell_id,
             platform=sell_platform,
-            side="SELL",
+            side=Side.SELL,
             size=size,
             limit_price=sell_price,
             order_type="LIMIT",
