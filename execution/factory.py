@@ -37,7 +37,7 @@ def _make_execution_clients(
     else:
         from execution.clients.paper import PaperExecutionClient
 
-        poly_client = PaperExecutionClient(db, platform_label="paper_polymarket")
+        poly_client = PaperExecutionClient(db, platform_label="polymarket")
         kalshi_client = PaperExecutionClient(db, platform_label="paper_kalshi")
         label = (
             "SHADOW (paper clients, no real orders)"

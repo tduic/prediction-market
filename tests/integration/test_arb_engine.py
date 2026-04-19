@@ -44,25 +44,38 @@ def matches():
 
 
 async def _seed_markets_for_engine(db, matches):
-    """Insert market + price records so the paper client can look up prices."""
+    """Insert market + price records so the paper client can look up prices.
+
+    Polymarket markets include yes_token_id so the BookResolver (now active in
+    paper mode via the factory) can route BUY orders without rejecting them.
+    """
     now = datetime.now(timezone.utc).isoformat()
     for m in matches:
         for mid, platform, plat_id, price in [
             (m["poly_id"], "polymarket", m["poly_id"], m["poly_price"]),
             (m["kalshi_id"], "kalshi", m["kalshi_id"], m["kalshi_price"]),
         ]:
-            await db.execute(
-                """INSERT OR IGNORE INTO markets
-                   (id, platform, platform_id, title, status, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, 'open', ?, ?)""",
-                (mid, platform, plat_id, f"Title {mid}", now, now),
-            )
-            await db.execute(
-                """INSERT INTO market_prices
-                   (market_id, yes_price, no_price, spread, liquidity, polled_at)
-                   VALUES (?, ?, ?, 0.02, 10000, ?)""",
-                (mid, price, round(1 - price, 4), now),
-            )
+            if platform == "polymarket":
+                await db.execute(
+                    """INSERT OR IGNORE INTO markets
+                       (id, platform, platform_id, title, yes_token_id, status, created_at, updated_at)
+                       VALUES (?, ?, ?, ?, ?, 'open', ?, ?)""",
+                    (mid, platform, plat_id, f"Title {mid}", f"tok_yes_{mid}", now, now),
+                )
+            else:
+                await db.execute(
+                    """INSERT OR IGNORE INTO markets
+                       (id, platform, platform_id, title, status, created_at, updated_at)
+                       VALUES (?, ?, ?, ?, 'open', ?, ?)""",
+                    (mid, platform, plat_id, f"Title {mid}", now, now),
+                )
+            if price is not None:
+                await db.execute(
+                    """INSERT INTO market_prices
+                       (market_id, yes_price, no_price, spread, liquidity, polled_at)
+                       VALUES (?, ?, ?, 0.02, 10000, ?)""",
+                    (mid, price, round(1 - price, 4), now),
+                )
     await db.commit()
 
 
@@ -606,19 +619,32 @@ def _risk_config(**overrides):
 
 
 async def _seed_markets_p23(db, matches):
-    """Seed markets + prices for risk-choke / re-arm tests."""
+    """Seed markets + prices for risk-choke / re-arm tests.
+
+    Polymarket markets include a yes_token_id so that the PaperExecutionClient's
+    BookResolver can route BUY orders (YES passthrough) without rejecting them.
+    The arb engine factory now wires a BookResolver-enabled paper client for poly.
+    """
     now = datetime.now(timezone.utc).isoformat()
     for m in matches:
         for mid, platform, price in [
             (m["poly_id"], "polymarket", m["poly_price"]),
             (m["kalshi_id"], "kalshi", m["kalshi_price"]),
         ]:
-            await db.execute(
-                "INSERT OR IGNORE INTO markets "
-                "(id, platform, platform_id, title, status, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, 'open', ?, ?)",
-                (mid, platform, mid, f"Title {mid}", now, now),
-            )
+            if platform == "polymarket":
+                await db.execute(
+                    "INSERT OR IGNORE INTO markets "
+                    "(id, platform, platform_id, title, yes_token_id, status, created_at, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, 'open', ?, ?)",
+                    (mid, platform, mid, f"Title {mid}", f"tok_yes_{mid}", now, now),
+                )
+            else:
+                await db.execute(
+                    "INSERT OR IGNORE INTO markets "
+                    "(id, platform, platform_id, title, status, created_at, updated_at) "
+                    "VALUES (?, ?, ?, ?, 'open', ?, ?)",
+                    (mid, platform, mid, f"Title {mid}", now, now),
+                )
             if price is not None:
                 await db.execute(
                     "INSERT INTO market_prices "
@@ -1048,6 +1074,78 @@ class TestStatsWithFireState:
         await _simulate_price_update(engine, db, "poly_A", _POLY_TRIGGER)
         assert len(engine.trades) == 1
         assert engine.stats()["recently_fired"] == 1
+
+
+@pytest.mark.asyncio
+async def test_arb_fire_with_sell_poly_leg_translates(db):
+    """When the arb engine fires with Polymarket as the expensive leg,
+    the poly leg that reaches the execution client is translated: book=NO,
+    side=BUY, price=(1-p). The paper client is the execution path under
+    test — its orders row captures what hit the simulated exchange."""
+    # Poly expensive (0.70), Kalshi cheap (0.55) → spread=0.15 > 0.03 threshold.
+    # The engine sends side=SELL @ 0.70 to the poly paper client.
+    # BookResolver has no YES inventory → translates to BUY NO @ 0.30.
+    now = datetime.now(timezone.utc).isoformat()
+
+    # Seed poly market with yes_token_id + no_token_id (required by BookResolver)
+    # and last_price_no for the NO-book price lookup at fill time.
+    await db.execute(
+        """INSERT INTO markets
+           (id, platform, platform_id, title, yes_token_id, no_token_id,
+            last_price_no, status, created_at, updated_at)
+           VALUES ('poly_arb', 'polymarket', '0xarb', 'Arb Test Market',
+                   'tok_yes_arb', 'tok_no_arb', 0.30, 'open', ?, ?)""",
+        (now, now),
+    )
+    await db.execute(
+        """INSERT INTO markets
+           (id, platform, platform_id, title, status, created_at, updated_at)
+           VALUES ('kal_arb', 'kalshi', 'KXARB', 'Arb Test Market Kalshi',
+                   'open', ?, ?)""",
+        (now, now),
+    )
+    await db.execute(
+        """INSERT INTO market_prices
+           (market_id, yes_price, no_price, spread, liquidity, polled_at)
+           VALUES ('poly_arb', 0.70, 0.30, 0.02, 10000, ?)""",
+        (now,),
+    )
+    await db.execute(
+        """INSERT INTO market_prices
+           (market_id, yes_price, no_price, spread, liquidity, polled_at)
+           VALUES ('kal_arb', 0.55, 0.45, 0.02, 10000, ?)""",
+        (now,),
+    )
+    await db.commit()
+
+    match = _make_match("poly_arb", "kal_arb", 0.70, 0.55)
+    # Use a generous risk config so the trade fires despite the large spread
+    # (Kelly on 0.15 spread can exceed the default 5% cap; bump to 10% here).
+    cfg = _risk_config(max_position_pct=0.10)
+    engine = ArbitrageEngine(db, [match], min_spread=0.03, risk_config=cfg)
+
+    # Trigger the engine: poly is already seeded at 0.70, kalshi at 0.55.
+    # A price update on the kalshi side (small change to beat the noise guard)
+    # will evaluate the spread and fire the arb.
+    await _simulate_price_update(engine, db, "kal_arb", 0.56)
+
+    assert len(engine.trades) == 1, (
+        f"Expected 1 trade to fire, got {len(engine.trades)}"
+    )
+
+    # The sell leg goes to the poly paper client (poly is the expensive/sell side).
+    # BookResolver has no YES inventory → translates SELL YES @ 0.70 to BUY NO @ 0.30.
+    cursor = await db.execute(
+        "SELECT side, book, requested_price FROM orders "
+        "WHERE market_id = 'poly_arb' ORDER BY submitted_at DESC LIMIT 1"
+    )
+    row = await cursor.fetchone()
+    assert row is not None, "Expected an orders row for poly_arb after the arb fired"
+    assert row[0] == "BUY", f"Expected side='BUY' (translated), got {row[0]!r}"
+    assert row[1] == "NO", f"Expected book='NO' (translated), got {row[1]!r}"
+    assert row[2] == pytest.approx(0.30, abs=1e-4), (
+        f"Expected requested_price≈0.30, got {row[2]}"
+    )
 
 
 @pytest.mark.asyncio
