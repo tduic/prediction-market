@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
@@ -44,6 +44,7 @@ class BreakerState:
     consecutive_failures: int
     consecutive_failure_limit: int
     utc_day: str
+    daily_loss_available: bool = True
 
 
 class DailyLossCircuitBreaker:
@@ -234,7 +235,15 @@ class DailyLossCircuitBreaker:
 
     async def get_state(self) -> BreakerState:
         """Return a snapshot of current state (for dashboards / status API)."""
-        daily_loss = await self._compute_daily_loss()
+        daily_loss_available = True
+        try:
+            daily_loss = await self._compute_daily_loss()
+        except Exception as e:
+            logger.warning(
+                "get_state: failed to compute daily loss — reporting unavailable: %s", e
+            )
+            daily_loss = 0.0
+            daily_loss_available = False
         return BreakerState(
             tripped=self._tripped,
             reason=self._reason,
@@ -244,6 +253,7 @@ class DailyLossCircuitBreaker:
             consecutive_failures=self._consecutive_failures,
             consecutive_failure_limit=self.consecutive_failure_limit,
             utc_day=self._utc_day,
+            daily_loss_available=daily_loss_available,
         )
 
     # ── Internal helpers ──────────────────────────────────────────────
