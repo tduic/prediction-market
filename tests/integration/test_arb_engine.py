@@ -712,6 +712,7 @@ class TestCircuitBreakerHalt:
     async def test_active_circuit_breaker_allows_trade(self, db):
         cb = MagicMock()
         cb.should_halt = AsyncMock(return_value=False)
+        cb.record_order_result = AsyncMock()
         matches = [_make_match("poly_A", "kal_A", _POLY_SEED, _KAL_SEED)]
         await _seed_markets_p23(db, matches)
         engine = ArbitrageEngine(
@@ -1137,9 +1138,9 @@ async def test_arb_fire_with_sell_poly_leg_translates(db):
     # will evaluate the spread and fire the arb.
     await _simulate_price_update(engine, db, "kal_arb", 0.56)
 
-    assert (
-        len(engine.trades) == 1
-    ), f"Expected 1 trade to fire, got {len(engine.trades)}"
+    assert len(engine.trades) == 1, (
+        f"Expected 1 trade to fire, got {len(engine.trades)}"
+    )
 
     # The sell leg goes to the poly paper client (poly is the expensive/sell side).
     # BookResolver has no YES inventory → translates SELL YES @ 0.70 to BUY NO @ 0.30.
@@ -1151,9 +1152,9 @@ async def test_arb_fire_with_sell_poly_leg_translates(db):
     assert row is not None, "Expected an orders row for poly_arb after the arb fired"
     assert row[0] == "BUY", f"Expected side='BUY' (translated), got {row[0]!r}"
     assert row[1] == "NO", f"Expected book='NO' (translated), got {row[1]!r}"
-    assert row[2] == pytest.approx(
-        0.30, abs=1e-4
-    ), f"Expected requested_price≈0.30, got {row[2]}"
+    assert row[2] == pytest.approx(0.30, abs=1e-4), (
+        f"Expected requested_price≈0.30, got {row[2]}"
+    )
 
 
 @pytest.mark.asyncio

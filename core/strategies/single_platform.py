@@ -513,7 +513,7 @@ async def detect_single_platform_opportunities(
 
         # Write signal
         try:
-            kelly = min(edge / 0.50, 0.25)
+            kelly = _kelly_f
             await db.execute(
                 """INSERT OR IGNORE INTO signals
                    (id, violation_id, strategy, signal_type, market_id_a,

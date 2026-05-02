@@ -429,9 +429,11 @@ async def main():
 
         # Build asset ID maps for websocket subscriptions.
         # Polymarket WS needs platform_ids (condition_id), not our internal IDs.
-        poly_platform_ids, poly_id_map, kalshi_tickers = (
-            await _build_subscription_lists(db, matches)
-        )
+        (
+            poly_platform_ids,
+            poly_id_map,
+            kalshi_tickers,
+        ) = await _build_subscription_lists(db, matches)
         logger.info(
             "Starting streams: %d Polymarket assets + %d Kalshi tickers",
             len(poly_platform_ids),

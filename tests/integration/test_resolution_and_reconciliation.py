@@ -307,8 +307,7 @@ async def test_reconciliation_flags_stuck_pending_order(db):
     assert summary["stuck_pending_orders"] == 1
 
     cursor = await db.execute(
-        "SELECT detail FROM reconciliation_log "
-        "WHERE check_type='stuck_pending_order'"
+        "SELECT detail FROM reconciliation_log WHERE check_type='stuck_pending_order'"
     )
     rows = await cursor.fetchall()
     assert len(rows) == 1
@@ -356,8 +355,7 @@ async def test_reconciliation_flags_unbalanced_arb_pair(db):
     assert summary["unbalanced_arb_pairs"] == 1
 
     cursor = await db.execute(
-        "SELECT detail FROM reconciliation_log "
-        "WHERE check_type='unbalanced_arb_pair'"
+        "SELECT detail FROM reconciliation_log WHERE check_type='unbalanced_arb_pair'"
     )
     rows = await cursor.fetchall()
     assert len(rows) == 1

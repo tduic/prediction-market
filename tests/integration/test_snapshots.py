@@ -92,9 +92,9 @@ class TestStatsFields:
         await _seed_markets(db, matches)
         engine = ArbitrageEngine(db, matches, min_spread=0.03)
         s = engine.stats()
-        assert (
-            "open_positions" not in s
-        ), "open_positions key is still present — rename to recently_fired"
+        assert "open_positions" not in s, (
+            "open_positions key is still present — rename to recently_fired"
+        )
 
     async def test_stats_has_pairs_monitored(self, db):
         matches = [

@@ -137,20 +137,24 @@ class RiskControlConfig:
         default_factory=lambda: float(os.getenv("STRATEGY_REPLAY_MIN_MOVE", "0.01"))
     )
     strategy_p2_enabled: bool = field(
-        default_factory=lambda: os.getenv("STRATEGY_P2_ENABLED", "true").lower()
-        == "true"
+        default_factory=lambda: (
+            os.getenv("STRATEGY_P2_ENABLED", "true").lower() == "true"
+        )
     )
     strategy_p3_enabled: bool = field(
-        default_factory=lambda: os.getenv("STRATEGY_P3_ENABLED", "true").lower()
-        == "true"
+        default_factory=lambda: (
+            os.getenv("STRATEGY_P3_ENABLED", "true").lower() == "true"
+        )
     )
     strategy_p4_enabled: bool = field(
-        default_factory=lambda: os.getenv("STRATEGY_P4_ENABLED", "true").lower()
-        == "true"
+        default_factory=lambda: (
+            os.getenv("STRATEGY_P4_ENABLED", "true").lower() == "true"
+        )
     )
     strategy_p5_enabled: bool = field(
-        default_factory=lambda: os.getenv("STRATEGY_P5_ENABLED", "true").lower()
-        == "true"
+        default_factory=lambda: (
+            os.getenv("STRATEGY_P5_ENABLED", "true").lower() == "true"
+        )
     )
     strategy_killswitch_window_s: int = field(
         default_factory=lambda: int(os.getenv("STRATEGY_KILLSWITCH_WINDOW_S", "604800"))

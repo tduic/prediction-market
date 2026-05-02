@@ -686,6 +686,7 @@ class ArbitrageEngine:
             limit_price=sell_price,
             order_type="LIMIT",
         )
+        _trade_start_ms = int(time.time() * 1000)
         buy_result = await self._submit_with_retry(
             buy_client, buy_leg, signal_id=signal_id, strategy=strategy
         )
@@ -703,6 +704,11 @@ class ArbitrageEngine:
                 pair_id,
                 buy_filled,
                 sell_filled,
+            )
+
+        if self._circuit_breaker is not None:
+            await self._circuit_breaker.record_order_result(
+                success=buy_filled and sell_filled
             )
 
         if buy_result.filled_price and sell_result.filled_price:
@@ -783,7 +789,7 @@ class ArbitrageEngine:
                         ),
                         buy_result.submission_latency_ms
                         + (buy_result.fill_latency_ms or 0),
-                        5000,
+                        max(1, int(time.time() * 1000) - _trade_start_ms),
                         now,
                         now,
                     ),

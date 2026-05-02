@@ -879,9 +879,9 @@ class TestScheduledRunnerMarkToMarket:
         await runner.run_one_cycle()
         cursor = await db.execute("SELECT status FROM positions WHERE id='pos_sched'")
         row = await cursor.fetchone()
-        assert (
-            row[0] == "closed"
-        ), f"Expected run_one_cycle to close expired position, got '{row[0]}'"
+        assert row[0] == "closed", (
+            f"Expected run_one_cycle to close expired position, got '{row[0]}'"
+        )
 
     async def test_run_one_cycle_returns_list(self, db):
         cfg = _risk_config()

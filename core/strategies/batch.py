@@ -7,6 +7,7 @@ which scans all matched pairs for spread violations and executes trades.
 
 import logging
 import os
+import time
 import uuid
 from datetime import datetime, timezone
 
@@ -135,7 +136,7 @@ async def detect_violations_and_trade(
         #   position_size_a, position_size_b, total_capital_at_risk,
         #   status, fired_at, updated_at)
         try:
-            kelly = min(edge / 0.50, 0.25)  # simplified Kelly
+            kelly = _kelly_f
             await db.execute(
                 """INSERT OR IGNORE INTO signals
                    (id, violation_id, strategy, signal_type, market_id_a, market_id_b,
@@ -178,6 +179,7 @@ async def detect_violations_and_trade(
             order_type="LIMIT",
         )
 
+        _trade_start_ms = int(time.time() * 1000)
         buy_result = await buy_client.submit_order(
             buy_leg, signal_id=signal_id, strategy=strategy
         )
@@ -255,7 +257,7 @@ async def detect_violations_and_trade(
                         ),
                         buy_result.submission_latency_ms
                         + (buy_result.fill_latency_ms or 0),
-                        5000,
+                        max(1, int(time.time() * 1000) - _trade_start_ms),
                         now,
                         now,
                     ),
