@@ -215,7 +215,7 @@ async def check_duplicate_signal(
         cursor = await db.execute(
             f"SELECT COUNT(*) FROM orders "
             f"WHERE market_id IN ({placeholders}) "
-            f"AND submitted_at > datetime('now', '-{duplicate_window_s} seconds')",
+            f"AND submitted_at > (strftime('%s', 'now') - {duplicate_window_s})",
             market_ids,
         )
         row = await cursor.fetchone()
