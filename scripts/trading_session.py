@@ -501,12 +501,26 @@ async def main():
 
         status_task = asyncio.create_task(_log_status())
 
+        async def _periodic_arb_scan():
+            while not stop_event.is_set():
+                try:
+                    await asyncio.wait_for(stop_event.wait(), timeout=60)
+                    break
+                except asyncio.TimeoutError:
+                    try:
+                        await arb_engine.periodic_scan()
+                    except Exception as scan_err:
+                        logger.warning("periodic_arb_scan error: %s", scan_err)
+
+        arb_scan_task = asyncio.create_task(_periodic_arb_scan())
+
         # Supervisor tasks whose identity is stable for the lifetime of the
         # session. WS tasks live in ws_state["tasks"] and may be swapped out
         # by the pair refresh loop — we gather them separately at shutdown.
         supervisor_tasks = [
             scheduled_task,
             status_task,
+            arb_scan_task,
             pair_refresh_task,
             *([dashboard_task] if dashboard_task else []),
         ]
