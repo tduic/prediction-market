@@ -81,3 +81,12 @@ export interface RiskMetrics {
   daily_var: number
   sharpe_overall: number
 }
+
+export interface CircuitBreakerStatus {
+  tripped: boolean
+  reason: string | null
+  tripped_at: string | null
+  daily_loss: number
+  daily_loss_limit: number
+  daily_loss_limit_pct: number
+}

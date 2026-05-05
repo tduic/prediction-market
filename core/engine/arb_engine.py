@@ -22,10 +22,6 @@ from execution.clients.base import BaseExecutionClient, OrderResult
 from execution.enums import Side
 from execution.models import OrderLeg
 
-# Circuit-breaker: if actual_pnl > size * this ratio the DB write is skipped.
-# P1 false-positive trades book ~40% of size; 10% catches fakes without blocking
-# any legitimate arb (typical real spread is 2–5%).
-_PNL_SANITY_CAP_RATIO = 0.10
 
 logger = logging.getLogger(__name__)
 
@@ -250,6 +246,66 @@ class ArbitrageEngine:
         if spread < threshold:
             state.armed = True
 
+    async def _try_fire_pair(self, match: dict, pair_id: str, now: float) -> bool:
+        """Attempt to fire an arb trade for one pair at timestamp ``now``.
+
+        Performs the full eligibility + staleness + lock + execute cycle.
+        Returns True if a trade was recorded, False otherwise (below threshold,
+        ineligible, stale, risk-rejected, or execution error).
+
+        fired_state is updated only on a successful trade so that risk/CB
+        rejections and exceptions leave the pair retriable (Phase 2 contract).
+        """
+        p_price = self.prices.get(match["poly_id"])
+        k_price = self.prices.get(match["kalshi_id"])
+        if p_price is None or k_price is None:
+            return False
+
+        spread = abs(p_price - k_price)
+        # Re-arm check runs unconditionally so spread reversions are captured
+        # even when we ultimately don't fire (spread below threshold).
+        self._check_rearm(pair_id, spread)
+
+        if spread < self.min_spread:
+            return False
+
+        if not self._is_eligible(pair_id):
+            return False
+
+        # Staleness guard: firing on a cached price the market has drifted
+        # past produces guaranteed-reject limit orders on the exchange.
+        if not (
+            self._is_fresh(match["poly_id"], now)
+            and self._is_fresh(match["kalshi_id"], now)
+        ):
+            self._skipped_stale += 1
+            return False
+
+        # Execute under lock to prevent concurrent trades on the same pair.
+        async with self._trade_lock:
+            # Re-check under lock — state may have changed while we waited.
+            self._check_rearm(pair_id, spread)
+            if not self._is_eligible(pair_id):
+                return False
+            try:
+                trade = await self._execute_arb_trade(
+                    match, p_price, k_price, spread, pair_id
+                )
+            except Exception:
+                logger.exception(
+                    "Unhandled exception in _try_fire_pair for pair %s", pair_id
+                )
+                return False
+            if trade:
+                self.fired_state[pair_id] = PairFireState(
+                    last_fired_at=time.time(), armed=False
+                )
+                self.trades.append(trade)
+                self.last_arb_fired_at = time.time()
+                self._ticks_since_last_fire = 0
+                return True
+        return False
+
     async def initial_sweep(self) -> None:
         """Check all seeded pairs for opportunities at startup.
 
@@ -265,43 +321,8 @@ class ArbitrageEngine:
         now = time.time()
         for match in self._pairs.values():
             pair_id = f"{match['poly_id']}_{match['kalshi_id']}"
-            p_price = self.prices.get(match["poly_id"])
-            k_price = self.prices.get(match["kalshi_id"])
-            if p_price is None or k_price is None:
-                continue
-            spread = abs(p_price - k_price)
-            self._check_rearm(pair_id, spread)
-            if spread < self.min_spread:
-                continue
-            if not self._is_eligible(pair_id):
-                continue
-            if not (
-                self._is_fresh(match["poly_id"], now)
-                and self._is_fresh(match["kalshi_id"], now)
-            ):
-                self._skipped_stale += 1
-                continue
-            async with self._trade_lock:
-                self._check_rearm(pair_id, spread)
-                if not self._is_eligible(pair_id):
-                    continue
-                try:
-                    trade = await self._execute_arb_trade(
-                        match, p_price, k_price, spread, pair_id
-                    )
-                except Exception:
-                    logger.exception(
-                        "Unhandled exception in initial_sweep for pair %s", pair_id
-                    )
-                    continue
-                if trade:
-                    self.fired_state[pair_id] = PairFireState(
-                        last_fired_at=time.time(), armed=False
-                    )
-                    self.trades.append(trade)
-                    self.last_arb_fired_at = time.time()
-                    self._ticks_since_last_fire = 0
-                    swept += 1
+            if await self._try_fire_pair(match, pair_id, now):
+                swept += 1
 
         if swept:
             logger.info("Initial sweep found %d arb opportunities", swept)
@@ -332,57 +353,7 @@ class ArbitrageEngine:
         now = time.time()
         for match in affected:
             pair_id = f"{match['poly_id']}_{match['kalshi_id']}"
-
-            p_price = self.prices.get(match["poly_id"])
-            k_price = self.prices.get(match["kalshi_id"])
-            if p_price is None or k_price is None:
-                continue
-
-            spread = abs(p_price - k_price)
-            # Always run re-arm check (spread may have reverted below threshold)
-            self._check_rearm(pair_id, spread)
-
-            if spread < self.min_spread:
-                continue
-
-            if not self._is_eligible(pair_id):
-                continue
-
-            # Staleness guard: the market we just ticked is fresh by
-            # construction, but the other side may have gone silent. Firing
-            # against a cached counterpart price that the real market has
-            # drifted past produces guaranteed-reject limits.
-            if not (
-                self._is_fresh(match["poly_id"], now)
-                and self._is_fresh(match["kalshi_id"], now)
-            ):
-                self._skipped_stale += 1
-                continue
-
-            # Execute immediately under lock (prevent concurrent trades on same pair)
-            async with self._trade_lock:
-                # Re-check under lock (state may have changed)
-                self._check_rearm(pair_id, spread)
-                if not self._is_eligible(pair_id):
-                    continue
-                # fired_state updated only on success; risk/CB rejections leave pair
-                # retriable (Phase 2 contract). Exceptions also leave pair unlocked.
-                try:
-                    trade = await self._execute_arb_trade(
-                        match, p_price, k_price, spread, pair_id
-                    )
-                except Exception:
-                    logger.exception(
-                        "Unhandled exception in on_price_update for pair %s", pair_id
-                    )
-                    continue
-                if trade:
-                    self.fired_state[pair_id] = PairFireState(
-                        last_fired_at=time.time(), armed=False
-                    )
-                    self.trades.append(trade)
-                    self.last_arb_fired_at = time.time()
-                    self._ticks_since_last_fire = 0
+            await self._try_fire_pair(match, pair_id, now)
 
     async def periodic_scan(self) -> None:
         """Scan all tracked pairs for arbitrage opportunities.
@@ -394,42 +365,7 @@ class ArbitrageEngine:
         now = time.time()
         for match in self._pairs.values():
             pair_id = f"{match['poly_id']}_{match['kalshi_id']}"
-            p_price = self.prices.get(match["poly_id"])
-            k_price = self.prices.get(match["kalshi_id"])
-            if p_price is None or k_price is None:
-                continue
-            spread = abs(p_price - k_price)
-            self._check_rearm(pair_id, spread)
-            if spread < self.min_spread:
-                continue
-            if not self._is_eligible(pair_id):
-                continue
-            if not (
-                self._is_fresh(match["poly_id"], now)
-                and self._is_fresh(match["kalshi_id"], now)
-            ):
-                self._skipped_stale += 1
-                continue
-            async with self._trade_lock:
-                self._check_rearm(pair_id, spread)
-                if not self._is_eligible(pair_id):
-                    continue
-                try:
-                    trade = await self._execute_arb_trade(
-                        match, p_price, k_price, spread, pair_id
-                    )
-                except Exception:
-                    logger.exception(
-                        "Unhandled exception in periodic_scan for pair %s", pair_id
-                    )
-                    continue
-                if trade:
-                    self.fired_state[pair_id] = PairFireState(
-                        last_fired_at=time.time(), armed=False
-                    )
-                    self.trades.append(trade)
-                    self.last_arb_fired_at = time.time()
-                    self._ticks_since_last_fire = 0
+            await self._try_fire_pair(match, pair_id, now)
 
     async def _submit_with_retry(
         self,
@@ -716,7 +652,7 @@ class ArbitrageEngine:
             total_fees = (buy_result.fee_paid or 0) + (sell_result.fee_paid or 0)
             actual_pnl = round(actual_spread * size - total_fees, 4)
 
-            _pnl_cap = size * _PNL_SANITY_CAP_RATIO
+            _pnl_cap = size * self._risk_config.pnl_sanity_cap_ratio
             if actual_pnl > _pnl_cap:
                 logger.warning(
                     "PNL_SANITY_CAP blocked pair=%s actual_pnl=%.4f > cap=%.4f "

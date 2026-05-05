@@ -162,6 +162,9 @@ class RiskControlConfig:
     strategy_killswitch_min_trades: int = field(
         default_factory=lambda: int(os.getenv("STRATEGY_KILLSWITCH_MIN_TRADES", "5"))
     )
+    pnl_sanity_cap_ratio: float = field(
+        default_factory=lambda: float(os.getenv("PNL_SANITY_CAP_RATIO", "0.10"))
+    )
 
 
 @dataclass
@@ -259,6 +262,13 @@ class Config:
             raise ValueError(
                 f"STARTING_CAPITAL must be > 0, "
                 f"got {self.risk_controls.starting_capital}"
+            )
+
+        # PnL sanity cap validation
+        if not (0 < self.risk_controls.pnl_sanity_cap_ratio <= 1):
+            raise ValueError(
+                f"PNL_SANITY_CAP_RATIO must be > 0 and <= 1, "
+                f"got {self.risk_controls.pnl_sanity_cap_ratio}"
             )
 
 

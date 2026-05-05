@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useApi } from './hooks/useApi'
 import {
+  CircuitBreakerStatus,
   OverviewData,
   StrategyMetrics,
   StrategyPnlPoint,
@@ -9,6 +10,7 @@ import {
   FeeBreakdown,
   RiskMetrics,
 } from './types'
+import { CircuitBreakerStatusComponent } from './components/CircuitBreakerStatus'
 import { OverviewCards } from './components/OverviewCards'
 import { StrategyPnlChart } from './components/StrategyPnlChart'
 import { StrategyComparison } from './components/StrategyComparison'
@@ -44,6 +46,7 @@ function App() {
   const tradesResult = useApi<Trade[]>('/api/trades', REFRESH_INTERVAL, { days })
   const feeResult = useApi<FeeBreakdown>('/api/fees', REFRESH_INTERVAL)
   const riskResult = useApi<RiskMetrics>('/api/risk', REFRESH_INTERVAL)
+  const circuitBreakerResult = useApi<CircuitBreakerStatus>('/api/circuit-breaker', REFRESH_INTERVAL)
 
   // Get unique strategies for trade log filter
   const strategies = Array.from(
@@ -76,6 +79,21 @@ function App() {
     riskResult.error,
   ].filter(Boolean)
 
+  // Most recent successful fetch time across all endpoints
+  const lastUpdated = [
+    overviewResult.lastUpdated,
+    metricsResult.lastUpdated,
+    pnlResult.lastUpdated,
+    equityResult.lastUpdated,
+    tradesResult.lastUpdated,
+    feeResult.lastUpdated,
+    riskResult.lastUpdated,
+  ].reduce<Date | null>((latest, d) => {
+    if (!d) return latest
+    if (!latest) return d
+    return d > latest ? d : latest
+  }, null)
+
   return (
     <div className="min-h-screen bg-gray-950 text-gray-100">
       {/* Header */}
@@ -94,6 +112,7 @@ function App() {
                   {isLoading ? 'Updating...' : 'Live'}
                 </span>
               </div>
+              <CircuitBreakerStatusComponent data={circuitBreakerResult.data} />
             </div>
             <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 w-full sm:w-auto">
               <div className="flex gap-2">
@@ -127,7 +146,7 @@ function App() {
                 </div>
               </div>
               <div className="text-xs text-gray-500 whitespace-nowrap">
-                Last refresh: {new Date().toLocaleTimeString()}
+                Last refresh: {lastUpdated ? lastUpdated.toLocaleTimeString() : '—'}
               </div>
             </div>
           </div>

@@ -230,10 +230,10 @@ class TestPnLSanityCap:
             await _trigger_trade(engine, db, "poly_A", 0.10)
             assert mock_log.warning.called or mock_log.error.called
 
-    async def test_cap_constant_is_10_pct(self):
-        from core.engine.arb_engine import _PNL_SANITY_CAP_RATIO
+    async def test_cap_default_is_10_pct(self):
+        from core.config import RiskControlConfig
 
-        assert _PNL_SANITY_CAP_RATIO == 0.10
+        assert RiskControlConfig().pnl_sanity_cap_ratio == 0.10
 
     async def test_arb_trade_outcomes_also_blocked(self, db):
         matches = [_make_match("poly_A", "kal_A", 0.50, 0.55)]

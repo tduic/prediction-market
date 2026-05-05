@@ -4,6 +4,7 @@ interface UseApiResult<T> {
   data: T | null
   loading: boolean
   error: string | null
+  lastUpdated: Date | null
 }
 
 interface UseApiParams {
@@ -18,6 +19,7 @@ export function useApi<T>(
   const [data, setData] = useState<T | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
 
   // Serialize params so a new object with the same values doesn't re-trigger
   // the effect on every render. Without this, inline objects like `{ days }`
@@ -53,6 +55,7 @@ export function useApi<T>(
         const json = await response.json()
         setData(json)
         setError(null)
+        setLastUpdated(new Date())
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Unknown error')
         // Do NOT clear data on error — keep showing stale data so the
@@ -69,5 +72,5 @@ export function useApi<T>(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [url, refreshInterval, paramsKey])
 
-  return { data, loading, error }
+  return { data, loading, error, lastUpdated }
 }

@@ -17,6 +17,7 @@ cycles). It commits its own writes.
 
 import logging
 import time
+from datetime import datetime, timezone
 
 import aiosqlite
 
@@ -210,7 +211,7 @@ async def _log_discrepancy(
                 status,
                 detail,
                 action_taken,
-                str(int(time.time())),
+                datetime.now(timezone.utc).isoformat(),
             ),
         )
     except Exception as e:
