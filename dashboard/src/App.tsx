@@ -66,7 +66,8 @@ function App() {
     equityResult.loading ||
     tradesResult.loading ||
     feeResult.loading ||
-    riskResult.loading
+    riskResult.loading ||
+    circuitBreakerResult.loading
 
   // Check for errors
   const errors = [
@@ -77,6 +78,7 @@ function App() {
     tradesResult.error,
     feeResult.error,
     riskResult.error,
+    circuitBreakerResult.error,
   ].filter(Boolean)
 
   // Most recent successful fetch time across all endpoints
