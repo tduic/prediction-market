@@ -24,7 +24,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from core.engine import ArbitrageEngine  # noqa: E402
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
+# ── Helpers ─────────────────────────────────────────────────────────────────────────────────
 
 
 def _make_match(poly_id, kalshi_id, poly_price, kalshi_price, similarity=0.85):
@@ -82,7 +82,7 @@ async def _trigger_trade(engine, db, market_id, new_price):
     await engine.on_price_update(market_id, new_price)
 
 
-# ── Stats fields ──────────────────────────────────────────────────────────────
+# ── Stats fields ───────────────────────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -92,9 +92,9 @@ class TestStatsFields:
         await _seed_markets(db, matches)
         engine = ArbitrageEngine(db, matches, min_spread=0.03)
         s = engine.stats()
-        assert "open_positions" not in s, (
-            "open_positions key is still present — rename to recently_fired"
-        )
+        assert (
+            "open_positions" not in s
+        ), "open_positions key is still present — rename to recently_fired"
 
     async def test_stats_has_pairs_monitored(self, db):
         matches = [
@@ -200,7 +200,7 @@ class TestStatsFields:
         assert s["prices_tracked"] > 0
 
 
-# ── PnL sanity cap ────────────────────────────────────────────────────────────
+# ── PnL sanity cap ────────────────────────────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -246,7 +246,7 @@ class TestPnLSanityCap:
             assert (await cursor.fetchone())[0] == 0
 
 
-# ── MIN_SPREAD_CROSS_PLATFORM env var ─────────────────────────────────────────
+# ── MIN_SPREAD_CROSS_PLATFORM env var ─────────────────────────────────────────────────────
 
 
 class TestMinSpreadEnvVar:
@@ -303,7 +303,7 @@ print(args.min_spread)
         assert float(result.stdout.strip()) == 0.03
 
 
-# ── Baseline snapshot ──────────────────────────────────────────────────────────
+# ── Baseline snapshot ────────────────────────────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio

@@ -43,7 +43,7 @@ from core.strategies.single_platform import (  # noqa: E402
 from execution.clients.paper import PaperExecutionClient  # noqa: E402
 from execution.models import OrderLeg  # noqa: E402
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
+# ── Helpers ─────────────────────────────────────────────────────────────────────────────────
 
 
 def _risk_config(**overrides):
@@ -222,7 +222,7 @@ async def _seed_open_position(db, pos_id, market_id, strategy, entry_price):
     await db.commit()
 
 
-# ── _p2_title_root ─────────────────────────────────────────────────────────────
+# ── _p2_title_root ─────────────────────────────────────────────────────────────────────────────
 
 
 class TestP2TitleRoot:
@@ -264,7 +264,7 @@ class TestP2TitleRoot:
         assert _p2_title_root("Will the Fed cut rates?") == "will the fed cut rates"
 
 
-# ── P3 calibration bias ───────────────────────────────────────────────────────
+# ── P3 calibration bias ─────────────────────────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -296,7 +296,7 @@ class TestP3CalibrationBias:
         assert len(p3) == 0
 
 
-# ── P4 liquidity timing ───────────────────────────────────────────────────────
+# ── P4 liquidity timing ─────────────────────────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -328,7 +328,7 @@ class TestP4LiquidityTiming:
         assert len(p4) == 0
 
 
-# ── P5 information latency ────────────────────────────────────────────────────
+# ── P5 information latency ────────────────────────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -377,7 +377,7 @@ class TestP5InformationLatency:
         assert abs(p5[0]["edge"] - round(spread * 0.30, 4)) < 0.001
 
 
-# ── P2 structured event ───────────────────────────────────────────────────────
+# ── P2 structured event ─────────────────────────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -476,7 +476,7 @@ class TestP2StructuredEvent:
         assert len(p2) == 0
 
 
-# ── Quota allocation ──────────────────────────────────────────────────────────
+# ── Quota allocation ─────────────────────────────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -546,7 +546,7 @@ class TestQuotaAllocation:
         assert trades == []
 
 
-# ── Fill model: positions open as 'open', no synthetic exit ──────────────────
+# ── Fill model: positions open as 'open', no synthetic exit ──────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -588,7 +588,7 @@ class TestPositionOpensAsOpen:
         assert row[0] is None, f"Expected closed_at=NULL, got {row[0]}"
 
 
-# ── Mark-to-market ────────────────────────────────────────────────────────────
+# ── Mark-to-market ──────────────────────────────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -708,7 +708,7 @@ class TestMarkToMarket:
         assert abs(row[0] - 1.98) < 0.001, f"Expected ~1.98, got {row[0]}"
 
 
-# ── Slippage model ────────────────────────────────────────────────────────────
+# ── Slippage model ──────────────────────────────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -784,7 +784,7 @@ class TestSlippageModel:
         assert client.slippage_bps == 0.0
 
 
-# ── Fee rates ─────────────────────────────────────────────────────────────────
+# ── Fee rates ─────────────────────────────────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -822,7 +822,7 @@ class TestFeeRates:
         assert abs(result.fee_paid - 0.25) < 0.01
 
 
-# ── pnl_model column ──────────────────────────────────────────────────────────
+# ── pnl_model column ──────────────────────────────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -854,7 +854,7 @@ class TestPnlModelColumn:
         assert cfg.strategy_holding_period_s > 0
 
 
-# ── ScheduledStrategyRunner calls mark-to-market ─────────────────────────────
+# ── ScheduledStrategyRunner calls mark-to-market ───────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -879,9 +879,9 @@ class TestScheduledRunnerMarkToMarket:
         await runner.run_one_cycle()
         cursor = await db.execute("SELECT status FROM positions WHERE id='pos_sched'")
         row = await cursor.fetchone()
-        assert row[0] == "closed", (
-            f"Expected run_one_cycle to close expired position, got '{row[0]}'"
-        )
+        assert (
+            row[0] == "closed"
+        ), f"Expected run_one_cycle to close expired position, got '{row[0]}'"
 
     async def test_run_one_cycle_returns_list(self, db):
         cfg = _risk_config()
@@ -890,7 +890,7 @@ class TestScheduledRunnerMarkToMarket:
         assert isinstance(result, list)
 
 
-# ── Cross-strategy dedup ──────────────────────────────────────────────────────
+# ── Cross-strategy dedup ──────────────────────────────────────────────────────────────────────────
 
 
 class TestCrossStrategyDedup:
@@ -935,7 +935,7 @@ class TestCrossStrategyDedup:
         assert result[0]["signal_strength"] == 0.40
 
 
-# ── Signal strength normalization ─────────────────────────────────────────────
+# ── Signal strength normalization ─────────────────────────────────────────────────────────────
 
 
 class TestNormalizeSignalStrengths:
@@ -992,7 +992,7 @@ class TestNormalizeSignalStrengths:
         assert _normalize_signal_strengths([]) == []
 
 
-# ── Per-strategy enable flags ─────────────────────────────────────────────────
+# ── Per-strategy enable flags ────────────────────────────────────────────────────────────────────
 
 
 class TestRiskConfigStrategyFlags:
@@ -1055,7 +1055,7 @@ class TestStrategyEnableFlags:
         assert (await cursor.fetchone())[0] == 0
 
 
-# ── Consecutive-cycle dedup ───────────────────────────────────────────────────
+# ── Consecutive-cycle dedup ──────────────────────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -1139,7 +1139,7 @@ class TestConsecutiveCycleDedup:
         assert (await cursor.fetchone())[0] >= 1
 
 
-# ── Per-strategy kill-switch ──────────────────────────────────────────────────
+# ── Per-strategy kill-switch ────────────────────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
