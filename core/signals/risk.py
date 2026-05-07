@@ -209,9 +209,18 @@ async def check_duplicate_signal(
             detail="No DB — cannot check duplicates",
         )
 
+    market_ids = [leg.market_id for leg in signal.legs]
+    if not market_ids:
+        return RiskCheckResult(
+            passed=True,
+            check_type="duplicate",
+            check_value=0,
+            threshold=0,
+            detail="No legs to check",
+        )
+    placeholders = ",".join("?" for _ in market_ids)
+
     try:
-        market_ids = [leg.market_id for leg in signal.legs]
-        placeholders = ",".join("?" for _ in market_ids)
         cursor = await db.execute(
             f"SELECT COUNT(*) FROM orders "
             f"WHERE market_id IN ({placeholders}) "

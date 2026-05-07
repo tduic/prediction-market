@@ -153,7 +153,7 @@ class DiscordWebhookTransport:
         emoji = {
             Severity.INFO: "ℹ️",
             Severity.WARNING: "⚠️",
-            Severity.CRITICAL: "🚨",
+            Severity.CRITICAL: "\U0001f6a8",
         }.get(alert.severity, "")
 
         embed = {
@@ -165,10 +165,13 @@ class DiscordWebhookTransport:
             "timestamp": _iso(alert.timestamp),
         }
 
-        content = "@here" if alert.severity == Severity.CRITICAL else None
-        payload: dict = {"username": self.username, "embeds": [embed]}
-        if content:
-            payload["content"] = content
+        text = f"{alert.title}: {alert.message}"[:2000]
+        content = f"@here {text}" if alert.severity == Severity.CRITICAL else text
+        payload: dict = {
+            "username": self.username,
+            "embeds": [embed],
+            "content": content,
+        }
         return payload
 
 
@@ -303,7 +306,7 @@ class AlertManager:
         task.add_done_callback(self._pending_tasks.discard)
 
 
-# ── Module-level factory ──────────────────────────────────────────────
+# ── Module-level factory ──────────────────────────────────────
 
 _manager: AlertManager | None = None
 
