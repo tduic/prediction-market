@@ -248,7 +248,7 @@ async def test_discord_format_builds_embed():
     assert embed["description"] == "Message body"
     assert embed["color"] == 0xE74C3C  # critical = red
     assert {"name": "a", "value": "`1`", "inline": True} in embed["fields"]
-    assert payload.get("content") == "@here"  # critical pings
+    assert payload.get("content", "").startswith("@here ")  # critical pings
     assert payload["username"] == "prediction-market-bot"
 
 
@@ -257,7 +257,8 @@ async def test_discord_info_severity_no_ping():
     transport = DiscordWebhookTransport(webhook_url="https://example.invalid/webhook")
     alert = Alert(title="Info", message="m", severity=Severity.INFO)
     payload = transport._format(alert)
-    assert "content" not in payload  # no @here for info
+    assert "content" in payload  # always set for Slack compat
+    assert not payload["content"].startswith("@here")  # no ping for non-critical
     assert payload["embeds"][0]["color"] == 0x3498DB  # blue
 
 
