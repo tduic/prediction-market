@@ -108,7 +108,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
         allow_headers=["*"],
     )
 
-    # ── helpers ──────────────────────────────────────────────────────────
+    # ── helpers ──────────────────────────────────────────────────
 
     async def get_db() -> aiosqlite.Connection:
         db = await aiosqlite.connect(_DB_PATH)
@@ -134,7 +134,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
             if own_db:
                 await close_db(db)
 
-    # ── endpoints ────────────────────────────────────────────────────────
+    # ── endpoints ──────────────────────────────────────────────────
 
     @app.get("/api/overview")
     async def get_overview() -> Dict[str, Any]:
@@ -212,12 +212,12 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
             )
             rows = await cursor.fetchall()
 
-            signals_cursor = await db.execute("""
-                SELECT strategy, COUNT(*) as cnt
-                FROM signals
-                WHERE fired_at >= datetime('now', '-24 hours')
-                GROUP BY strategy
-                """)
+            cutoff_24h = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+            signals_cursor = await db.execute(
+                "SELECT strategy, COUNT(*) as cnt FROM signals "
+                "WHERE fired_at >= ? GROUP BY strategy",
+                (cutoff_24h,),
+            )
             signals_rows = await signals_cursor.fetchall()
             signals_24h_map = {r["strategy"]: r["cnt"] for r in signals_rows}
 
@@ -637,11 +637,46 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
         finally:
             await close_db(db)
 
+    @app.get("/api/reconciliation")
+    async def get_reconciliation(
+        limit: int = Query(20, ge=1, le=100),
+    ) -> Dict[str, Any]:
+        """Reconciliation discrepancy log: counts by type and most recent rows."""
+        db = await get_db()
+        try:
+            total_cursor = await db.execute("SELECT COUNT(*) FROM reconciliation_log")
+            total_row = await total_cursor.fetchone()
+            total_count = total_row[0] if total_row else 0
+
+            discrepancy_cursor = await db.execute(
+                "SELECT COUNT(*) FROM reconciliation_log WHERE status = 'discrepancy'"
+            )
+            discrepancy_row = await discrepancy_cursor.fetchone()
+            discrepancy_count = discrepancy_row[0] if discrepancy_row else 0
+
+            recent_cursor = await db.execute(
+                """SELECT id, platform, check_type, discrepancy, status, detail, checked_at
+                   FROM reconciliation_log
+                   ORDER BY checked_at DESC
+                   LIMIT ?""",
+                (limit,),
+            )
+            rows = await recent_cursor.fetchall()
+            recent = [dict(row) for row in rows]
+
+            return {
+                "total_count": total_count,
+                "discrepancy_count": discrepancy_count,
+                "recent_discrepancies": recent,
+            }
+        finally:
+            await close_db(db)
+
     @app.get("/health")
     async def health_check() -> Dict[str, str]:
         return {"status": "ok"}
 
-    # ── Serve React frontend if static_dir provided ─────────────────────
+    # ── Serve React frontend if static_dir provided ───────────────────
     if static_dir and Path(static_dir).is_dir():
         app.mount(
             "/",
