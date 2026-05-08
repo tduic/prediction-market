@@ -25,7 +25,7 @@ _MONTH_PAT = (
 )
 _STRIP_SUFFIX = re.compile(
     rf"\s+(?:{_MONTH_PAT}|20\d{{2}}|q[1-4]|h[1-2]|"
-    r"\$?[\d,]+\.?\d*[km%]?(?:\s*[-–to]+\s*\$?[\d,]+\.?\d*[km%]?)?)\s*$",
+    r"\$?[\d,]+\.?\d*[km%]?(?:\s*[-–to]+\s*\$?[\d,]+\.?\d*[km%]?)?)\ s*$",
     re.IGNORECASE,
 )
 
@@ -208,36 +208,39 @@ async def detect_single_platform_opportunities(
     # Cache clients by platform to avoid re-initializing per trade
     _clients: dict = {}
 
-    # Get all markets with their latest prices
-    cursor = await db.execute("""SELECT m.id, m.platform, m.title,
-                  mp.yes_price, mp.no_price, mp.spread,
-                  mp.volume_24h, mp.liquidity
-           FROM markets m
-           JOIN market_prices mp ON mp.market_id = m.id
-           WHERE m.status = 'open'
-             AND mp.yes_price > 0.05
-             AND mp.yes_price < 0.95
-           ORDER BY mp.polled_at DESC""")
+    # Get all markets with their latest prices.
+    # Joining on MAX(id) per market_id selects the most recently inserted row,
+    # handling ties from duplicate polled_at timestamps safely.
+    cursor = await db.execute("""
+        SELECT m.id, m.platform, m.title,
+               mp.yes_price, mp.no_price, mp.spread,
+               mp.volume_24h, mp.liquidity
+        FROM markets m
+        JOIN market_prices mp ON mp.id = (
+            SELECT MAX(mp2.id)
+            FROM market_prices mp2
+            WHERE mp2.market_id = m.id
+        )
+        WHERE m.status = 'open'
+          AND mp.yes_price > 0.05
+          AND mp.yes_price < 0.95
+    """)
     rows = await cursor.fetchall()
 
-    # Deduplicate (keep latest per market)
-    seen = set()
     markets = []
     for row in rows:
-        if row[0] not in seen:
-            seen.add(row[0])
-            markets.append(
-                {
-                    "id": row[0],
-                    "platform": row[1],
-                    "title": row[2],
-                    "yes_price": row[3],
-                    "no_price": row[4],
-                    "spread": row[5] or 0.02,
-                    "volume_24h": row[6] or 0,
-                    "liquidity": row[7] or 0,
-                }
-            )
+        markets.append(
+            {
+                "id": row[0],
+                "platform": row[1],
+                "title": row[2],
+                "yes_price": row[3],
+                "no_price": row[4],
+                "spread": row[5] or 0.02,
+                "volume_24h": row[6] or 0,
+                "liquidity": row[7] or 0,
+            }
+        )
 
     # Override with live websocket prices where available
     if price_cache:

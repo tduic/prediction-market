@@ -90,6 +90,7 @@ function App() {
     tradesResult.lastUpdated,
     feeResult.lastUpdated,
     riskResult.lastUpdated,
+    circuitBreakerResult.lastUpdated,
   ].reduce<Date | null>((latest, d) => {
     if (!d) return latest
     if (!latest) return d
