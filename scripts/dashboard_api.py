@@ -108,7 +108,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
         allow_headers=["*"],
     )
 
-    # ── helpers ────────────────────────────────────────────
+    # ── helpers ──────────────────────────────────────────────────
 
     async def get_db() -> aiosqlite.Connection:
         db = await aiosqlite.connect(_DB_PATH)
@@ -134,7 +134,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
             if own_db:
                 await close_db(db)
 
-    # ── endpoints ────────────────────────────────────────────
+    # ── endpoints ──────────────────────────────────────────────────
 
     @app.get("/api/overview")
     async def get_overview() -> Dict[str, Any]:
