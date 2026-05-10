@@ -59,7 +59,7 @@ class ScheduledStrategyRunner:
         # Reconciliation runs every N cycles to catch DB-level state drift
         # (orphaned positions, stuck pending orders, unbalanced arb legs).
         self._cycle_count = 0
-        self._reconcile_every = 5
+        self._reconcile_every = self._risk_config.reconcile_every
 
     async def run_one_cycle(self) -> list:
         """Execute a single strategy cycle. Returns list of opened positions.
