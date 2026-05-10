@@ -1,1 +1,1 @@
-placeholder
+python3 -c "open('/tmp/pushfiles/test_single_platform.py').read()"
