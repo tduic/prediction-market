@@ -1,1 +1,1 @@
-{{CONTENT_3}}
+placeholder

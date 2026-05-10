@@ -1,1 +1,1 @@
-{{CONTENT_1}}
+python3 -c "import sys; sys.stdout.write(open('/tmp/pushfiles/dashboard_api.py').read())"
