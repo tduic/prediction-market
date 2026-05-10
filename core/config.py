@@ -165,6 +165,15 @@ class RiskControlConfig:
     pnl_sanity_cap_ratio: float = field(
         default_factory=lambda: float(os.getenv("PNL_SANITY_CAP_RATIO", "0.10"))
     )
+    reconcile_every: int = field(
+        default_factory=lambda: int(os.getenv("RECONCILE_EVERY", "5"))
+    )
+    # Minimum character length of a stripped title root before a market is
+    # eligible for P2 series grouping. Lower values increase recall but risk
+    # false groupings on short generic titles. Minimum recommended: 15.
+    strategy_p2_min_root_len: int = field(
+        default_factory=lambda: int(os.getenv("STRATEGY_P2_MIN_ROOT_LEN", "25"))
+    )
 
 
 @dataclass
