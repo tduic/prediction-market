@@ -25,7 +25,7 @@ _MONTH_PAT = (
 )
 _STRIP_SUFFIX = re.compile(
     rf"\s+(?:{_MONTH_PAT}|20\d{{2}}|q[1-4]|h[1-2]|"
-    r"\$?[\d,]+\.?\d*[km%]?(?:\s*[-–to]+\s*\$?[\d,]+\.?\d*[km%]?)?)\ s*$",
+    r"\$?[\d,]+\.?\d*[km%]?(?:\s*[-–to]+\s*\$?[\d,]+\.?\d*[km%]?)?)\s*$",
     re.IGNORECASE,
 )
 
@@ -314,9 +314,10 @@ async def detect_single_platform_opportunities(
     # title root (stripping date/value suffixes). When the YES prices of a
     # mutually-exclusive series sum > 1.05, sell the most overpriced member.
     _p2_groups: dict[tuple, list[dict]] = defaultdict(list)
+    _p2_min_root_len = _risk_cfg.strategy_p2_min_root_len
     for m in markets:
         root = _p2_title_root(m["title"])
-        if len(root) >= 25:
+        if len(root) >= _p2_min_root_len:
             _p2_groups[(m["platform"], root)].append(m)
 
     for (_plat, _root), group in _p2_groups.items():
