@@ -108,7 +108,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
         allow_headers=["*"],
     )
 
-    # ── helpers ────────────────────────────────────────────────────────────
+    # ── helpers ────────────────────────────────────────────────────────────────────
 
     async def get_db() -> aiosqlite.Connection:
         db = await aiosqlite.connect(_DB_PATH)
@@ -134,7 +134,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
             if own_db:
                 await close_db(db)
 
-    # ── endpoints ────────────────────────────────────────────────────────
+    # ── endpoints ──────────────────────────────────────────────────────────────────
 
     @app.get("/api/overview")
     async def get_overview() -> Dict[str, Any]:
@@ -405,7 +405,9 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
 
             cursor = await db.execute("""
                 SELECT total_capital, realized_pnl_total + unrealized_pnl as net_pnl
-                FROM pnl_snapshots ORDER BY snapshotted_at DESC
+                FROM pnl_snapshots
+                WHERE snapshotted_at >= datetime('now', '-90 days')
+                ORDER BY snapshotted_at DESC
                 """)
             snapshots = list(await cursor.fetchall())
 
@@ -583,12 +585,20 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
                 tripped = False
                 reason = None
                 tripped_at = None
-            cursor = await db.execute(
-                "SELECT COALESCE(SUM(actual_pnl - COALESCE(fees_total,0)),0) FROM trade_outcomes WHERE DATE(created_at) = DATE('now')"
-            )
-            pnl_row = await cursor.fetchone()
-            net_pnl = pnl_row[0] if pnl_row else 0.0
-            daily_loss = max(0.0, -net_pnl)
+            daily_loss_available = True
+            daily_loss = 0.0
+            try:
+                cursor = await db.execute(
+                    "SELECT COALESCE(SUM(actual_pnl - COALESCE(fees_total,0)),0) FROM trade_outcomes WHERE DATE(created_at) = DATE('now')"
+                )
+                pnl_row = await cursor.fetchone()
+                net_pnl = pnl_row[0] if pnl_row else 0.0
+                daily_loss = max(0.0, -net_pnl)
+            except Exception as e:
+                logger.warning(
+                    "circuit-breaker endpoint: daily_loss query failed: %s", e
+                )
+                daily_loss_available = False
             cfg = get_config().risk_controls
             daily_loss_limit_pct = cfg.max_daily_loss_pct
             daily_loss_limit = cfg.starting_capital * daily_loss_limit_pct
@@ -597,6 +607,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
                 "reason": reason,
                 "tripped_at": tripped_at,
                 "daily_loss": daily_loss,
+                "daily_loss_available": daily_loss_available,
                 "daily_loss_limit": daily_loss_limit,
                 "daily_loss_limit_pct": daily_loss_limit_pct,
             }
@@ -730,7 +741,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
     async def health_check() -> Dict[str, str]:
         return {"status": "ok"}
 
-    # ── Serve React frontend if static_dir provided ───────────────────────────────────
+    # ── Serve React frontend if static_dir provided ───────────────────────────────────────────────────
     if static_dir and Path(static_dir).is_dir():
         app.mount(
             "/",
