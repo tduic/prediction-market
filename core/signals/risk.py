@@ -12,7 +12,7 @@ Every check result is logged to the risk_check_log table for audit.
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import aiosqlite
@@ -221,11 +221,14 @@ async def check_duplicate_signal(
     placeholders = ",".join("?" for _ in market_ids)
 
     try:
+        cutoff = (
+            datetime.now(timezone.utc) - timedelta(seconds=duplicate_window_s)
+        ).isoformat()
         cursor = await db.execute(
             f"SELECT COUNT(*) FROM orders "
             f"WHERE market_id IN ({placeholders}) "
-            f"AND submitted_at > (strftime('%s', 'now') - {duplicate_window_s})",
-            market_ids,
+            f"AND submitted_at > ?",
+            [*market_ids, cutoff],
         )
         row = await cursor.fetchone()
         recent_count = row[0] if row else 0

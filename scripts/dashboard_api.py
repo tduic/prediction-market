@@ -108,7 +108,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
         allow_headers=["*"],
     )
 
-    # ── helpers ────────────────────────────────────────────────────────────────────
+    # ── helpers ────────────────────────────────────────────────────────────────────────────────
 
     async def get_db() -> aiosqlite.Connection:
         db = await aiosqlite.connect(_DB_PATH)
@@ -134,7 +134,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
             if own_db:
                 await close_db(db)
 
-    # ── endpoints ──────────────────────────────────────────────────────────────────
+    # ── endpoints ──────────────────────────────────────────────────────────────────────────────
 
     @app.get("/api/overview")
     async def get_overview() -> Dict[str, Any]:
@@ -738,10 +738,21 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
             await close_db(db)
 
     @app.get("/health")
-    async def health_check() -> Dict[str, str]:
-        return {"status": "ok"}
+    async def health_check() -> Dict[str, Any]:
+        db = None
+        try:
+            db = await get_db()
+            await db.execute("SELECT 1")
+            return {"status": "ok"}
+        except Exception as e:
+            from fastapi.responses import JSONResponse
 
-    # ── Serve React frontend if static_dir provided ───────────────────────────────────────────────────
+            return JSONResponse({"status": "error", "detail": str(e)}, status_code=503)
+        finally:
+            if db is not None:
+                await close_db(db)
+
+    # ── Serve React frontend if static_dir provided ─────────────────────────────────────────────────────────────────────────────────────────────────
     if static_dir and Path(static_dir).is_dir():
         app.mount(
             "/",
