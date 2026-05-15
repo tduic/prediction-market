@@ -20,6 +20,7 @@ import { RiskMetricsComponent } from './components/RiskMetrics'
 import { TradeLog } from './components/TradeLog'
 
 const REFRESH_INTERVAL = 30000 // 30 seconds
+const CB_REFRESH_INTERVAL = 5000 // 5 seconds for safety-critical circuit-breaker status
 
 type TimeRange = '1h' | '6h' | '24h' | '7d' | '30d'
 
@@ -46,7 +47,7 @@ function App() {
   const tradesResult = useApi<Trade[]>('/api/trades', REFRESH_INTERVAL, { days })
   const feeResult = useApi<FeeBreakdown>('/api/fees', REFRESH_INTERVAL)
   const riskResult = useApi<RiskMetrics>('/api/risk', REFRESH_INTERVAL)
-  const circuitBreakerResult = useApi<CircuitBreakerStatus>('/api/circuit-breaker', REFRESH_INTERVAL)
+  const circuitBreakerResult = useApi<CircuitBreakerStatus>('/api/circuit-breaker', CB_REFRESH_INTERVAL)
 
   // Get unique strategies for trade log filter
   const strategies = Array.from(

@@ -52,6 +52,17 @@ async def reconcile_internal_state(db: aiosqlite.Connection) -> dict[str, int]:
     total = sum(summary.values())
     if total:
         logger.warning("RECONCILIATION found %d discrepancies: %s", total, summary)
+        try:
+            from core.alerting import Severity, get_alert_manager
+
+            get_alert_manager().send_nowait(
+                title="Reconciliation discrepancies detected",
+                message=f"{total} discrepancies: {summary}",
+                severity=Severity.WARNING,
+                component="reconciliation",
+            )
+        except Exception as _alert_err:
+            logger.error("Failed to send reconciliation alert: %s", _alert_err)
     else:
         logger.info("RECONCILIATION clean: no discrepancies")
 
