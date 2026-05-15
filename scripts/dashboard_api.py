@@ -108,7 +108,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
         allow_headers=["*"],
     )
 
-    # ── helpers ────────────────────────────────────────────────────────────────────────────────
+    # ── helpers ────────────────────────────────────────────────────────────────────────────────────────
 
     async def get_db() -> aiosqlite.Connection:
         db = await aiosqlite.connect(_DB_PATH)
@@ -134,7 +134,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
             if own_db:
                 await close_db(db)
 
-    # ── endpoints ──────────────────────────────────────────────────────────────────────────────
+    # ── endpoints ──────────────────────────────────────────────────────────────────────────────────────
 
     @app.get("/api/overview")
     async def get_overview() -> Dict[str, Any]:
@@ -427,14 +427,12 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
                             max_drawdown_dollar = dd_dollar
 
             cursor = await db.execute(
-                "SELECT MAX(ABS(unrealized_pnl)) as max_position_pnl FROM positions WHERE status = 'open'"
+                "SELECT MAX(entry_price * entry_size) as max_pos FROM positions WHERE status = 'open'"
             )
             row = await cursor.fetchone()
-            max_position_pnl = row["max_position_pnl"] or 0 if row else 0
+            max_pos_exposure = row["max_pos"] or 0 if row else 0
             concentration = (
-                (abs(max_position_pnl) / total_capital * 100)
-                if total_capital > 0
-                else 0
+                (max_pos_exposure / total_capital * 100) if total_capital > 0 else 0
             )
 
             cursor = await db.execute("""
@@ -507,7 +505,13 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
                 for row in strategy_rows
             ]
 
-            total_fees = sum(r["total_fees"] for r in fees_by_platform)
+            fees_total_cursor = await db.execute(
+                "SELECT COALESCE(SUM(fees_total), 0) as total FROM trade_outcomes"
+            )
+            fees_total_row = await fees_total_cursor.fetchone()
+            total_fees = round(
+                float(fees_total_row["total"] or 0) if fees_total_row else 0.0, 2
+            )
             return {
                 "total_fees": round(total_fees, 2),
                 "by_platform": fees_by_platform,
@@ -752,7 +756,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
             if db is not None:
                 await close_db(db)
 
-    # ── Serve React frontend if static_dir provided ─────────────────────────────────────────────────────────────────────────────────────────────────
+    # ── Serve React frontend if static_dir provided ─────────────────────────────────────────────────────────────────────────────────────────────
     if static_dir and Path(static_dir).is_dir():
         app.mount(
             "/",
