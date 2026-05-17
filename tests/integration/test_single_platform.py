@@ -1,5 +1,4 @@
-"""
-Tests for core/strategies/single_platform.py
+"""Tests for core/strategies/single_platform.py
 
 Covers:
   - P2 (structured event): same-platform series over-sum detection
@@ -43,7 +42,7 @@ from core.strategies.single_platform import (  # noqa: E402
 from execution.clients.paper import PaperExecutionClient  # noqa: E402
 from execution.models import OrderLeg  # noqa: E402
 
-# ── Helpers ────────────────────────────────────────────────────────────────────────────────────────────
+# ── Helpers ─────────────────────────────────────────────────────────────────────────────────────────
 
 
 def _risk_config(**overrides):
@@ -224,7 +223,7 @@ async def _seed_open_position(db, pos_id, market_id, strategy, entry_price):
     await db.commit()
 
 
-# ── _p2_title_root ──────────────────────────────────────────────────────────────────────────────────────────────────────────
+# ── _p2_title_root ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 
 class TestP2TitleRoot:
@@ -266,7 +265,7 @@ class TestP2TitleRoot:
         assert _p2_title_root("Will the Fed cut rates?") == "will the fed cut rates"
 
 
-# ── P3 calibration bias ───────────────────────────────────────────────────────────────────────────────────────────────────────────────
+# ── P3 calibration bias ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -332,7 +331,9 @@ class TestP5InformationLatency:
     async def test_wide_spread_low_price_buy(self, db):
         await _seed_market(db, "m1", yes_price=0.18, spread=0.10)
         cfg = RiskControlConfig(strategy_p3_enabled=False, strategy_p4_enabled=False)
-        trades = await detect_single_platform_opportunities(db, max_trades=10, risk_config=cfg)
+        trades = await detect_single_platform_opportunities(
+            db, max_trades=10, risk_config=cfg
+        )
         p5 = [t for t in trades if t["strategy"] == "P5_information_latency"]
         assert len(p5) >= 1
         assert p5[0]["side"] == "BUY"
@@ -340,7 +341,9 @@ class TestP5InformationLatency:
     async def test_wide_spread_high_price_sell(self, db):
         await _seed_market(db, "m1", yes_price=0.82, spread=0.12)
         cfg = RiskControlConfig(strategy_p3_enabled=False, strategy_p4_enabled=False)
-        trades = await detect_single_platform_opportunities(db, max_trades=10, risk_config=cfg)
+        trades = await detect_single_platform_opportunities(
+            db, max_trades=10, risk_config=cfg
+        )
         p5 = [t for t in trades if t["strategy"] == "P5_information_latency"]
         assert len(p5) >= 1
         assert p5[0]["side"] == "SELL"
@@ -361,7 +364,9 @@ class TestP5InformationLatency:
         spread = 0.12
         await _seed_market(db, "m1", yes_price=0.18, spread=spread)
         cfg = RiskControlConfig(strategy_p3_enabled=False, strategy_p4_enabled=False)
-        trades = await detect_single_platform_opportunities(db, max_trades=10, risk_config=cfg)
+        trades = await detect_single_platform_opportunities(
+            db, max_trades=10, risk_config=cfg
+        )
         p5 = [t for t in trades if t["strategy"] == "P5_information_latency"]
         assert len(p5) >= 1
         assert abs(p5[0]["edge"] - round(spread * 0.30, 4)) < 0.001
@@ -370,30 +375,64 @@ class TestP5InformationLatency:
 @pytest.mark.asyncio
 class TestP2StructuredEvent:
     async def test_over_sum_triggers_sell(self, db):
-        for i, (month, price) in enumerate(zip(["January", "March", "June"], [0.42, 0.40, 0.38])):
-            await _seed_market(db, f"kal_fed_{i}", platform="kalshi", title=f"Will the Fed raise rates in {month}", yes_price=price)
+        for i, (month, price) in enumerate(
+            zip(["January", "March", "June"], [0.42, 0.40, 0.38])
+        ):
+            await _seed_market(
+                db,
+                f"kal_fed_{i}",
+                platform="kalshi",
+                title=f"Will the Fed raise rates in {month}",
+                yes_price=price,
+            )
         trades = await detect_single_platform_opportunities(db, max_trades=20)
         p2 = [t for t in trades if t["strategy"] == "P2_structured_event"]
         assert len(p2) >= 1
         assert p2[0]["side"] == "SELL"
 
     async def test_sum_below_threshold_no_p2(self, db):
-        for i, (quarter, price) in enumerate(zip(["Q1", "Q2", "Q3"], [0.30, 0.28, 0.30])):
-            await _seed_market(db, f"poly_gdp_{i}", platform="polymarket", title=f"Will GDP grow in {quarter}", yes_price=price)
+        for i, (quarter, price) in enumerate(
+            zip(["Q1", "Q2", "Q3"], [0.30, 0.28, 0.30])
+        ):
+            await _seed_market(
+                db,
+                f"poly_gdp_{i}",
+                platform="polymarket",
+                title=f"Will GDP grow in {quarter}",
+                yes_price=price,
+            )
         trades = await detect_single_platform_opportunities(db, max_trades=20)
         p2 = [t for t in trades if t["strategy"] == "P2_structured_event"]
         assert len(p2) == 0
 
     async def test_cross_platform_not_grouped(self, db):
-        await _seed_market(db, "cpi_poly", platform="polymarket", title="Will CPI exceed 3% in January", yes_price=0.55)
-        await _seed_market(db, "cpi_kal", platform="kalshi", title="Will CPI exceed 3% in February", yes_price=0.55)
+        await _seed_market(
+            db,
+            "cpi_poly",
+            platform="polymarket",
+            title="Will CPI exceed 3% in January",
+            yes_price=0.55,
+        )
+        await _seed_market(
+            db,
+            "cpi_kal",
+            platform="kalshi",
+            title="Will CPI exceed 3% in February",
+            yes_price=0.55,
+        )
         trades = await detect_single_platform_opportunities(db, max_trades=20)
         p2 = [t for t in trades if t["strategy"] == "P2_structured_event"]
         assert len(p2) == 0
 
     async def test_short_title_root_skipped(self, db):
         for i, month in enumerate(["January", "February", "March"]):
-            await _seed_market(db, f"rain_{i}", platform="kalshi", title=f"Rain in {month}", yes_price=0.40)
+            await _seed_market(
+                db,
+                f"rain_{i}",
+                platform="kalshi",
+                title=f"Rain in {month}",
+                yes_price=0.40,
+            )
         trades = await detect_single_platform_opportunities(db, max_trades=20)
         p2 = [t for t in trades if t["strategy"] == "P2_structured_event"]
         assert len(p2) == 0
@@ -404,14 +443,26 @@ class TestP2StructuredEvent:
         for i, (month, price) in enumerate(zip(["January", "March", "June"], prices)):
             mid = f"kal_unemp_{i}"
             mids.append(mid)
-            await _seed_market(db, mid, platform="kalshi", title=f"Will unemployment fall below 4% in {month}", yes_price=price)
+            await _seed_market(
+                db,
+                mid,
+                platform="kalshi",
+                title=f"Will unemployment fall below 4% in {month}",
+                yes_price=price,
+            )
         trades = await detect_single_platform_opportunities(db, max_trades=20)
         p2 = [t for t in trades if t["strategy"] == "P2_structured_event"]
         assert len(p2) >= 1
         assert mids[0][:20] in p2[0]["market"]
 
     async def test_single_market_no_p2(self, db):
-        await _seed_market(db, "solo", platform="kalshi", title="Will the Fed raise rates in January", yes_price=0.70)
+        await _seed_market(
+            db,
+            "solo",
+            platform="kalshi",
+            title="Will the Fed raise rates in January",
+            yes_price=0.70,
+        )
         trades = await detect_single_platform_opportunities(db, max_trades=20)
         p2 = [t for t in trades if t["strategy"] == "P2_structured_event"]
         assert len(p2) == 0
@@ -440,17 +491,40 @@ class TestQuotaAllocation:
         assert len(p4) <= max(2, int(20 * 0.25))
 
     async def test_all_strategies_represented(self, db):
-        await _seed_market(db, "p3_1", platform="kalshi", title="P3 market alpha", yes_price=0.10)
-        await _seed_market(db, "p4_1", platform="kalshi", title="P4 market alpha", yes_price=0.32)
+        await _seed_market(
+            db, "p3_1", platform="kalshi", title="P3 market alpha", yes_price=0.10
+        )
+        await _seed_market(
+            db, "p4_1", platform="kalshi", title="P4 market alpha", yes_price=0.32
+        )
         for i, month in enumerate(["January", "March", "June"]):
-            await _seed_market(db, f"p2_{i}", platform="kalshi", title=f"Will inflation exceed 3% in {month}", yes_price=0.42)
+            await _seed_market(
+                db,
+                f"p2_{i}",
+                platform="kalshi",
+                title=f"Will inflation exceed 3% in {month}",
+                yes_price=0.42,
+            )
         trades = await detect_single_platform_opportunities(db, max_trades=20)
         strategies = {t["strategy"] for t in trades}
         assert "P3_calibration_bias" in strategies
         assert "P4_liquidity_timing" in strategies
         assert "P2_structured_event" in strategies
-        await _seed_market(db, "p5_check", platform="kalshi", title="P5 market alpha", yes_price=0.15, spread=0.10)
-        trades_p5 = await detect_single_platform_opportunities(db, max_trades=20, risk_config=RiskControlConfig(strategy_p3_enabled=False, strategy_p4_enabled=False))
+        await _seed_market(
+            db,
+            "p5_check",
+            platform="kalshi",
+            title="P5 market alpha",
+            yes_price=0.15,
+            spread=0.10,
+        )
+        trades_p5 = await detect_single_platform_opportunities(
+            db,
+            max_trades=20,
+            risk_config=RiskControlConfig(
+                strategy_p3_enabled=False, strategy_p4_enabled=False
+            ),
+        )
         assert "P5_information_latency" in {t["strategy"] for t in trades_p5}
 
     async def test_empty_db_no_trades(self, db):
@@ -462,7 +536,9 @@ class TestQuotaAllocation:
 class TestPositionOpensAsOpen:
     async def test_single_platform_writes_open_status(self, db):
         await _seed_p3_market(db)
-        await detect_single_platform_opportunities(db, max_trades=5, risk_config=_risk_config())
+        await detect_single_platform_opportunities(
+            db, max_trades=5, risk_config=_risk_config()
+        )
         cursor = await db.execute("SELECT status FROM positions LIMIT 1")
         row = await cursor.fetchone()
         assert row is not None
@@ -470,7 +546,9 @@ class TestPositionOpensAsOpen:
 
     async def test_single_platform_no_exit_price_at_open(self, db):
         await _seed_p3_market(db)
-        await detect_single_platform_opportunities(db, max_trades=5, risk_config=_risk_config())
+        await detect_single_platform_opportunities(
+            db, max_trades=5, risk_config=_risk_config()
+        )
         cursor = await db.execute("SELECT exit_price FROM positions LIMIT 1")
         row = await cursor.fetchone()
         assert row is not None
@@ -478,7 +556,9 @@ class TestPositionOpensAsOpen:
 
     async def test_single_platform_no_realized_pnl_at_open(self, db):
         await _seed_p3_market(db)
-        await detect_single_platform_opportunities(db, max_trades=5, risk_config=_risk_config())
+        await detect_single_platform_opportunities(
+            db, max_trades=5, risk_config=_risk_config()
+        )
         cursor = await db.execute("SELECT realized_pnl FROM positions LIMIT 1")
         row = await cursor.fetchone()
         assert row is not None
@@ -486,7 +566,9 @@ class TestPositionOpensAsOpen:
 
     async def test_single_platform_no_closed_at_at_open(self, db):
         await _seed_p3_market(db)
-        await detect_single_platform_opportunities(db, max_trades=5, risk_config=_risk_config())
+        await detect_single_platform_opportunities(
+            db, max_trades=5, risk_config=_risk_config()
+        )
         cursor = await db.execute("SELECT closed_at FROM positions LIMIT 1")
         row = await cursor.fetchone()
         assert row is not None
@@ -499,8 +581,14 @@ class TestMarkToMarket:
         now_dt = datetime.now(timezone.utc)
         old_opened = (now_dt - timedelta(seconds=400)).isoformat()
         now = now_dt.isoformat()
-        await db.execute("INSERT INTO markets (id, platform, platform_id, title, status, created_at, updated_at) VALUES ('mkt1', 'polymarket', 'p1', 'T1', 'open', ?, ?)", (now, now))
-        await db.execute("INSERT INTO market_prices (market_id, yes_price, no_price, spread, liquidity, polled_at) VALUES ('mkt1', 0.55, 0.45, 0.02, 5000, ?)", (now,))
+        await db.execute(
+            "INSERT INTO markets (id, platform, platform_id, title, status, created_at, updated_at) VALUES ('mkt1', 'polymarket', 'p1', 'T1', 'open', ?, ?)",
+            (now, now),
+        )
+        await db.execute(
+            "INSERT INTO market_prices (market_id, yes_price, no_price, spread, liquidity, polled_at) VALUES ('mkt1', 0.55, 0.45, 0.02, 5000, ?)",
+            (now,),
+        )
         await _insert_open_position(db, "pos1", "mkt1", opened_at=old_opened)
         closed = await mark_and_close_positions(db, holding_period_s=300)
         assert closed == 1
@@ -511,19 +599,41 @@ class TestMarkToMarket:
         now_dt = datetime.now(timezone.utc)
         old_opened = (now_dt - timedelta(seconds=400)).isoformat()
         now = now_dt.isoformat()
-        await db.execute("INSERT INTO markets (id, platform, platform_id, title, status, created_at, updated_at) VALUES ('mkt2', 'polymarket', 'p2', 'T2', 'open', ?, ?)", (now, now))
-        await db.execute("INSERT INTO market_prices (market_id, yes_price, no_price, spread, liquidity, polled_at) VALUES ('mkt2', 0.55, 0.45, 0.02, 5000, ?)", (now,))
-        await _insert_open_position(db, "pos2", "mkt2", side="BUY", entry_price=0.40, size=10.0, opened_at=old_opened)
+        await db.execute(
+            "INSERT INTO markets (id, platform, platform_id, title, status, created_at, updated_at) VALUES ('mkt2', 'polymarket', 'p2', 'T2', 'open', ?, ?)",
+            (now, now),
+        )
+        await db.execute(
+            "INSERT INTO market_prices (market_id, yes_price, no_price, spread, liquidity, polled_at) VALUES ('mkt2', 0.55, 0.45, 0.02, 5000, ?)",
+            (now,),
+        )
+        await _insert_open_position(
+            db,
+            "pos2",
+            "mkt2",
+            side="BUY",
+            entry_price=0.40,
+            size=10.0,
+            opened_at=old_opened,
+        )
         await mark_and_close_positions(db, holding_period_s=300)
-        cursor = await db.execute("SELECT realized_pnl, exit_price FROM positions WHERE id='pos2'")
+        cursor = await db.execute(
+            "SELECT realized_pnl, exit_price FROM positions WHERE id='pos2'"
+        )
         row = await cursor.fetchone()
         assert row[0] is not None
         assert row[1] is not None
 
     async def test_recent_position_stays_open(self, db):
         now = datetime.now(timezone.utc).isoformat()
-        await db.execute("INSERT INTO markets (id, platform, platform_id, title, status, created_at, updated_at) VALUES ('mkt3', 'polymarket', 'p3', 'T3', 'open', ?, ?)", (now, now))
-        await db.execute("INSERT INTO market_prices (market_id, yes_price, no_price, spread, liquidity, polled_at) VALUES ('mkt3', 0.55, 0.45, 0.02, 5000, ?)", (now,))
+        await db.execute(
+            "INSERT INTO markets (id, platform, platform_id, title, status, created_at, updated_at) VALUES ('mkt3', 'polymarket', 'p3', 'T3', 'open', ?, ?)",
+            (now, now),
+        )
+        await db.execute(
+            "INSERT INTO market_prices (market_id, yes_price, no_price, spread, liquidity, polled_at) VALUES ('mkt3', 0.55, 0.45, 0.02, 5000, ?)",
+            (now,),
+        )
         await _insert_open_position(db, "pos3", "mkt3")
         closed = await mark_and_close_positions(db, holding_period_s=300)
         assert closed == 0
@@ -532,7 +642,10 @@ class TestMarkToMarket:
         now_dt = datetime.now(timezone.utc)
         old_opened = (now_dt - timedelta(seconds=400)).isoformat()
         now = now_dt.isoformat()
-        await db.execute("INSERT INTO markets (id, platform, platform_id, title, status, created_at, updated_at) VALUES ('mkt4', 'polymarket', 'p4', 'T4', 'open', ?, ?)", (now, now))
+        await db.execute(
+            "INSERT INTO markets (id, platform, platform_id, title, status, created_at, updated_at) VALUES ('mkt4', 'polymarket', 'p4', 'T4', 'open', ?, ?)",
+            (now, now),
+        )
         await _insert_open_position(db, "pos4", "mkt4", opened_at=old_opened)
         closed = await mark_and_close_positions(db, holding_period_s=300)
         assert closed == 0
@@ -541,9 +654,23 @@ class TestMarkToMarket:
         now_dt = datetime.now(timezone.utc)
         old_opened = (now_dt - timedelta(seconds=400)).isoformat()
         now = now_dt.isoformat()
-        await db.execute("INSERT INTO markets (id, platform, platform_id, title, status, created_at, updated_at) VALUES ('mkt5', 'polymarket', 'p5', 'T5', 'open', ?, ?)", (now, now))
-        await db.execute("INSERT INTO market_prices (market_id, yes_price, no_price, spread, liquidity, polled_at) VALUES ('mkt5', 0.60, 0.40, 0.02, 5000, ?)", (now,))
-        await _insert_open_position(db, "pos5", "mkt5", side="BUY", entry_price=0.40, size=10.0, opened_at=old_opened)
+        await db.execute(
+            "INSERT INTO markets (id, platform, platform_id, title, status, created_at, updated_at) VALUES ('mkt5', 'polymarket', 'p5', 'T5', 'open', ?, ?)",
+            (now, now),
+        )
+        await db.execute(
+            "INSERT INTO market_prices (market_id, yes_price, no_price, spread, liquidity, polled_at) VALUES ('mkt5', 0.60, 0.40, 0.02, 5000, ?)",
+            (now,),
+        )
+        await _insert_open_position(
+            db,
+            "pos5",
+            "mkt5",
+            side="BUY",
+            entry_price=0.40,
+            size=10.0,
+            opened_at=old_opened,
+        )
         await db.execute("UPDATE positions SET fees_paid=0.02 WHERE id='pos5'")
         await db.commit()
         await mark_and_close_positions(db, holding_period_s=300)
@@ -556,30 +683,63 @@ class TestMarkToMarket:
 class TestSlippageModel:
     async def _seed_market_price(self, db, market_id, price):
         now = datetime.now(timezone.utc).isoformat()
-        await db.execute("INSERT OR IGNORE INTO markets (id, platform, platform_id, title, status, created_at, updated_at) VALUES (?, 'polymarket', ?, 'T', 'open', ?, ?)", (market_id, market_id, now, now))
-        await db.execute("INSERT INTO market_prices (market_id, yes_price, no_price, spread, liquidity, polled_at) VALUES (?, ?, ?, 0.02, 5000, ?)", (market_id, price, round(1 - price, 4), now))
+        await db.execute(
+            "INSERT OR IGNORE INTO markets (id, platform, platform_id, title, status, created_at, updated_at) VALUES (?, 'polymarket', ?, 'T', 'open', ?, ?)",
+            (market_id, market_id, now, now),
+        )
+        await db.execute(
+            "INSERT INTO market_prices (market_id, yes_price, no_price, spread, liquidity, polled_at) VALUES (?, ?, ?, 0.02, 5000, ?)",
+            (market_id, price, round(1 - price, 4), now),
+        )
         await db.commit()
 
     async def test_buy_fills_at_or_above_market_price(self, db):
         await self._seed_market_price(db, "mkt_slip_buy", 0.50)
-        client = PaperExecutionClient(db, platform_label="paper_polymarket", slippage_bps=100.0)
-        leg = OrderLeg(market_id="mkt_slip_buy", platform="polymarket", side="BUY", size=10.0, limit_price=0.60, order_type="LIMIT")
+        client = PaperExecutionClient(
+            db, platform_label="paper_polymarket", slippage_bps=100.0
+        )
+        leg = OrderLeg(
+            market_id="mkt_slip_buy",
+            platform="polymarket",
+            side="BUY",
+            size=10.0,
+            limit_price=0.60,
+            order_type="LIMIT",
+        )
         result = await client.submit_order(leg)
         assert result.status == "filled"
         assert result.filled_price >= 0.50
 
     async def test_sell_fills_at_or_below_market_price(self, db):
         await self._seed_market_price(db, "mkt_slip_sell", 0.50)
-        client = PaperExecutionClient(db, platform_label="paper_polymarket", slippage_bps=100.0)
-        leg = OrderLeg(market_id="mkt_slip_sell", platform="polymarket", side="SELL", size=10.0, limit_price=0.40, order_type="LIMIT")
+        client = PaperExecutionClient(
+            db, platform_label="paper_polymarket", slippage_bps=100.0
+        )
+        leg = OrderLeg(
+            market_id="mkt_slip_sell",
+            platform="polymarket",
+            side="SELL",
+            size=10.0,
+            limit_price=0.40,
+            order_type="LIMIT",
+        )
         result = await client.submit_order(leg)
         assert result.status == "filled"
         assert result.filled_price <= 0.50
 
     async def test_zero_slippage_fills_exactly_at_market(self, db):
         await self._seed_market_price(db, "mkt_zero_slip", 0.50)
-        client = PaperExecutionClient(db, platform_label="paper_polymarket", slippage_bps=0.0)
-        leg = OrderLeg(market_id="mkt_zero_slip", platform="polymarket", side="BUY", size=10.0, limit_price=0.60, order_type="LIMIT")
+        client = PaperExecutionClient(
+            db, platform_label="paper_polymarket", slippage_bps=0.0
+        )
+        leg = OrderLeg(
+            market_id="mkt_zero_slip",
+            platform="polymarket",
+            side="BUY",
+            size=10.0,
+            limit_price=0.60,
+            order_type="LIMIT",
+        )
         result = await client.submit_order(leg)
         assert result.status == "filled"
         assert result.filled_price == pytest.approx(0.50, abs=1e-6)
@@ -593,14 +753,29 @@ class TestSlippageModel:
 class TestFeeRates:
     async def _seed_market_price(self, db, market_id, price):
         now = datetime.now(timezone.utc).isoformat()
-        await db.execute("INSERT OR IGNORE INTO markets (id, platform, platform_id, title, status, created_at, updated_at) VALUES (?, 'polymarket', ?, 'T', 'open', ?, ?)", (market_id, market_id, now, now))
-        await db.execute("INSERT INTO market_prices (market_id, yes_price, no_price, spread, liquidity, polled_at) VALUES (?, ?, ?, 0.02, 5000, ?)", (market_id, price, round(1 - price, 4), now))
+        await db.execute(
+            "INSERT OR IGNORE INTO markets (id, platform, platform_id, title, status, created_at, updated_at) VALUES (?, 'polymarket', ?, 'T', 'open', ?, ?)",
+            (market_id, market_id, now, now),
+        )
+        await db.execute(
+            "INSERT INTO market_prices (market_id, yes_price, no_price, spread, liquidity, polled_at) VALUES (?, ?, ?, 0.02, 5000, ?)",
+            (market_id, price, round(1 - price, 4), now),
+        )
         await db.commit()
 
     async def test_custom_fee_rate_applied(self, db):
         await self._seed_market_price(db, "mkt_fee", 0.50)
-        client = PaperExecutionClient(db, platform_label="paper_polymarket", fee_rate=0.05)
-        leg = OrderLeg(market_id="mkt_fee", platform="polymarket", side="BUY", size=10.0, limit_price=0.60, order_type="LIMIT")
+        client = PaperExecutionClient(
+            db, platform_label="paper_polymarket", fee_rate=0.05
+        )
+        leg = OrderLeg(
+            market_id="mkt_fee",
+            platform="polymarket",
+            side="BUY",
+            size=10.0,
+            limit_price=0.60,
+            order_type="LIMIT",
+        )
         result = await client.submit_order(leg)
         assert result.status == "filled"
         assert abs(result.fee_paid - 0.25) < 0.01
@@ -615,8 +790,12 @@ class TestPnlModelColumn:
 
     async def test_new_realistic_position_default(self, db):
         await _seed_p3_market(db)
-        await detect_single_platform_opportunities(db, max_trades=5, risk_config=_risk_config())
-        cursor = await db.execute("SELECT pnl_model FROM positions WHERE pnl_model IS NOT NULL LIMIT 1")
+        await detect_single_platform_opportunities(
+            db, max_trades=5, risk_config=_risk_config()
+        )
+        cursor = await db.execute(
+            "SELECT pnl_model FROM positions WHERE pnl_model IS NOT NULL LIMIT 1"
+        )
         row = await cursor.fetchone()
         assert row is not None
         assert row[0] == "realistic"
@@ -638,8 +817,14 @@ class TestScheduledRunnerMarkToMarket:
         now_dt = datetime.now(timezone.utc)
         old_opened = (now_dt - timedelta(seconds=400)).isoformat()
         now = now_dt.isoformat()
-        await db.execute("INSERT INTO markets (id, platform, platform_id, title, status, created_at, updated_at) VALUES ('mkt_sched', 'polymarket', 'ms', 'Sched Market', 'open', ?, ?)", (now, now))
-        await db.execute("INSERT INTO market_prices (market_id, yes_price, no_price, spread, liquidity, polled_at) VALUES ('mkt_sched', 0.55, 0.45, 0.02, 5000, ?)", (now,))
+        await db.execute(
+            "INSERT INTO markets (id, platform, platform_id, title, status, created_at, updated_at) VALUES ('mkt_sched', 'polymarket', 'ms', 'Sched Market', 'open', ?, ?)",
+            (now, now),
+        )
+        await db.execute(
+            "INSERT INTO market_prices (market_id, yes_price, no_price, spread, liquidity, polled_at) VALUES ('mkt_sched', 0.55, 0.45, 0.02, 5000, ?)",
+            (now,),
+        )
         await _insert_open_position(db, "pos_sched", "mkt_sched", opened_at=old_opened)
         cfg = _risk_config(strategy_holding_period_s=300)
         runner = ScheduledStrategyRunner(db, interval=120, risk_config=cfg)
@@ -655,26 +840,39 @@ class TestScheduledRunnerMarkToMarket:
 
 class TestCrossStrategyDedup:
     def test_same_market_keeps_highest_signal_strength(self):
-        opps = [_make_opp("mkt_A", "P3_calibration_bias", 0.30), _make_opp("mkt_A", "P4_liquidity_timing", 0.25)]
+        opps = [
+            _make_opp("mkt_A", "P3_calibration_bias", 0.30),
+            _make_opp("mkt_A", "P4_liquidity_timing", 0.25),
+        ]
         result = _cross_strategy_dedup(opps)
         assert len(result) == 1
         assert result[0]["strategy"] == "P3_calibration_bias"
 
     def test_same_market_lower_strength_wins_if_higher(self):
-        opps = [_make_opp("mkt_B", "P3_calibration_bias", 0.20), _make_opp("mkt_B", "P4_liquidity_timing", 0.35)]
+        opps = [
+            _make_opp("mkt_B", "P3_calibration_bias", 0.20),
+            _make_opp("mkt_B", "P4_liquidity_timing", 0.35),
+        ]
         result = _cross_strategy_dedup(opps)
         assert len(result) == 1
         assert result[0]["strategy"] == "P4_liquidity_timing"
 
     def test_unique_markets_all_kept(self):
-        opps = [_make_opp("mkt_C", "P3_calibration_bias", 0.30), _make_opp("mkt_D", "P4_liquidity_timing", 0.25)]
+        opps = [
+            _make_opp("mkt_C", "P3_calibration_bias", 0.30),
+            _make_opp("mkt_D", "P4_liquidity_timing", 0.25),
+        ]
         assert len(_cross_strategy_dedup(opps)) == 2
 
     def test_empty_list_returns_empty(self):
         assert _cross_strategy_dedup([]) == []
 
     def test_three_strategies_same_market(self):
-        opps = [_make_opp("mkt_E", "P3_calibration_bias", 0.20), _make_opp("mkt_E", "P4_liquidity_timing", 0.40), _make_opp("mkt_E", "P5_information_latency", 0.30)]
+        opps = [
+            _make_opp("mkt_E", "P3_calibration_bias", 0.20),
+            _make_opp("mkt_E", "P4_liquidity_timing", 0.40),
+            _make_opp("mkt_E", "P5_information_latency", 0.30),
+        ]
         result = _cross_strategy_dedup(opps)
         assert len(result) == 1
         assert result[0]["signal_strength"] == 0.40
@@ -682,25 +880,51 @@ class TestCrossStrategyDedup:
 
 class TestNormalizeSignalStrengths:
     def test_z_scores_within_strategy(self):
-        opps = [_make_opp("mkt_1", "P3_calibration_bias", 0.20), _make_opp("mkt_2", "P3_calibration_bias", 0.30), _make_opp("mkt_3", "P3_calibration_bias", 0.40)]
+        opps = [
+            _make_opp("mkt_1", "P3_calibration_bias", 0.20),
+            _make_opp("mkt_2", "P3_calibration_bias", 0.30),
+            _make_opp("mkt_3", "P3_calibration_bias", 0.40),
+        ]
         result = _normalize_signal_strengths(opps)
-        zscores = [o["signal_strength_normalized"] for o in result if o["strategy"] == "P3_calibration_bias"]
+        zscores = [
+            o["signal_strength_normalized"]
+            for o in result
+            if o["strategy"] == "P3_calibration_bias"
+        ]
         assert len(zscores) == 3
         assert zscores[2] > zscores[1] > zscores[0]
 
     def test_single_item_normalized_to_zero(self):
-        result = _normalize_signal_strengths([_make_opp("mkt_1", "P3_calibration_bias", 0.30)])
+        result = _normalize_signal_strengths(
+            [_make_opp("mkt_1", "P3_calibration_bias", 0.30)]
+        )
         assert result[0]["signal_strength_normalized"] == 0.0
 
     def test_normalization_does_not_cross_strategies(self):
-        opps = [_make_opp("mkt_1", "P3_calibration_bias", 0.30), _make_opp("mkt_2", "P3_calibration_bias", 0.70), _make_opp("mkt_3", "P5_information_latency", 0.10), _make_opp("mkt_4", "P5_information_latency", 0.90)]
+        opps = [
+            _make_opp("mkt_1", "P3_calibration_bias", 0.30),
+            _make_opp("mkt_2", "P3_calibration_bias", 0.70),
+            _make_opp("mkt_3", "P5_information_latency", 0.10),
+            _make_opp("mkt_4", "P5_information_latency", 0.90),
+        ]
         result = _normalize_signal_strengths(opps)
-        p3_z = [o["signal_strength_normalized"] for o in result if o["strategy"] == "P3_calibration_bias"]
-        p5_z = [o["signal_strength_normalized"] for o in result if o["strategy"] == "P5_information_latency"]
+        p3_z = [
+            o["signal_strength_normalized"]
+            for o in result
+            if o["strategy"] == "P3_calibration_bias"
+        ]
+        p5_z = [
+            o["signal_strength_normalized"]
+            for o in result
+            if o["strategy"] == "P5_information_latency"
+        ]
         assert abs(p3_z[0] - p5_z[0]) < 0.001
 
     def test_original_signal_strength_preserved(self):
-        opps = [_make_opp("mkt_1", "P3_calibration_bias", 0.30), _make_opp("mkt_2", "P3_calibration_bias", 0.50)]
+        opps = [
+            _make_opp("mkt_1", "P3_calibration_bias", 0.30),
+            _make_opp("mkt_2", "P3_calibration_bias", 0.50),
+        ]
         result = _normalize_signal_strengths(opps)
         assert result[0]["signal_strength"] == 0.30
 
@@ -711,7 +935,12 @@ class TestNormalizeSignalStrengths:
 class TestRiskConfigStrategyFlags:
     def test_strategy_flags_exist_with_defaults(self):
         cfg = RiskControlConfig()
-        for flag in ["strategy_p2_enabled", "strategy_p3_enabled", "strategy_p4_enabled", "strategy_p5_enabled"]:
+        for flag in [
+            "strategy_p2_enabled",
+            "strategy_p3_enabled",
+            "strategy_p4_enabled",
+            "strategy_p5_enabled",
+        ]:
             assert getattr(cfg, flag) is True
 
     def test_replay_cooldown_exists(self):
@@ -730,20 +959,32 @@ class TestRiskConfigStrategyFlags:
 class TestStrategyEnableFlags:
     async def test_disabled_p3_produces_no_p3_trades(self, db):
         await _seed_market(db, "mkt_p3", yes_price=0.25)
-        await detect_single_platform_opportunities(db, max_trades=5, risk_config=_risk_config(strategy_p3_enabled=False))
-        cursor = await db.execute("SELECT COUNT(*) FROM positions WHERE strategy='P3_calibration_bias'")
+        await detect_single_platform_opportunities(
+            db, max_trades=5, risk_config=_risk_config(strategy_p3_enabled=False)
+        )
+        cursor = await db.execute(
+            "SELECT COUNT(*) FROM positions WHERE strategy='P3_calibration_bias'"
+        )
         assert (await cursor.fetchone())[0] == 0
 
     async def test_enabled_p3_produces_trades(self, db):
         await _seed_market(db, "mkt_p3", yes_price=0.25)
-        await detect_single_platform_opportunities(db, max_trades=5, risk_config=_risk_config(strategy_p3_enabled=True))
-        cursor = await db.execute("SELECT COUNT(*) FROM positions WHERE strategy='P3_calibration_bias'")
+        await detect_single_platform_opportunities(
+            db, max_trades=5, risk_config=_risk_config(strategy_p3_enabled=True)
+        )
+        cursor = await db.execute(
+            "SELECT COUNT(*) FROM positions WHERE strategy='P3_calibration_bias'"
+        )
         assert (await cursor.fetchone())[0] >= 1
 
     async def test_disabled_p4_produces_no_p4_trades(self, db):
         await _seed_market(db, "mkt_p4", yes_price=0.25)
-        await detect_single_platform_opportunities(db, max_trades=5, risk_config=_risk_config(strategy_p4_enabled=False))
-        cursor = await db.execute("SELECT COUNT(*) FROM positions WHERE strategy='P4_liquidity_timing'")
+        await detect_single_platform_opportunities(
+            db, max_trades=5, risk_config=_risk_config(strategy_p4_enabled=False)
+        )
+        cursor = await db.execute(
+            "SELECT COUNT(*) FROM positions WHERE strategy='P4_liquidity_timing'"
+        )
         assert (await cursor.fetchone())[0] == 0
 
 
@@ -751,34 +992,86 @@ class TestStrategyEnableFlags:
 class TestConsecutiveCycleDedup:
     async def test_market_with_open_position_is_skipped(self, db):
         await _seed_market(db, "mkt_open", yes_price=0.25)
-        await _seed_open_position(db, "pos_open", "mkt_open", "P3_calibration_bias", 0.25)
-        await detect_single_platform_opportunities(db, max_trades=5, risk_config=_risk_config(strategy_replay_cooldown_s=300, strategy_replay_min_move=0.01))
-        cursor = await db.execute("SELECT COUNT(*) FROM positions WHERE market_id='mkt_open'")
+        await _seed_open_position(
+            db, "pos_open", "mkt_open", "P3_calibration_bias", 0.25
+        )
+        await detect_single_platform_opportunities(
+            db,
+            max_trades=5,
+            risk_config=_risk_config(
+                strategy_replay_cooldown_s=300, strategy_replay_min_move=0.01
+            ),
+        )
+        cursor = await db.execute(
+            "SELECT COUNT(*) FROM positions WHERE market_id='mkt_open'"
+        )
         assert (await cursor.fetchone())[0] == 1
 
     async def test_recently_closed_market_without_price_move_skipped(self, db):
         entry_price = 0.25
         await _seed_market(db, "mkt_recent", yes_price=entry_price)
         closed_at = (datetime.now(timezone.utc) - timedelta(seconds=60)).isoformat()
-        await _seed_closed_position(db, "pos_recent", "mkt_recent", "P3_calibration_bias", 0.05, closed_at=closed_at, entry_price_override=entry_price)
-        await detect_single_platform_opportunities(db, max_trades=5, risk_config=_risk_config(strategy_replay_cooldown_s=300, strategy_replay_min_move=0.01))
-        cursor = await db.execute("SELECT COUNT(*) FROM positions WHERE market_id='mkt_recent'")
+        await _seed_closed_position(
+            db,
+            "pos_recent",
+            "mkt_recent",
+            "P3_calibration_bias",
+            0.05,
+            closed_at=closed_at,
+            entry_price_override=entry_price,
+        )
+        await detect_single_platform_opportunities(
+            db,
+            max_trades=5,
+            risk_config=_risk_config(
+                strategy_replay_cooldown_s=300, strategy_replay_min_move=0.01
+            ),
+        )
+        cursor = await db.execute(
+            "SELECT COUNT(*) FROM positions WHERE market_id='mkt_recent'"
+        )
         assert (await cursor.fetchone())[0] == 1
 
     async def test_recently_closed_with_price_move_allowed(self, db):
         await _seed_market(db, "mkt_moved", yes_price=0.20)
         closed_at = (datetime.now(timezone.utc) - timedelta(seconds=60)).isoformat()
-        await _seed_closed_position(db, "pos_moved", "mkt_moved", "P3_calibration_bias", 0.05, closed_at=closed_at, entry_price_override=0.25)
-        await detect_single_platform_opportunities(db, max_trades=5, risk_config=_risk_config(strategy_replay_cooldown_s=300, strategy_replay_min_move=0.01))
-        cursor = await db.execute("SELECT COUNT(*) FROM positions WHERE market_id='mkt_moved' AND status='open'")
+        await _seed_closed_position(
+            db,
+            "pos_moved",
+            "mkt_moved",
+            "P3_calibration_bias",
+            0.05,
+            closed_at=closed_at,
+            entry_price_override=0.25,
+        )
+        await detect_single_platform_opportunities(
+            db,
+            max_trades=5,
+            risk_config=_risk_config(
+                strategy_replay_cooldown_s=300, strategy_replay_min_move=0.01
+            ),
+        )
+        cursor = await db.execute(
+            "SELECT COUNT(*) FROM positions WHERE market_id='mkt_moved' AND status='open'"
+        )
         assert (await cursor.fetchone())[0] >= 1
 
     async def test_market_outside_cooldown_window_allowed(self, db):
         await _seed_market(db, "mkt_old", yes_price=0.25)
         closed_at = (datetime.now(timezone.utc) - timedelta(seconds=600)).isoformat()
-        await _seed_closed_position(db, "pos_old", "mkt_old", "P3_calibration_bias", 0.05, closed_at=closed_at)
-        await detect_single_platform_opportunities(db, max_trades=5, risk_config=_risk_config(strategy_replay_cooldown_s=300, strategy_replay_min_move=0.01))
-        cursor = await db.execute("SELECT COUNT(*) FROM positions WHERE market_id='mkt_old' AND status='open'")
+        await _seed_closed_position(
+            db, "pos_old", "mkt_old", "P3_calibration_bias", 0.05, closed_at=closed_at
+        )
+        await detect_single_platform_opportunities(
+            db,
+            max_trades=5,
+            risk_config=_risk_config(
+                strategy_replay_cooldown_s=300, strategy_replay_min_move=0.01
+            ),
+        )
+        cursor = await db.execute(
+            "SELECT COUNT(*) FROM positions WHERE market_id='mkt_old' AND status='open'"
+        )
         assert (await cursor.fetchone())[0] >= 1
 
 
@@ -791,34 +1084,66 @@ class TestStrategyKillSwitch:
     async def test_get_strategy_rolling_pnl_sums_correctly(self, db):
         await _seed_market(db, "mkt_pnl1", yes_price=0.40)
         await _seed_market(db, "mkt_pnl2", yes_price=0.45)
-        await _seed_closed_position(db, "ks_pos1", "mkt_pnl1", "P3_calibration_bias", -0.50)
-        await _seed_closed_position(db, "ks_pos2", "mkt_pnl2", "P3_calibration_bias", -0.30)
+        await _seed_closed_position(
+            db, "ks_pos1", "mkt_pnl1", "P3_calibration_bias", -0.50
+        )
+        await _seed_closed_position(
+            db, "ks_pos2", "mkt_pnl2", "P3_calibration_bias", -0.30
+        )
         count, pnl = await _get_strategy_rolling_pnl(db, "P3_calibration_bias", 604800)
         assert count == 2 and abs(pnl - (-0.80)) < 0.001
 
     async def test_negative_pnl_kills_strategy_when_min_trades_met(self, db):
         for i in range(5):
             await _seed_market(db, f"mkt_kill_{i}", yes_price=0.40)
-            await _seed_closed_position(db, f"ks_kill_{i}", f"mkt_kill_{i}", "P3_calibration_bias", -0.50)
+            await _seed_closed_position(
+                db, f"ks_kill_{i}", f"mkt_kill_{i}", "P3_calibration_bias", -0.50
+            )
         await _seed_market(db, "mkt_trigger", yes_price=0.25)
-        await detect_single_platform_opportunities(db, max_trades=10, risk_config=_risk_config(strategy_p3_enabled=True, strategy_killswitch_window_s=604800, strategy_killswitch_min_trades=5))
-        cursor = await db.execute("SELECT COUNT(*) FROM positions WHERE strategy='P3_calibration_bias' AND market_id='mkt_trigger'")
+        await detect_single_platform_opportunities(
+            db,
+            max_trades=10,
+            risk_config=_risk_config(
+                strategy_p3_enabled=True,
+                strategy_killswitch_window_s=604800,
+                strategy_killswitch_min_trades=5,
+            ),
+        )
+        cursor = await db.execute(
+            "SELECT COUNT(*) FROM positions WHERE strategy='P3_calibration_bias' AND market_id='mkt_trigger'"
+        )
         assert (await cursor.fetchone())[0] == 0
 
     async def test_insufficient_trades_does_not_trigger_killswitch(self, db):
         for i in range(2):
             await _seed_market(db, f"mkt_few_{i}", yes_price=0.40)
-            await _seed_closed_position(db, f"ks_few_{i}", f"mkt_few_{i}", "P3_calibration_bias", -0.50)
+            await _seed_closed_position(
+                db, f"ks_few_{i}", f"mkt_few_{i}", "P3_calibration_bias", -0.50
+            )
         await _seed_market(db, "mkt_few_trigger", yes_price=0.25)
-        await detect_single_platform_opportunities(db, max_trades=10, risk_config=_risk_config(strategy_killswitch_min_trades=5))
-        cursor = await db.execute("SELECT COUNT(*) FROM positions WHERE strategy='P3_calibration_bias' AND market_id='mkt_few_trigger'")
+        await detect_single_platform_opportunities(
+            db,
+            max_trades=10,
+            risk_config=_risk_config(strategy_killswitch_min_trades=5),
+        )
+        cursor = await db.execute(
+            "SELECT COUNT(*) FROM positions WHERE strategy='P3_calibration_bias' AND market_id='mkt_few_trigger'"
+        )
         assert (await cursor.fetchone())[0] >= 1
 
     async def test_positive_rolling_pnl_does_not_kill(self, db):
         for i in range(5):
             await _seed_market(db, f"mkt_pos_{i}", yes_price=0.40)
-            await _seed_closed_position(db, f"ks_pos_{i}", f"mkt_pos_{i}", "P3_calibration_bias", +0.50)
+            await _seed_closed_position(
+                db, f"ks_pos_{i}", f"mkt_pos_{i}", "P3_calibration_bias", +0.50
+            )
         await _seed_market(db, "mkt_pos_trigger", yes_price=0.25)
-        await detect_single_platform_opportunities(db, max_trades=10, risk_config=_risk_config(strategy_killswitch_min_trades=5))
-        cursor = await db.execute("SELECT COUNT(*) FROM positions WHERE strategy='P3_calibration_bias' AND market_id='mkt_pos_trigger'")
+        await detect_single_platform_opportunities(
+            db,
+            max_trades=10,
+            risk_config=_risk_config(strategy_killswitch_min_trades=5),
+        )
+        cursor = await db.execute(
+            "SELECT COUNT(*) FROM positions WHERE strategy='P3_calibration_bias' AND market_id='mkt_pos_trigger'"
+        )
         assert (await cursor.fetchone())[0] >= 1
