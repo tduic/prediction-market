@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 
 interface UseApiResult<T> {
   data: T | null
@@ -20,6 +20,7 @@ export function useApi<T>(
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
+  const hasDataRef = useRef(false)
 
   // Serialize params so a new object with the same values doesn't re-trigger
   // the effect on every render. Without this, inline objects like `{ days }`
@@ -29,7 +30,9 @@ export function useApi<T>(
   useEffect(() => {
     const fetchData = async () => {
       try {
-        setLoading(true)
+        // Only show loading spinner on initial fetch; background refreshes keep
+        // showing stale data without flipping to a loading state.
+        if (!hasDataRef.current) setLoading(true)
         setError(null)
 
         // Build URL with query parameters
@@ -54,6 +57,7 @@ export function useApi<T>(
         }
         const json = await response.json()
         setData(json)
+        hasDataRef.current = true
         setError(null)
         setLastUpdated(new Date())
       } catch (err) {

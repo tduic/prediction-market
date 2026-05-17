@@ -19,6 +19,7 @@ export interface StrategyMetrics {
   avg_pnl: number
   total_pnl: number
   total_fees: number
+  net_pnl?: number
   sharpe_ratio: number
   avg_edge_capture: number
   avg_execution_time_ms: number

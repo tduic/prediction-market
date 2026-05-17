@@ -248,6 +248,11 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
                         "avg_pnl": round(row_dict.get("avg_pnl", 0) or 0, 2),
                         "total_pnl": round(row_dict.get("total_pnl", 0) or 0, 2),
                         "total_fees": round(row_dict.get("total_fees", 0) or 0, 2),
+                        "net_pnl": round(
+                            (row_dict.get("total_pnl", 0) or 0)
+                            - (row_dict.get("total_fees", 0) or 0),
+                            2,
+                        ),
                         "sharpe_ratio": round(sharpe_ratio, 2),
                         "sharpe_note": "per-trade mean/stdev; not annualized",
                         "avg_edge_capture": round(
@@ -448,7 +453,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
             daily_var = 0
             if len(daily_pnls) > 1:
                 daily_pnls_sorted = sorted(daily_pnls)
-                percentile_5_idx = max(0, int(len(daily_pnls_sorted) * 0.05) - 1)
+                percentile_5_idx = max(0, int(len(daily_pnls_sorted) * 0.05))
                 daily_var = abs(daily_pnls_sorted[percentile_5_idx])
 
             cursor = await db.execute(
