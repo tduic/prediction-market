@@ -10,6 +10,7 @@ Enable via: EXECUTION_MODE=paper
 
 import logging
 import random
+import time
 import uuid
 
 import aiosqlite
@@ -140,35 +141,28 @@ class PaperExecutionClient(BaseExecutionClient):
     async def _get_db_price(
         self, market_id: str, book: Book = Book.YES
     ) -> float | None:
-        """Return the most-recent price from the DB.
-
-        For NO-book legs (translated Polymarket short-sells) reads
-        ``markets.last_price_no`` directly. Falls back to ``market_prices``
-        for the YES-book price in all other cases.
-        """
+        """Read the most recently polled price from the DB (fallback)."""
         if book is Book.NO:
-            try:
-                cursor = await self.db.execute(
-                    "SELECT last_price_no FROM markets WHERE id = ?",
-                    (market_id,),
-                )
-                row = await cursor.fetchone()
-                if row and row[0] is not None:
-                    return float(row[0])
-            except Exception as e:
-                logger.debug(
-                    "[PAPER] DB NO-price lookup failed for %s: %s", market_id, e
-                )
-        try:
+            # NO-book reference for translated SELL legs.
             cursor = await self.db.execute(
-                "SELECT yes_price FROM market_prices "
-                "WHERE market_id = ? ORDER BY polled_at DESC LIMIT 1",
+                "SELECT last_price_no FROM markets WHERE id = ?",
                 (market_id,),
             )
             row = await cursor.fetchone()
-            return float(row[0]) if row and row[0] is not None else None
-        except Exception as e:
-            logger.debug("[PAPER] DB price lookup failed for %s: %s", market_id, e)
+            return row[0] if row and row[0] is not None else None
+        try:
+            cursor = await self.db.execute(
+                """
+                SELECT yes_price FROM market_prices
+                WHERE market_id = ?
+                ORDER BY polled_at DESC
+                LIMIT 1
+                """,
+                (market_id,),
+            )
+            row = await cursor.fetchone()
+            return row[0] if row else None
+        except Exception:
             return None
 
     async def submit_order(
@@ -177,46 +171,114 @@ class PaperExecutionClient(BaseExecutionClient):
         signal_id: str | None = None,
         strategy: str | None = None,
     ) -> OrderResult:
-        """Simulate an order fill using real market prices from the DB.
+        """
+        Simulate order submission using real market prices.
 
-        1. Resolve through BookResolver when present (Polymarket no-naked-shorts).
-        2. Fetch the current price; fall back to limit price when live lookup fails.
-        3. Apply configured slippage and platform fee rate.
-        4. Write order + fill event rows to the DB and return a filled OrderResult.
+        Does NOT call any exchange API. Fills at the current market
+        price from the database, with realistic latency and fee calculation.
         """
         self.total_submitted += 1
-        submission_latency = random.randint(self.min_latency_ms, self.max_latency_ms)
-        order_id = f"paper_{uuid.uuid4().hex[:16]}"
+        order_id = f"PAPER-{self.platform_label}-{uuid.uuid4().hex[:12]}"
 
-        # BookResolver translates Polymarket SELL YES → BUY NO when there is
-        # no inventory to deliver, enforcing the no-naked-shorts rule.
+        # Simulate submission latency (no actual sleep — just record the number)
+        latency_ms = random.randint(self.min_latency_ms, self.max_latency_ms)
+        submission_latency_ms = latency_ms
+
+        logger.info(
+            "[PAPER] Order submitted: %s | market=%s side=%s size=%.2f price=%s",
+            order_id,
+            leg.market_id,
+            leg.side,
+            leg.size,
+            leg.limit_price,
+        )
+
+        # Route Polymarket legs through BookResolver (no-naked-shorts rule).
         resolved: ResolvedOrder | None = None
         if self._book_resolver is not None:
-            try:
-                resolved = await self._book_resolver.resolve(
-                    leg.market_id, leg.side, leg.size, leg.limit_price
+            resolved = await self._book_resolver.resolve(
+                leg.market_id, leg.side, leg.size, leg.limit_price
+            )
+            if resolved is None:
+                submission_latency_ms = latency_ms
+                error_msg = (
+                    f"BookResolver rejected order for {leg.market_id} "
+                    f"(side={leg.side.value}, size={leg.size}, "
+                    f"price={leg.limit_price})"
                 )
-            except Exception as e:
-                logger.warning(
-                    "[PAPER] BookResolver failed for %s: %s", leg.market_id, e
+                logger.error(error_msg)
+                result = OrderResult(
+                    order_id=order_id,
+                    platform=self.platform_label,
+                    status="failed",
+                    submission_latency_ms=submission_latency_ms,
+                    error_message=error_msg,
                 )
+                await self.write_order(
+                    leg, result, signal_id=signal_id, strategy=strategy
+                )
+                return result
 
-        book = resolved.book if resolved is not None else Book.YES
-        fill_price = await self._get_current_price(leg.market_id, book=book)
+        # Effective values after translation (Kalshi legs: resolved is None,
+        # so effective_* fall back to original leg values with Book.YES).
+        effective_side = resolved.side if resolved else leg.side
+        effective_limit = resolved.limit_price if resolved else leg.limit_price
+        effective_book = resolved.book if resolved else Book.YES
 
-        if not _is_valid_price(fill_price):
-            # Fall back to the limit price embedded in the order leg.
-            limit = resolved.limit_price if resolved is not None else leg.limit_price
-            if _is_valid_price(limit):
-                fill_price = float(limit)  # type: ignore[arg-type]
+        # Get real market price, routed through the correct book.
+        market_price = await self._get_current_price(leg.market_id, effective_book)
+
+        if market_price is None:
+            # No price data — use effective limit price or reject
+            if effective_limit:
+                market_price = effective_limit
             else:
                 result = OrderResult(
                     order_id=order_id,
                     platform=self.platform_label,
                     status="failed",
-                    submission_latency_ms=submission_latency,
+                    submission_latency_ms=submission_latency_ms,
+                    error_message="No market price available",
+                )
+                await self.write_order(
+                    leg,
+                    result,
+                    signal_id=signal_id,
+                    strategy=strategy,
+                    resolved=resolved,
+                )
+                return result
+
+        # Marketable-at-limit check uses effective values.
+        if leg.order_type.upper() == "LIMIT" and effective_limit is not None:
+            if effective_side is Side.BUY and market_price > effective_limit:
+                result = OrderResult(
+                    order_id=order_id,
+                    platform=self.platform_label,
+                    status="failed",
+                    submission_latency_ms=submission_latency_ms,
                     error_message=(
-                        f"No market price available for {leg.market_id} (book={book.value})"
+                        f"Market price {market_price:.4f} above limit "
+                        f"{effective_limit:.4f}"
+                    ),
+                )
+                await self.write_order(
+                    leg,
+                    result,
+                    signal_id=signal_id,
+                    strategy=strategy,
+                    resolved=resolved,
+                )
+                return result
+            if effective_side is Side.SELL and market_price < effective_limit:
+                result = OrderResult(
+                    order_id=order_id,
+                    platform=self.platform_label,
+                    status="failed",
+                    submission_latency_ms=submission_latency_ms,
+                    error_message=(
+                        f"Market price {market_price:.4f} below limit "
+                        f"{effective_limit:.4f}"
                     ),
                 )
                 await self.write_order(
@@ -228,119 +290,115 @@ class PaperExecutionClient(BaseExecutionClient):
                 )
                 return result
 
-        assert fill_price is not None  # validated above
-
-        # Reject LIMIT orders where the market has moved past the limit price.
-        # Use the resolved (translated) limit when BookResolver is active.
-        if getattr(leg, "order_type", None) and leg.order_type.upper() == "LIMIT":
-            effective_side = resolved.side if resolved is not None else leg.side
-            effective_limit = (
-                float(resolved.limit_price)
-                if resolved is not None
-                else (float(leg.limit_price) if leg.limit_price is not None else None)
-            )
-            if effective_limit is not None:
-                if effective_side is Side.BUY and fill_price > effective_limit:
-                    result = OrderResult(
-                        order_id=order_id,
-                        platform=self.platform_label,
-                        status="failed",
-                        submission_latency_ms=submission_latency,
-                        error_message=f"Market price {fill_price:.4f} above limit {effective_limit:.4f}",
-                    )
-                    await self.write_order(
-                        leg,
-                        result,
-                        signal_id=signal_id,
-                        strategy=strategy,
-                        resolved=resolved,
-                    )
-                    return result
-                elif effective_side is Side.SELL and fill_price < effective_limit:
-                    result = OrderResult(
-                        order_id=order_id,
-                        platform=self.platform_label,
-                        status="failed",
-                        submission_latency_ms=submission_latency,
-                        error_message=f"Market price {fill_price:.4f} below limit {effective_limit:.4f}",
-                    )
-                    await self.write_order(
-                        leg,
-                        result,
-                        signal_id=signal_id,
-                        strategy=strategy,
-                        resolved=resolved,
-                    )
-                    return result
-
-        # Apply slippage (adverse to direction): buys get a higher price,
-        # sells get a lower one.
-        slippage = 0.0
-        if self.slippage_bps > 0:
-            slippage_amt = fill_price * self.slippage_bps / 10_000
-            effective_side = resolved.side if resolved is not None else leg.side
-            if effective_side is Side.BUY:
-                fill_price = min(0.99, fill_price + slippage_amt)
-            else:
-                fill_price = max(0.01, fill_price - slippage_amt)
-            slippage = slippage_amt
-
-        rate_key = "polymarket" if "polymarket" in self.platform_label else "kalshi"
-        fee_rate = (
-            self._fee_rate_override
-            if self._fee_rate_override is not None
-            else FEE_RATES.get(rate_key, 0.02)
-        )
-        fee_paid = round(fill_price * leg.size * fee_rate, 6)
-        fill_latency = random.randint(
+        # Simulate fill latency (no actual sleep — just record the number)
+        fill_latency_ms = random.randint(
             self.min_fill_latency_ms, self.max_fill_latency_ms
         )
+
+        # Apply slippage: adverse price movement (BUY pays more, SELL receives less)
+        slippage_factor = self.slippage_bps / 10000.0
+        if slippage_factor > 0:
+            adverse = market_price * slippage_factor * random.uniform(0, 1)
+            if effective_side is Side.BUY:
+                filled_price = min(round(market_price + adverse, 6), 0.99)
+            else:
+                filled_price = max(round(market_price - adverse, 6), 0.01)
+        else:
+            filled_price = market_price
+        filled_size = leg.size
+        # For LIMIT orders, slippage is fill vs. requested limit.
+        # For MARKET orders (limit_price=None), compare against the observed
+        # market price at fill time so the simulated adverse movement is
+        # actually reported instead of collapsing to 0.
+        reference_price = (
+            effective_limit if effective_limit is not None else market_price
+        )
+        slippage = abs(filled_price - reference_price)
+
+        # Use override fee rate if provided, else platform default
+        if self._fee_rate_override is not None:
+            fee_rate = self._fee_rate_override
+        else:
+            base_platform = self.platform_label.replace("paper_", "")
+            fee_rate = FEE_RATES.get(base_platform, 0.02)
+        fee_paid = round(filled_size * filled_price * fee_rate, 4)
+
+        self.total_filled += 1
 
         result = OrderResult(
             order_id=order_id,
             platform=self.platform_label,
             status="filled",
-            submission_latency_ms=submission_latency,
-            fill_latency_ms=fill_latency,
-            filled_price=fill_price,
-            filled_size=leg.size,
+            submission_latency_ms=submission_latency_ms,
+            fill_latency_ms=fill_latency_ms,
+            filled_price=round(filled_price, 4),
+            filled_size=filled_size,
             fee_paid=fee_paid,
-            slippage=slippage,
+            slippage=round(slippage, 4),
         )
 
         await self.write_order(
             leg, result, signal_id=signal_id, strategy=strategy, resolved=resolved
         )
         await self.write_fill_event(result)
-        self.total_filled += 1
-        logger.debug(
-            "[PAPER] %s: %s %s %.2f @ %.4f fee=%.6f",
-            self.platform_label,
-            leg.side,
-            leg.market_id,
-            leg.size,
-            fill_price,
+
+        logger.info(
+            "[PAPER] Order FILLED: %s | price=%.4f size=%.2f fees=%.4f | fill_latency=%dms",
+            order_id,
+            filled_price,
+            filled_size,
             fee_paid,
+            fill_latency_ms,
         )
+
         return result
 
     async def cancel_order(self, order_id: str) -> bool:
-        """Paper orders are always cancellable (no real exchange state)."""
-        return True
+        """Paper cancel always succeeds."""
+        try:
+            await self.db.execute(
+                "UPDATE orders SET status = 'cancelled', cancelled_at = ? WHERE id = ?",
+                (int(time.time()), order_id),
+            )
+            await self.db.commit()
+            return True
+        except Exception:
+            return True
 
     async def get_order_status(self, order_id: str) -> dict | None:
-        """Return the orders row for ``order_id`` from the DB."""
+        """Get paper order status from DB."""
         try:
             cursor = await self.db.execute(
-                "SELECT *, filled_price as fill_price FROM orders WHERE id = ?",
+                "SELECT status, filled_price, filled_size FROM orders WHERE id = ?",
                 (order_id,),
             )
             row = await cursor.fetchone()
-            return dict(row) if row else None
-        except Exception as e:
-            logger.warning("[PAPER] get_order_status failed for %s: %s", order_id, e)
+            if row:
+                return {
+                    "order_id": order_id,
+                    "status": row[0],
+                    "fill_price": row[1],
+                    "fill_size": row[2],
+                }
+            return None
+        except Exception:
             return None
 
     async def get_balance(self) -> float | None:
-        """Paper balance is not tracked; return None."""
-        return None
+        """Get paper balance from trade history."""
+        try:
+            cursor = await self.db.execute(
+                """
+                SELECT COALESCE(SUM(CASE
+                    WHEN side = 'buy' THEN -filled_size * filled_price
+                    ELSE filled_size * filled_price
+                END), 0) + COALESCE(SUM(-fee_paid), 0)
+                FROM orders
+                WHERE platform = ? AND status = 'filled'
+                """,
+                (self.platform_label,),
+            )
+            row = await cursor.fetchone()
+            return row[0] if row else None
+        except Exception:
+            return None

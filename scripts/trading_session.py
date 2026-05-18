@@ -487,7 +487,7 @@ async def main():
                     )
                     logger.info(
                         "STATUS: pairs=%d eligible=%d muted=%d pnl=$%.2f "
-                        "prices=%d | last_fire=%s ticks_since=%d stale=%d | scheduled=%d",
+                        "prices=%d | last_fire=%s ticks_since=%d | scheduled=%d",
                         stats["pairs_monitored"],
                         stats["pairs_eligible_now"],
                         stats["recently_fired"],
@@ -495,7 +495,6 @@ async def main():
                         stats["prices_tracked"],
                         _last_fire,
                         stats["ticks_since_last_fire"],
-                        stats["skipped_stale"],
                         scheduled.total_trades,
                     )
                     now_ts = time.time()

@@ -2,8 +2,6 @@
 
 import logging
 
-import numpy as np
-
 logger = logging.getLogger(__name__)
 
 
@@ -35,7 +33,7 @@ def compute_kelly_fraction(
         Kelly fraction (0-0.5 hard cap for safety)
     """
     # Ensure odds are valid
-    odds = float(np.clip(odds, 0.01, 0.99))
+    odds = float(min(max(odds, 0.01), 0.99))
     edge = float(edge)
 
     # Interpret market price as probability
@@ -58,7 +56,7 @@ def compute_kelly_fraction(
     kelly_f = kelly_raw * kelly_fraction
 
     # Hard cap at 0.5 for safety
-    kelly_f = float(np.clip(kelly_f, -0.5, 0.5))
+    kelly_f = float(min(max(kelly_f, -0.5), 0.5))
 
     return kelly_f
 
@@ -127,13 +125,13 @@ def compute_risk_adjusted_sizing(
 
     # Apply volatility adjustment (higher volatility = smaller position)
     if volatility is not None:
-        volatility = float(np.clip(volatility, 0, 1))
+        volatility = float(min(max(volatility, 0), 1))
         volatility_multiplier = 1.0 - (volatility * 0.5)  # Up to 50% reduction
         base_size *= volatility_multiplier
 
     # Apply confidence adjustment (lower confidence = smaller position)
     if confidence is not None:
-        confidence = float(np.clip(confidence, 0, 1))
+        confidence = float(min(max(confidence, 0), 1))
         # Confidence should be > 0.5 to justify position
         if confidence < 0.5:
             base_size *= 0.5  # 50% reduction if confidence < 0.5

@@ -25,7 +25,7 @@ _MONTH_PAT = (
 )
 _STRIP_SUFFIX = re.compile(
     rf"\s+(?:{_MONTH_PAT}|20\d{{2}}|q[1-4]|h[1-2]|"
-    r"\$?[\d,]+\.?\d*[km%]?(?:\s*[-–to]+\s*\$?[\d,]+\.?\d*[km%]?)?)\s*$",
+    r"\$?[\d,]+\.?\d*[km%]?(?:\s*[-–to]+\s*\$?[\d,]+\.?\d*[km%]?)?)\ *$",
     re.IGNORECASE,
 )
 
@@ -187,6 +187,7 @@ async def detect_single_platform_opportunities(
     max_trades: int = 20,
     risk_config=None,
     price_cache: dict | None = None,
+    circuit_breaker=None,
 ) -> list[dict]:
     """
     Find trading opportunities on individual markets (no cross-platform match needed).
@@ -539,6 +540,14 @@ async def detect_single_platform_opportunities(
             )
         except Exception as e:
             logger.debug("Signal insert error: %s", e)
+
+        # Check circuit breaker before submitting any order.
+        if circuit_breaker is not None and await circuit_breaker.should_halt():
+            logger.warning(
+                "CIRCUIT_BREAKER halted — skipping single-platform trade for %s",
+                strategy,
+            )
+            break
 
         # Get (or create) execution client for this market's platform
         platform = m["platform"]
