@@ -265,6 +265,35 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
                     }
                 )
 
+            # Include strategies that fired signals but have no trade_outcomes yet.
+            # Without this, risk-rejected strategies are invisible on the dashboard.
+            seen_strategies = {s["strategy"] for s in strategies}
+            signal_only_cursor = await db.execute(
+                "SELECT DISTINCT strategy FROM signals WHERE fired_at >= ?",
+                (cutoff_date.isoformat(),),
+            )
+            signal_only_rows = await signal_only_cursor.fetchall()
+            for row in signal_only_rows:
+                strat = row["strategy"]
+                if strat not in seen_strategies:
+                    strategies.append(
+                        {
+                            "strategy": strat,
+                            "trade_count": 0,
+                            "win_count": 0,
+                            "win_rate": 0.0,
+                            "avg_pnl": 0.0,
+                            "total_pnl": 0.0,
+                            "total_fees": 0.0,
+                            "net_pnl": 0.0,
+                            "sharpe_ratio": 0.0,
+                            "sharpe_note": "per-trade mean/stdev; not annualized",
+                            "avg_edge_capture": 0.0,
+                            "avg_execution_time_ms": 0.0,
+                            "signals_24h": signals_24h_map.get(strat, 0),
+                        }
+                    )
+
             return strategies
         finally:
             await close_db(db)

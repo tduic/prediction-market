@@ -458,7 +458,7 @@ class ArbitrageEngine:
         pair_id: str,
     ) -> dict | None:
         """Execute a single arbitrage trade on a matched pair."""
-        from core.signals.risk import run_all_checks
+        from core.signals.risk import get_portfolio_value, run_all_checks
         from core.signals.sizing import compute_kelly_fraction, compute_position_size
 
         now = datetime.now(timezone.utc).isoformat()
@@ -488,8 +488,11 @@ class ArbitrageEngine:
         edge = spread
 
         # Phase 2.3: Kelly-based position sizing (replaces hardcoded min(10, 100*edge)).
+        # Use live portfolio value so Kelly scales with account growth/drawdown.
         kelly_f = compute_kelly_fraction(edge, 1.0, self._risk_config.kelly_fraction)
-        bankroll = self._risk_config.starting_capital
+        bankroll = await get_portfolio_value(
+            self.db, self._risk_config.starting_capital
+        )
         max_size = bankroll * self._risk_config.max_position_pct
         size = round(compute_position_size(kelly_f, bankroll, max_size=max_size), 1)
         if size <= 0:
