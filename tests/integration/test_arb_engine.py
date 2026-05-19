@@ -44,12 +44,6 @@ def matches():
 
 
 async def _seed_markets_for_engine(db, matches):
-    """
-    Insert market + price records so the paper client can look up prices.
-
-    Polymarket markets include yes_token_id so the BookResolver (now active in
-    paper mode via the factory) can route BUY orders without rejecting them.
-    """
     now = datetime.now(timezone.utc).isoformat()
     for m in matches:
         for mid, platform, plat_id, price in [
@@ -89,13 +83,6 @@ async def _seed_markets_for_engine(db, matches):
 
 
 async def _simulate_price_update(engine, db, market_id: str, new_price: float):
-    """
-    Simulate a websocket price update: write to DB + call engine.
-
-    In production the websocket handler writes the new price to market_prices
-    before (or concurrently with) calling engine.on_price_update. The paper
-    client reads from the DB, so both must be consistent.
-    """
     now = datetime.now(timezone.utc).isoformat()
     await db.execute(
         """INSERT INTO market_prices
@@ -133,33 +120,27 @@ class TestArbitrageEngineInit:
 @pytest.mark.asyncio
 class TestOnPriceUpdate:
     async def test_no_trade_below_threshold(self, db, matches):
-        """Spread below min_spread does not trigger a trade."""
         await _seed_markets_for_engine(db, matches)
         engine = ArbitrageEngine(db, matches, min_spread=0.10)
 
-        # poly_A=0.50, kal_A=0.55 → spread=0.05 < 0.10 threshold
         await engine.on_price_update("poly_A", 0.50)
         assert len(engine.trades) == 0
 
     async def test_trade_above_threshold(self, db, matches):
-        """Spread above min_spread triggers a trade."""
         await _seed_markets_for_engine(db, matches)
         engine = ArbitrageEngine(db, matches, min_spread=0.03)
 
-        # Set poly_A to 0.45, kal_A is seeded at 0.55 → spread = 0.10
         await _simulate_price_update(engine, db, "poly_A", 0.45)
         assert len(engine.trades) == 1
         assert engine.trades[0]["strategy"] == "P1_cross_market_arb"
 
     async def test_position_dedup(self, db, matches):
-        """Same pair is not traded twice."""
         await _seed_markets_for_engine(db, matches)
         engine = ArbitrageEngine(db, matches, min_spread=0.03)
 
         await _simulate_price_update(engine, db, "poly_A", 0.45)
         assert len(engine.trades) == 1
 
-        # Same pair again — should NOT produce a second trade
         await _simulate_price_update(engine, db, "poly_A", 0.44)
         assert len(engine.trades) == 1
 
@@ -167,30 +148,22 @@ class TestOnPriceUpdate:
         assert pair_id in engine.recently_fired
 
     async def test_different_pairs_independent(self, db, matches):
-        """Trading one pair does not block trading another."""
         await _seed_markets_for_engine(db, matches)
         engine = ArbitrageEngine(db, matches, min_spread=0.03)
 
-        # poly_A: spread = 0.10 → trade
         await _simulate_price_update(engine, db, "poly_A", 0.45)
-        # poly_C now 0.55 vs kal_C 0.65 = 0.10 spread
         await _simulate_price_update(engine, db, "poly_C", 0.55)
         assert len(engine.trades) == 2
 
     async def test_tiny_price_change_ignored(self, db, matches):
-        """Price change < 0.001 is ignored (dedup noise)."""
         await _seed_markets_for_engine(db, matches)
         engine = ArbitrageEngine(db, matches, min_spread=0.10)
 
-        # Seed a baseline price
         await engine.on_price_update("poly_A", 0.500)
-        # Tiny change — should return early
         await engine.on_price_update("poly_A", 0.5005)
-        # No trades should fire (spread is 0.05, below 0.10 threshold anyway)
         assert len(engine.trades) == 0
 
     async def test_unknown_market_id_ignored(self, db, matches):
-        """Price update for unknown market_id does nothing."""
         await _seed_markets_for_engine(db, matches)
         engine = ArbitrageEngine(db, matches, min_spread=0.03)
 
@@ -198,12 +171,9 @@ class TestOnPriceUpdate:
         assert len(engine.trades) == 0
 
     async def test_missing_counterpart_price_no_trade(self, db):
-        """If one side has no price yet, no trade fires."""
         match = _make_match("poly_X", "kal_X", None, None)
-        # No prices seeded — engine won't have counterpart prices
         engine = ArbitrageEngine(db, [match], min_spread=0.03)
 
-        # Only poly side updates — kal side has no price
         await engine.on_price_update("poly_X", 0.50)
         assert len(engine.trades) == 0
 
@@ -211,7 +181,6 @@ class TestOnPriceUpdate:
 @pytest.mark.asyncio
 class TestArbTradeExecution:
     async def test_trade_records_pnl(self, db, matches):
-        """Executed trade has actual_pnl in the result."""
         await _seed_markets_for_engine(db, matches)
         engine = ArbitrageEngine(db, matches, min_spread=0.03)
 
@@ -224,7 +193,6 @@ class TestArbTradeExecution:
         assert trade["spread"] >= 0.03
 
     async def test_trade_writes_to_db(self, db, matches):
-        """Trade execution writes orders to the DB."""
         await _seed_markets_for_engine(db, matches)
         engine = ArbitrageEngine(db, matches, min_spread=0.03)
 
@@ -233,10 +201,9 @@ class TestArbTradeExecution:
 
         cursor = await db.execute("SELECT COUNT(*) FROM orders")
         row = await cursor.fetchone()
-        assert row[0] >= 2  # Buy leg + sell leg
+        assert row[0] >= 2
 
     async def test_trade_writes_signal_and_violation(self, db, matches):
-        """Trade creates market_pair, violation, and signal records."""
         await _seed_markets_for_engine(db, matches)
         engine = ArbitrageEngine(db, matches, min_spread=0.03)
 
@@ -252,11 +219,9 @@ class TestArbTradeExecution:
 @pytest.mark.asyncio
 class TestFlushAndStats:
     async def test_flush_commits(self, db, matches):
-        """flush() should be safe to call on a fresh engine — per-trade commits
-        are the persistence model now, but flush() remains for shutdown drains."""
         await _seed_markets_for_engine(db, matches)
         engine = ArbitrageEngine(db, matches, min_spread=0.03)
-        await engine.flush()  # no-op commit, must not raise
+        await engine.flush()
 
     async def test_stats(self, db, matches):
         await _seed_markets_for_engine(db, matches)
@@ -273,24 +238,18 @@ class TestFlushAndStats:
 @pytest.mark.asyncio
 class TestInitialSweep:
     async def test_sweep_trades_pairs_above_threshold(self, db, matches):
-        """initial_sweep() fires trades for pairs already above min_spread at startup."""
-        # poly_A=0.50, kal_A=0.55 → spread=0.05 > 0.03 threshold
         await _seed_markets_for_engine(db, matches)
         engine = ArbitrageEngine(db, matches, min_spread=0.03)
         await engine.initial_sweep()
-        # poly_A/kal_A (0.05) and poly_C/kal_C (0.05) exceed 0.03 threshold
         assert len(engine.trades) >= 1
 
     async def test_sweep_skips_pairs_below_threshold(self, db, matches):
-        """initial_sweep() does not fire trades when all spreads are below threshold."""
         await _seed_markets_for_engine(db, matches)
         engine = ArbitrageEngine(db, matches, min_spread=0.10)
         await engine.initial_sweep()
-        # poly_A=0.05, poly_B=0.02, poly_C=0.05 — all below 0.10
         assert len(engine.trades) == 0
 
     async def test_sweep_runs_only_once(self, db, matches):
-        """Calling initial_sweep() a second time is a no-op (idempotent)."""
         await _seed_markets_for_engine(db, matches)
         engine = ArbitrageEngine(db, matches, min_spread=0.03)
         await engine.initial_sweep()
@@ -299,25 +258,21 @@ class TestInitialSweep:
         assert len(engine.trades) == count_after_first
 
     async def test_sweep_marks_positions_open(self, db, matches):
-        """Pairs traded during sweep are added to open_positions (prevents double-trade)."""
         await _seed_markets_for_engine(db, matches)
         engine = ArbitrageEngine(db, matches, min_spread=0.03)
         await engine.initial_sweep()
         assert len(engine.recently_fired) > 0
 
     async def test_on_price_update_skips_swept_pairs(self, db, matches):
-        """After sweep, price update on already-traded pair does not generate another trade."""
         await _seed_markets_for_engine(db, matches)
         engine = ArbitrageEngine(db, matches, min_spread=0.03)
         await engine.initial_sweep()
         trades_after_sweep = len(engine.trades)
 
-        # Trigger price update on poly_A — should be blocked by open_positions
         await _simulate_price_update(engine, db, "poly_A", 0.40)
         assert len(engine.trades) == trades_after_sweep
 
     async def test_sweep_skips_missing_prices(self, db):
-        """Pairs with missing prices are skipped gracefully during sweep."""
         match = _make_match("poly_X", "kal_X", None, None)
         engine = ArbitrageEngine(db, [match], min_spread=0.03)
         await engine.initial_sweep()
@@ -326,30 +281,20 @@ class TestInitialSweep:
 
 @pytest.mark.asyncio
 class TestStalenessGuard:
-    """Arb engine must refuse to fire when either side's cached price is
-    older than risk_config.max_price_age_s. Firing on stale cache sets a
-    limit the real market has drifted past — which is what produced the
-    98% Kalshi paper-order failure rate."""
-
     async def test_skips_fire_when_counterpart_tick_is_stale(self, db, matches):
         await _seed_markets_for_engine(db, matches)
-        # Tight 1s window; we'll force kal_A's tick time to look 5s old.
         from core.config import RiskControlConfig
 
         cfg = RiskControlConfig()
         object.__setattr__(cfg, "max_price_age_s", 1.0)
         engine = ArbitrageEngine(db, matches, min_spread=0.03, risk_config=cfg)
 
-        # Backdate kalshi side; poly side stays fresh-by-construction from seed.
         engine._last_tick_at["kal_A"] = time.time() - 5.0
 
-        # Normal fire conditions: spread 0.10 > 0.03. But kal_A is stale.
         await _simulate_price_update(engine, db, "poly_A", 0.45)
 
         assert engine.trades == []
         assert engine._skipped_stale >= 1
-        # Pair must remain eligible — no fired_state entry, so it can fire
-        # again once a fresh Kalshi tick arrives.
         assert "poly_A_kal_A" not in engine.recently_fired
 
     async def test_recovers_after_counterpart_refreshes(self, db, matches):
@@ -360,22 +305,15 @@ class TestStalenessGuard:
         object.__setattr__(cfg, "max_price_age_s", 1.0)
         engine = ArbitrageEngine(db, matches, min_spread=0.03, risk_config=cfg)
 
-        # 1st attempt: kal_A stale → skip.
         engine._last_tick_at["kal_A"] = time.time() - 5.0
         await _simulate_price_update(engine, db, "poly_A", 0.45)
         assert engine.trades == []
         assert engine._skipped_stale == 1
 
-        # 2nd attempt: kal_A ticks fresh (value differs from seed so the
-        # on_price_update noise guard doesn't short-circuit). Spread is
-        # |0.45 − 0.56| = 0.11, well above the 0.03 threshold.
         await _simulate_price_update(engine, db, "kal_A", 0.56)
         assert len(engine.trades) == 1
 
     async def test_skips_when_no_ticks_ever_received(self, db, matches):
-        """Periodic scan on a config with zero-age window must not fire even
-        on seeded-but-never-ticked prices — the guard treats pre-startup
-        state as unconfirmed."""
         await _seed_markets_for_engine(db, matches)
         from core.config import RiskControlConfig
 
@@ -383,7 +321,6 @@ class TestStalenessGuard:
         object.__setattr__(cfg, "max_price_age_s", 1.0)
         engine = ArbitrageEngine(db, matches, min_spread=0.03, risk_config=cfg)
 
-        # Wipe all tick times to simulate "WS never arrived".
         engine._last_tick_at.clear()
 
         await engine.periodic_scan()
@@ -399,8 +336,6 @@ class TestStalenessGuard:
 
 @pytest.mark.asyncio
 class TestUpdatePairs:
-    """Hot pair-list updates — used by the weekly refresh watcher."""
-
     async def test_add_new_pair(self, db, matches):
         await _seed_markets_for_engine(db, matches)
         engine = ArbitrageEngine(db, matches, min_spread=0.03)
@@ -419,7 +354,7 @@ class TestUpdatePairs:
         await _seed_markets_for_engine(db, matches)
         engine = ArbitrageEngine(db, matches, min_spread=0.03)
 
-        delta = engine.update_pairs(matches[:2])  # drop poly_C/kal_C
+        delta = engine.update_pairs(matches[:2])
 
         assert delta == {"added": 0, "removed": 1, "retained": 2}
         assert "poly_C_kal_C" not in engine._pairs
@@ -429,10 +364,8 @@ class TestUpdatePairs:
         await _seed_markets_for_engine(db, matches)
         engine = ArbitrageEngine(db, matches, min_spread=0.03)
 
-        # Simulate a live price coming in via the websocket feed.
         engine.prices["poly_A"] = 0.99
 
-        # Refresh with stale match data — the seed price should NOT clobber live.
         stale = [_make_match("poly_A", "kal_A", 0.50, 0.55), *matches[1:]]
         engine.update_pairs(stale)
 
@@ -442,14 +375,12 @@ class TestUpdatePairs:
         await _seed_markets_for_engine(db, matches)
         engine = ArbitrageEngine(db, matches, min_spread=0.03)
 
-        # Put poly_A/kal_A into fired_state (simulate a prior trade).
         from core.engine.fire_state import PairFireState
 
         engine.fired_state["poly_A_kal_A"] = PairFireState(
             last_fired_at=time.time(), armed=False
         )
 
-        # Refresh with the same set — fired_state must persist so cooldown holds.
         engine.update_pairs(matches)
         assert "poly_A_kal_A" in engine.fired_state
 
@@ -463,7 +394,7 @@ class TestUpdatePairs:
             last_fired_at=time.time(), armed=False
         )
 
-        engine.update_pairs(matches[:2])  # drops poly_C/kal_C
+        engine.update_pairs(matches[:2])
         assert "poly_C_kal_C" not in engine.fired_state
 
     async def test_sets_initial_sweep_flag_on_add(self, db, matches):
@@ -482,7 +413,7 @@ class TestUpdatePairs:
         await engine.initial_sweep()
         assert engine._needs_initial_sweep is False
 
-        engine.update_pairs(matches[:2])  # pure removal
+        engine.update_pairs(matches[:2])
         assert engine._needs_initial_sweep is False
 
     async def test_empty_refresh_removes_everything(self, db, matches):
@@ -496,27 +427,21 @@ class TestUpdatePairs:
         assert engine._kalshi_to_pairs == {}
 
     async def test_prunes_per_market_state_for_removed_markets(self, db, matches):
-        """Without pruning, _market_platform / _last_tick_at / prices grew by
-        ~2 entries per removed pair on every weekly refresh. Over the
-        lifetime of a long-running process this is a slow leak."""
         await _seed_markets_for_engine(db, matches)
         engine = ArbitrageEngine(db, matches, min_spread=0.03)
 
-        # Simulate ticks landing for all markets so _last_tick_at is populated.
         import time as _time
 
         for mid in ("poly_A", "kal_A", "poly_B", "kal_B", "poly_C", "kal_C"):
             engine._last_tick_at[mid] = _time.time()
 
-        # Sanity: state is present for the market we're about to drop.
         assert "poly_C" in engine._market_platform
         assert "kal_C" in engine._market_platform
         assert "poly_C" in engine._last_tick_at
         assert "kal_C" in engine._last_tick_at
 
-        engine.update_pairs(matches[:2])  # drops the poly_C/kal_C pair
+        engine.update_pairs(matches[:2])
 
-        # Markets no longer referenced by any pair must be pruned.
         assert "poly_C" not in engine._market_platform
         assert "kal_C" not in engine._market_platform
         assert "poly_C" not in engine._last_tick_at
@@ -524,13 +449,9 @@ class TestUpdatePairs:
         assert "poly_C" not in engine.prices
         assert "kal_C" not in engine.prices
 
-        # Retained markets must keep their state.
         assert "poly_A" in engine._market_platform
         assert "poly_A" in engine._last_tick_at
         assert "poly_A" in engine.prices
-
-
-# ── execution_mode wiring: ScheduledStrategyRunner ─────────────────────────────────────────────────────────────────────────────────────────────────────
 
 
 class TestScheduledStrategyRunnerExecutionMode:
@@ -557,12 +478,8 @@ class TestScheduledStrategyRunnerExecutionMode:
         assert runner._risk_config.max_position_pct == pytest.approx(0.10)
 
     def test_no_execution_mode_backward_compat(self):
-        """No execution_mode → standard defaults (unchanged behavior)."""
         runner = ScheduledStrategyRunner(MagicMock())
         assert runner._risk_config.max_position_pct == pytest.approx(0.05)
-
-
-# ── execution_mode wiring: ArbitrageEngine ─────────────────────────────────────────────────────────────────────────────────────────────
 
 
 class TestArbitrageEngineExecutionMode:
@@ -587,15 +504,12 @@ class TestArbitrageEngineExecutionMode:
         assert engine._risk_config.max_position_pct == pytest.approx(0.05)
 
 
-# ── Helpers shared by risk-choke and re-arm tests ────────────────────────────────────────────────────────────────────────────────────────────────────────────
-# Prices: kal_A seeded at 0.58, trigger poly_A to 0.51 → spread 0.07
 _POLY_SEED = 0.50
 _KAL_SEED = 0.58
-_POLY_TRIGGER = 0.51  # delta=0.01 > 0.001 guard
+_POLY_TRIGGER = 0.51
 
 
 def _risk_config(**overrides):
-    """RiskControlConfig with sensible test defaults, all Phase 5 fields set."""
     defaults = dict(
         starting_capital=10000.0,
         max_position_pct=0.05,
@@ -607,8 +521,6 @@ def _risk_config(**overrides):
         consecutive_failure_limit=5,
         arb_cooldown_s=60.0,
         arb_rearm_hysteresis=0.005,
-        # Large window so existing tests are not accidentally blocked by the
-        # staleness guard. The guard-specific tests override this.
         max_price_age_s=3600.0,
         slippage_bps=10.0,
         strategy_holding_period_s=300,
@@ -632,13 +544,6 @@ def _risk_config(**overrides):
 
 
 async def _seed_markets_p23(db, matches):
-    """
-    Seed markets + prices for risk-choke / re-arm tests.
-
-    Polymarket markets include a yes_token_id so that the PaperExecutionClient's
-    BookResolver can route BUY orders (YES passthrough) without rejecting them.
-    The arb engine factory now wires a BookResolver-enabled paper client for poly.
-    """
     now = datetime.now(timezone.utc).isoformat()
     for m in matches:
         for mid, platform, price in [
@@ -667,9 +572,6 @@ async def _seed_markets_p23(db, matches):
                     (mid, price, round(1 - price, 4), now),
                 )
     await db.commit()
-
-
-# ── Risk choke point (Phase 2) ──────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -860,9 +762,6 @@ class TestScheduledCircuitBreaker:
         )
         trades = await runner.run_one_cycle()
         assert isinstance(trades, list)
-
-
-# ── Re-arm state machine (Phase 3) ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 
 class TestPairFireState:
@@ -1095,17 +994,8 @@ class TestStatsWithFireState:
 
 @pytest.mark.asyncio
 async def test_arb_fire_with_sell_poly_leg_translates(db):
-    """When the arb engine fires with Polymarket as the expensive leg,
-    the poly leg that reaches the execution client is translated: book=NO,
-    side=BUY, price=(1-p). The paper client is the execution path under
-    test — its orders row captures what hit the simulated exchange."""
-    # Poly expensive (0.70), Kalshi cheap (0.55) → spread=0.15 > 0.03 threshold.
-    # The engine sends side=SELL @ 0.70 to the poly paper client.
-    # BookResolver has no YES inventory → translates to BUY NO @ 0.30.
     now = datetime.now(timezone.utc).isoformat()
 
-    # Seed poly market with yes_token_id + no_token_id (required by BookResolver)
-    # and last_price_no for the NO-book price lookup at fill time.
     await db.execute(
         """INSERT INTO markets
            (id, platform, platform_id, title, yes_token_id, no_token_id,
@@ -1136,22 +1026,15 @@ async def test_arb_fire_with_sell_poly_leg_translates(db):
     await db.commit()
 
     match = _make_match("poly_arb", "kal_arb", 0.70, 0.55)
-    # Use a generous risk config so the trade fires despite the large spread
-    # (Kelly on 0.15 spread can exceed the default 5% cap; bump to 10% here).
     cfg = _risk_config(max_position_pct=0.10)
     engine = ArbitrageEngine(db, [match], min_spread=0.03, risk_config=cfg)
 
-    # Trigger the engine: poly is already seeded at 0.70, kalshi at 0.55.
-    # A price update on the kalshi side (small change to beat the noise guard)
-    # will evaluate the spread and fire the arb.
     await _simulate_price_update(engine, db, "kal_arb", 0.56)
 
-    assert len(engine.trades) == 1, (
-        f"Expected 1 trade to fire, got {len(engine.trades)}"
-    )
+    assert (
+        len(engine.trades) == 1
+    ), f"Expected 1 trade to fire, got {len(engine.trades)}"
 
-    # The sell leg goes to the poly paper client (poly is the expensive/sell side).
-    # BookResolver has no YES inventory → translates SELL YES @ 0.70 to BUY NO @ 0.30.
     cursor = await db.execute(
         "SELECT side, book, requested_price FROM orders "
         "WHERE market_id = 'poly_arb' ORDER BY submitted_at DESC LIMIT 1"
@@ -1160,9 +1043,9 @@ async def test_arb_fire_with_sell_poly_leg_translates(db):
     assert row is not None, "Expected an orders row for poly_arb after the arb fired"
     assert row[0] == "BUY", f"Expected side='BUY' (translated), got {row[0]!r}"
     assert row[1] == "NO", f"Expected book='NO' (translated), got {row[1]!r}"
-    assert row[2] == pytest.approx(0.30, abs=1e-4), (
-        f"Expected requested_price≈0.30, got {row[2]}"
-    )
+    assert row[2] == pytest.approx(
+        0.30, abs=1e-4
+    ), f"Expected requested_price≈0.30, got {row[2]}"
 
 
 @pytest.mark.asyncio
