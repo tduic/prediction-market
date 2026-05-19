@@ -42,8 +42,6 @@ from core.strategies.single_platform import (  # noqa: E402
 from execution.clients.paper import PaperExecutionClient  # noqa: E402
 from execution.models import OrderLeg  # noqa: E402
 
-# ── Helpers ─────────────────────────────────────────────────────────────────────────────────────────
-
 
 def _risk_config(**overrides):
     defaults = dict(
@@ -122,7 +120,6 @@ async def _seed_market(
 
 
 async def _seed_p3_market(db):
-    """Insert a single market that triggers P3_calibration_bias (price 0.20 from center)."""
     await _seed_market(db, "mkt_p3", yes_price=0.25)
 
 
@@ -223,9 +220,6 @@ async def _seed_open_position(db, pos_id, market_id, strategy, entry_price):
     await db.commit()
 
 
-# ── _p2_title_root ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-
-
 class TestP2TitleRoot:
     def test_strips_month(self):
         assert _p2_title_root("Will GDP grow in March") == "will gdp grow in"
@@ -263,9 +257,6 @@ class TestP2TitleRoot:
 
     def test_strips_trailing_punctuation(self):
         assert _p2_title_root("Will the Fed cut rates?") == "will the fed cut rates"
-
-
-# ── P3 calibration bias ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
