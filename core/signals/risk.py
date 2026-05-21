@@ -112,14 +112,16 @@ async def check_daily_loss_limit(
         )
 
     try:
+        from datetime import date as _date
+
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        tomorrow = (_date.fromisoformat(today) + timedelta(days=1)).isoformat()
         # Match circuit_breaker._compute_daily_loss() exactly: net = pnl - fees,
-        # loss = max(0, -net). Removing the WHERE actual_pnl < 0 filter ensures
-        # fee drag on individually-profitable trades is included in the tally.
+        # loss = max(0, -net). Range comparison allows index on created_at.
         cursor = await db.execute(
             "SELECT COALESCE(SUM(actual_pnl - COALESCE(fees_total, 0)), 0) "
-            "FROM trade_outcomes WHERE DATE(created_at) = ?",
-            (today,),
+            "FROM trade_outcomes WHERE created_at >= ? AND created_at < ?",
+            (today, tomorrow),
         )
         row = await cursor.fetchone()
         net_pnl = float(row[0]) if row and row[0] is not None else 0.0

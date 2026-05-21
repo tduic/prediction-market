@@ -95,7 +95,10 @@ def compute_position_size(
     position_size = max(position_size, 0.0)
 
     logger.debug(
-        f"Position sizing: kelly_f={kelly_f:.4f}, bankroll={bankroll:.2f}, size={position_size:.2f}"
+        "Position sizing: kelly_f=%.4f, bankroll=%.2f, size=%.2f",
+        kelly_f,
+        bankroll,
+        position_size,
     )
 
     return float(position_size)
