@@ -272,17 +272,28 @@ class DailyLossCircuitBreaker:
         Sums ``actual_pnl - fees_total`` from ``trade_outcomes`` dated
         today (UTC). Returns 0.0 if net P&L is positive (no loss).
 
+        Uses a range comparison on ``created_at`` so the query planner can
+        use the B-tree index on that column. ``created_at`` is always written
+        as ``datetime.now(timezone.utc).isoformat()`` (e.g.
+        ``'2026-05-21T10:16:51.246719+00:00'``); the ISO prefix sorts
+        correctly under SQLite's byte-order string comparison.
+
         Raises:
             Exception: Re-raised if the DB query fails so that ``should_halt``
                 can apply the safe-by-default halt policy on DB errors.
         """
+        today = self._today()
+        # Compute the exclusive upper bound (next calendar day in UTC).
+        from datetime import date, timedelta
+
+        tomorrow = (date.fromisoformat(today) + timedelta(days=1)).isoformat()
         cursor = await self.db.execute(
             """
             SELECT COALESCE(SUM(actual_pnl - COALESCE(fees_total, 0)), 0)
             FROM trade_outcomes
-            WHERE DATE(created_at) = ?
+            WHERE created_at >= ? AND created_at < ?
             """,
-            (self._today(),),
+            (today, tomorrow),
         )
         row = await cursor.fetchone()
         net_pnl = float(row[0]) if row and row[0] is not None else 0.0
