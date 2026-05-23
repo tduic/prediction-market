@@ -558,7 +558,7 @@ class ArbitrageEngine:
             violation_id=violation_id,
         )
         all_passed, check_results = await run_all_checks(
-            risk_signal, self._risk_config, self.db
+            risk_signal, self._risk_config, self.db, portfolio_value=bankroll
         )
         if not all_passed:
             failed = [r.check_type for r in check_results if not r.passed]
