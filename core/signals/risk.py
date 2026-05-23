@@ -223,14 +223,21 @@ async def check_duplicate_signal(
     placeholders = ",".join("?" for _ in market_ids)
 
     try:
-        cutoff = (
-            datetime.now(timezone.utc) - timedelta(seconds=duplicate_window_s)
-        ).isoformat()
+        # orders.submitted_at is stored as a Unix epoch integer (int(time.time()))
+        # cast to TEXT. ISO format strings sort lexicographically lower than Unix
+        # epoch strings ("1..." < "2026-..."), so an ISO cutoff would never match.
+        # Use a Unix epoch integer cutoff and CAST to compare correctly, matching
+        # the same pattern used in reconciliation._check_stuck_pending_orders.
+        cutoff_unix = int(
+            (
+                datetime.now(timezone.utc) - timedelta(seconds=duplicate_window_s)
+            ).timestamp()
+        )
         cursor = await db.execute(
             f"SELECT COUNT(*) FROM orders "
             f"WHERE market_id IN ({placeholders}) "
-            f"AND submitted_at > ?",
-            [*market_ids, cutoff],
+            f"AND CAST(submitted_at AS INTEGER) > ?",
+            [*market_ids, cutoff_unix],
         )
         row = await cursor.fetchone()
         recent_count = row[0] if row else 0
@@ -274,6 +281,7 @@ async def run_all_checks(
     signal: Any,
     risk_config: Any,
     db: aiosqlite.Connection | None = None,
+    portfolio_value: float | None = None,
 ) -> tuple[bool, list[RiskCheckResult]]:
     """
     Run all risk checks on a signal before execution.
@@ -282,15 +290,20 @@ async def run_all_checks(
         signal: TradingSignal with .legs, optionally .edge
         risk_config: RiskControlConfig from core.config
         db: aiosqlite.Connection for querying portfolio state
+        portfolio_value: Pre-computed portfolio value; if provided, skips the
+            DB query. Pass this when the caller has already fetched it (e.g.
+            arb_engine already queries it for Kelly sizing) to avoid a second
+            identical SELECT on trade_outcomes.
 
     Returns:
         (all_passed, list of RiskCheckResult)
     """
-    portfolio_value = (
-        await get_portfolio_value(db, risk_config.starting_capital)
-        if db
-        else risk_config.starting_capital
-    )
+    if portfolio_value is None:
+        portfolio_value = (
+            await get_portfolio_value(db, risk_config.starting_capital)
+            if db
+            else risk_config.starting_capital
+        )
 
     results: list[RiskCheckResult] = []
 
