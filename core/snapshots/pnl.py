@@ -10,11 +10,10 @@ from datetime import datetime, timezone
 
 import aiosqlite
 
+from core.config import get_config
 from core.strategies.assignment import STRATEGIES
 
 logger = logging.getLogger(__name__)
-
-PAPER_CAPITAL = 10_000  # Default paper trading starting capital
 
 
 async def take_trading_snapshot(db: aiosqlite.Connection) -> int | None:
@@ -26,6 +25,7 @@ async def take_trading_snapshot(db: aiosqlite.Connection) -> int | None:
     and risk metrics.
     """
     now = datetime.now(timezone.utc).isoformat()
+    starting_capital = get_config().risk_controls.starting_capital
 
     try:
         # ── Aggregate totals from trade_outcomes ──
@@ -37,7 +37,7 @@ async def take_trading_snapshot(db: aiosqlite.Connection) -> int | None:
         totals = await cursor.fetchone()
         realized_pnl_total = totals[0] if totals else 0
         fees_total = totals[1] if totals else 0
-        total_capital = PAPER_CAPITAL + realized_pnl_total - fees_total
+        total_capital = starting_capital + realized_pnl_total - fees_total
         cash = total_capital  # Paper trading has no open positions
 
         # ── Insert pnl_snapshots row ──

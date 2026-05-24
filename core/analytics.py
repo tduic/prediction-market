@@ -244,13 +244,7 @@ class StrategyScorecard:
         Returns:
             Dict mapping strategy names to their summary metrics
         """
-        strategies = [
-            "P1_constraint_arb",
-            "P2_event_model",
-            "P3_calibration",
-            "P4_liquidity",
-            "P5_latency",
-        ]
+        from core.strategies.assignment import STRATEGIES as strategies
 
         comparison = {}
         for strat in strategies:
