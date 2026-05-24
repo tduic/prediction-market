@@ -25,7 +25,7 @@ _MONTH_PAT = (
 )
 _STRIP_SUFFIX = re.compile(
     rf"\s+(?:{_MONTH_PAT}|20\d{{2}}|q[1-4]|h[1-2]|"
-    r"\$?[\d,]+\.?\d*[km%]?(?:\s*[-–to]+\s*\$?[\d,]+\.?\d*[km%]?)?)\ *$",
+    r"\$?[\d,]+\.?\d*[km%]?(?:\s*[-–to]+\s*\$?[\d,]+\.?\d*[km%]?)?)\  *$",
     re.IGNORECASE,
 )
 
@@ -341,7 +341,7 @@ async def detect_single_platform_opportunities(
             }
         )
 
-    # ── Phase 5: Strategy hygiene ─────────────────────────────────────────────
+    # ── Phase 5: Strategy hygiene ───────────────────────────────────────────
 
     # 5.4 — Filter strategies disabled via config flags
     _strategy_enabled = {
@@ -414,7 +414,7 @@ async def detect_single_platform_opportunities(
     # 5.3 — Normalize signal_strength within each strategy bucket (z-score)
     opportunities = _normalize_signal_strengths(opportunities)
 
-    # ── Quota allocation ─────────────────────────────────────────────────────
+    # ── Quota allocation ────────────────────────────────────────────────
     # Reserve slots per strategy to prevent any single strategy crowding others.
     # P2: 15%, P3: 50%, P4: 25%, P5: remainder (min 1 each).
     p2_cap = max(1, int(max_trades * 0.15))
@@ -451,6 +451,12 @@ async def detect_single_platform_opportunities(
             len(markets),
         )
 
+    # Portfolio value is constant within a single cycle: positions opened here
+    # have status='open' and don't appear in trade_outcomes until closed.
+    # Fetch once to avoid N identical SELECT SUM queries (one per opportunity).
+    _bankroll = await get_portfolio_value(db, _risk_cfg.starting_capital)
+    _max_size = _bankroll * _risk_cfg.max_position_pct
+
     for opp in opportunities:
         now = datetime.now(timezone.utc).isoformat()
         m = opp["market"]
@@ -461,8 +467,6 @@ async def detect_single_platform_opportunities(
 
         # Phase 2.3: Kelly-based sizing (replaces hardcoded min(10, 100*edge)).
         _kelly_f = compute_kelly_fraction(edge, 1.0, _risk_cfg.kelly_fraction)
-        _bankroll = await get_portfolio_value(db, _risk_cfg.starting_capital)
-        _max_size = _bankroll * _risk_cfg.max_position_pct
         size = round(compute_position_size(_kelly_f, _bankroll, max_size=_max_size), 1)
         if size <= 0:
             logger.debug(
