@@ -174,6 +174,24 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
             net_pnl = realized_pnl_total + unrealized_pnl - total_fees
             net_return_pct = (net_pnl / PAPER_CAPITAL) * 100
 
+        signals_24h = 0
+        try:
+            _sig_db = await get_db()
+            try:
+                _cutoff_24h = (
+                    datetime.now(timezone.utc) - timedelta(hours=24)
+                ).isoformat()
+                _sig_cursor = await _sig_db.execute(
+                    "SELECT COUNT(*) FROM signals WHERE fired_at >= ?",
+                    (_cutoff_24h,),
+                )
+                _sig_row = await _sig_cursor.fetchone()
+                signals_24h = _sig_row[0] if _sig_row else 0
+            finally:
+                await close_db(_sig_db)
+        except Exception as _sig_err:
+            logger.debug("overview: signals_24h query failed: %s", _sig_err)
+
         return {
             "total_capital": round(total_capital, 2),
             "cash": round(cash, 2),
@@ -184,6 +202,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
             "total_fees": round(total_fees, 2),
             "net_return_pct": round(net_return_pct, 2),
             "snapshotted_at": snapshotted_at,
+            "signals_24h": signals_24h,
         }
 
     @app.get("/api/strategies")
