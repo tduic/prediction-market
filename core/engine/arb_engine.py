@@ -1,5 +1,4 @@
-"""
-Event-driven arbitrage engine.
+"""Event-driven arbitrage engine.
 
 Provides ArbitrageEngine which monitors matched pairs and executes
 cross-platform arb trades when websocket price updates reveal spread violations.
@@ -795,10 +794,11 @@ class ArbitrageEngine:
             # Keep the freshest (smallest age) tick per platform
             if platform not in tick_age or tick_age[platform] > age_ms:
                 tick_age[platform] = age_ms
+        muted_count = sum(1 for s in self.fired_state.values() if not s.armed)
         return {
             "pairs_monitored": len(self._pairs),
             "pairs_eligible_now": eligible,
-            "recently_fired": len(self.recently_fired),
+            "recently_fired": muted_count,
             "last_arb_fired_at": self.last_arb_fired_at,
             "ticks_since_last_fire": self._ticks_since_last_fire,
             "total_pnl": total_pnl,
