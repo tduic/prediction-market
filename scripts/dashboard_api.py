@@ -108,7 +108,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
         allow_headers=["*"],
     )
 
-    # ── helpers ─────────────────────────────────────────────────────────────────────────────────────────────────────
+    # ── helpers ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
     async def get_db() -> aiosqlite.Connection:
         db = await aiosqlite.connect(_DB_PATH)
@@ -134,26 +134,25 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
             if own_db:
                 await close_db(db)
 
-    # ── endpoints ────────────────────────────────────────────────────────────────────────────────────────
+    # ── endpoints ────────────────────────────────────────────────────────────────────────────────────────────────────
 
     @app.get("/api/overview")
     async def get_overview() -> Dict[str, Any]:
         PAPER_CAPITAL = get_config().risk_controls.starting_capital
-
-        snapshot = await get_latest_snapshot()
-        if snapshot:
-            total_capital = snapshot.get("total_capital", 0) or 0
-            cash = snapshot.get("cash", 0) or 0
-            unrealized_pnl = snapshot.get("unrealized_pnl", 0) or 0
-            realized_pnl_total = snapshot.get("realized_pnl_total", 0) or 0
-            total_fees = snapshot.get("fees_total", 0) or 0
-            deployed = total_capital - cash if total_capital > 0 else 0
-            open_positions = snapshot.get("open_positions_count", 0) or 0
-            snapshotted_at = snapshot.get("snapshotted_at")
-        else:
-            # No snapshots yet — compute live from trade_outcomes
-            db = await get_db()
-            try:
+        db = await get_db()
+        try:
+            snapshot = await get_latest_snapshot(db)
+            if snapshot:
+                total_capital = snapshot.get("total_capital", 0) or 0
+                cash = snapshot.get("cash", 0) or 0
+                unrealized_pnl = snapshot.get("unrealized_pnl", 0) or 0
+                realized_pnl_total = snapshot.get("realized_pnl_total", 0) or 0
+                total_fees = snapshot.get("fees_total", 0) or 0
+                deployed = total_capital - cash if total_capital > 0 else 0
+                open_positions = snapshot.get("open_positions_count", 0) or 0
+                snapshotted_at = snapshot.get("snapshotted_at")
+            else:
+                # No snapshots yet — compute live from trade_outcomes
                 cursor = await db.execute(
                     "SELECT COALESCE(SUM(actual_pnl), 0), COALESCE(SUM(fees_total), 0) FROM trade_outcomes"
                 )
@@ -166,44 +165,40 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
                 unrealized_pnl = 0
                 open_positions = 0
                 snapshotted_at = None
-            finally:
-                await close_db(db)
 
-        net_return_pct = 0.0
-        if total_capital > 0:
-            net_pnl = realized_pnl_total + unrealized_pnl - total_fees
-            net_return_pct = (net_pnl / PAPER_CAPITAL) * 100
+            net_return_pct = 0.0
+            if total_capital > 0:
+                net_pnl = realized_pnl_total + unrealized_pnl - total_fees
+                net_return_pct = (net_pnl / PAPER_CAPITAL) * 100
 
-        signals_24h = 0
-        try:
-            _sig_db = await get_db()
+            signals_24h = 0
             try:
                 _cutoff_24h = (
                     datetime.now(timezone.utc) - timedelta(hours=24)
                 ).isoformat()
-                _sig_cursor = await _sig_db.execute(
+                _sig_cursor = await db.execute(
                     "SELECT COUNT(*) FROM signals WHERE fired_at >= ?",
                     (_cutoff_24h,),
                 )
                 _sig_row = await _sig_cursor.fetchone()
                 signals_24h = _sig_row[0] if _sig_row else 0
-            finally:
-                await close_db(_sig_db)
-        except Exception as _sig_err:
-            logger.debug("overview: signals_24h query failed: %s", _sig_err)
+            except Exception as _sig_err:
+                logger.debug("overview: signals_24h query failed: %s", _sig_err)
 
-        return {
-            "total_capital": round(total_capital, 2),
-            "cash": round(cash, 2),
-            "deployed": round(deployed, 2),
-            "open_positions": open_positions,
-            "unrealized_pnl": round(unrealized_pnl, 2),
-            "realized_pnl_total": round(realized_pnl_total, 2),
-            "total_fees": round(total_fees, 2),
-            "net_return_pct": round(net_return_pct, 2),
-            "snapshotted_at": snapshotted_at,
-            "signals_24h": signals_24h,
-        }
+            return {
+                "total_capital": round(total_capital, 2),
+                "cash": round(cash, 2),
+                "deployed": round(deployed, 2),
+                "open_positions": open_positions,
+                "unrealized_pnl": round(unrealized_pnl, 2),
+                "realized_pnl_total": round(realized_pnl_total, 2),
+                "total_fees": round(total_fees, 2),
+                "net_return_pct": round(net_return_pct, 2),
+                "snapshotted_at": snapshotted_at,
+                "signals_24h": signals_24h,
+            }
+        finally:
+            await close_db(db)
 
     @app.get("/api/strategies")
     async def get_strategies(days: int = Query(30, ge=1)) -> List[Dict[str, Any]]:
@@ -809,7 +804,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
             if db is not None:
                 await close_db(db)
 
-    # ── Serve React frontend if static_dir provided ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+    # ── Serve React frontend if static_dir provided ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
     if static_dir and Path(static_dir).is_dir():
         app.mount(
             "/",

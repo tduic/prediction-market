@@ -201,7 +201,7 @@ class ObservabilityConfig:
     log_level: str = field(default_factory=lambda: os.getenv("LOG_LEVEL", "INFO"))
     log_format: str = field(default_factory=lambda: os.getenv("LOG_FORMAT", "text"))
     pnl_snapshot_interval_s: int = field(
-        default_factory=lambda: int(os.getenv("PNL_SNAPSHOT_INTERVAL_S", "3600"))
+        default_factory=lambda: int(os.getenv("PNL_SNAPSHOT_INTERVAL_S", "900"))
     )
 
 

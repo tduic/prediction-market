@@ -10,6 +10,7 @@ These checks are called by the execution handler BEFORE routing orders.
 Every check result is logged to the risk_check_log table for audit.
 """
 
+import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -323,25 +324,25 @@ async def run_all_checks(
         lambda: check_min_edge(signal, risk_config.min_edge),
     ]
 
-    for check_fn in checks:
-        try:
-            result = await check_fn()
-            results.append(result)
-
-            status = "PASS" if result.passed else "FAIL"
-            logger.info("[%s] %s: %s", status, result.check_type, result.detail)
-
-        except Exception as e:
-            logger.error("Error running risk check: %s", e)
+    raw = await asyncio.gather(
+        *[check_fn() for check_fn in checks], return_exceptions=True
+    )
+    for item in raw:
+        if isinstance(item, BaseException):
+            logger.error("Error running risk check: %s", item)
             results.append(
                 RiskCheckResult(
                     passed=False,
                     check_type="error",
                     check_value=0,
                     threshold=0,
-                    detail=f"Check error: {str(e)}",
+                    detail=f"Check error: {str(item)}",
                 )
             )
+        else:
+            results.append(item)
+            status = "PASS" if item.passed else "FAIL"
+            logger.info("[%s] %s: %s", status, item.check_type, item.detail)
 
     all_passed = all(r.passed for r in results)
 
