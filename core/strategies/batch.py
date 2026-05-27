@@ -13,12 +13,7 @@ from datetime import datetime, timezone
 
 import aiosqlite
 
-from core.config import RiskControlConfig
-
-# Circuit-breaker: if actual_pnl > size * this ratio the DB write is skipped.
-# P1 false-positive trades book ~40% of size; 10% catches fakes without blocking
-# any legitimate arb (typical real spread is 2–5%).
-_PNL_SANITY_CAP_RATIO = 0.10
+from core.config import get_config
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +64,7 @@ async def detect_violations_and_trade(
             buy_client, sell_client = paper_kalshi, paper_poly
 
         edge = spread
-        _rc = RiskControlConfig()
+        _rc = get_config().risk_controls
         _kelly_f = compute_kelly_fraction(edge, 1.0, _rc.kelly_fraction)
         size = round(
             compute_position_size(
@@ -193,7 +188,7 @@ async def detect_violations_and_trade(
             total_fees = (buy_result.fee_paid or 0) + (sell_result.fee_paid or 0)
             actual_pnl = round(actual_spread * size - total_fees, 4)
 
-            _pnl_cap = size * _PNL_SANITY_CAP_RATIO
+            _pnl_cap = size * _rc.pnl_sanity_cap_ratio
             if actual_pnl > _pnl_cap:
                 logger.warning(
                     "PNL_SANITY_CAP blocked dual-platform arb actual_pnl=%.4f > cap=%.4f "

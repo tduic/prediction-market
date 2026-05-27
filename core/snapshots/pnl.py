@@ -40,6 +40,14 @@ async def take_trading_snapshot(db: aiosqlite.Connection) -> int | None:
         total_capital = starting_capital + realized_pnl_total - fees_total
         cash = total_capital  # Paper trading has no open positions
 
+        # ── Count open positions ──
+        cursor = await db.execute(
+            "SELECT COUNT(*), COALESCE(SUM(entry_price * entry_size), 0.0) FROM positions WHERE status='open'"
+        )
+        pos_row = await cursor.fetchone()
+        open_positions_count = pos_row[0] if pos_row else 0
+        open_notional = float(pos_row[1]) if pos_row else 0.0
+
         # ── Insert pnl_snapshots row ──
         cursor = await db.execute(
             """INSERT INTO pnl_snapshots (
@@ -55,8 +63,8 @@ async def take_trading_snapshot(db: aiosqlite.Connection) -> int | None:
                 "periodic",
                 total_capital,
                 cash,
-                0,  # open_positions_count
-                0.0,  # open_notional
+                open_positions_count,
+                open_notional,
                 0.0,  # unrealized_pnl
                 0.0,  # realized_pnl_today (we could compute this, but keeping simple)
                 realized_pnl_total,

@@ -279,6 +279,15 @@ class Config:
                 f"PNL_SANITY_CAP_RATIO must be > 0 and <= 1, "
                 f"got {self.risk_controls.pnl_sanity_cap_ratio}"
             )
+        if self.risk_controls.max_price_age_s <= 0:
+            raise ValueError(
+                f"MAX_PRICE_AGE_S must be > 0, got {self.risk_controls.max_price_age_s}"
+            )
+        if self.risk_controls.strategy_holding_period_s <= 0:
+            raise ValueError(
+                f"STRATEGY_HOLDING_PERIOD_S must be > 0, "
+                f"got {self.risk_controls.strategy_holding_period_s}"
+            )
 
 
 def load_config() -> Config:
