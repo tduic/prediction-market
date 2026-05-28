@@ -108,7 +108,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
         allow_headers=["*"],
     )
 
-    # ── helpers ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
+    # ── helpers ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
     async def get_db() -> aiosqlite.Connection:
         db = await aiosqlite.connect(_DB_PATH)
@@ -134,7 +134,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
             if own_db:
                 await close_db(db)
 
-    # ── endpoints ────────────────────────────────────────────────────────────────────────────────────────────────────
+    # ── endpoints ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
     @app.get("/api/overview")
     async def get_overview() -> Dict[str, Any]:
@@ -172,10 +172,9 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
                 net_return_pct = (net_pnl / PAPER_CAPITAL) * 100
 
             signals_24h = 0
+            violations_24h = 0
+            _cutoff_24h = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
             try:
-                _cutoff_24h = (
-                    datetime.now(timezone.utc) - timedelta(hours=24)
-                ).isoformat()
                 _sig_cursor = await db.execute(
                     "SELECT COUNT(*) FROM signals WHERE fired_at >= ?",
                     (_cutoff_24h,),
@@ -184,6 +183,16 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
                 signals_24h = _sig_row[0] if _sig_row else 0
             except Exception as _sig_err:
                 logger.debug("overview: signals_24h query failed: %s", _sig_err)
+
+            try:
+                _v_cursor = await db.execute(
+                    "SELECT COUNT(*) FROM violations WHERE detected_at >= ?",
+                    (_cutoff_24h,),
+                )
+                _v_row = await _v_cursor.fetchone()
+                violations_24h = _v_row[0] if _v_row else 0
+            except Exception as _v_err:
+                logger.debug("overview: violations_24h query failed: %s", _v_err)
 
             return {
                 "total_capital": round(total_capital, 2),
@@ -196,6 +205,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
                 "net_return_pct": round(net_return_pct, 2),
                 "snapshotted_at": snapshotted_at,
                 "signals_24h": signals_24h,
+                "violations_24h": violations_24h,
             }
         finally:
             await close_db(db)
@@ -804,7 +814,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
             if db is not None:
                 await close_db(db)
 
-    # ── Serve React frontend if static_dir provided ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+    # ── Serve React frontend if static_dir provided ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
     if static_dir and Path(static_dir).is_dir():
         app.mount(
             "/",
