@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 import aiosqlite
 
 from core.config import get_config
+from core.signals.risk import get_portfolio_value
 
 logger = logging.getLogger(__name__)
 
@@ -65,12 +66,13 @@ async def detect_violations_and_trade(
 
         edge = spread
         _rc = get_config().risk_controls
+        bankroll = await get_portfolio_value(db, _rc.starting_capital)
         _kelly_f = compute_kelly_fraction(edge, 1.0, _rc.kelly_fraction)
         size = round(
             compute_position_size(
                 _kelly_f,
-                _rc.starting_capital,
-                max_size=_rc.starting_capital * _rc.max_position_pct,
+                bankroll,
+                max_size=bankroll * _rc.max_position_pct,
             ),
             1,
         )
@@ -224,7 +226,11 @@ async def detect_violations_and_trade(
                     ),
                 )
             except Exception:
-                pass
+                logger.exception(
+                    "Failed to insert positions row signal_id=%s pos_id=%s",
+                    signal_id,
+                    pos_id,
+                )
 
             try:
                 await db.execute(
@@ -258,7 +264,9 @@ async def detect_violations_and_trade(
                     ),
                 )
             except Exception:
-                pass
+                logger.exception(
+                    "Failed to insert trade_outcomes row signal_id=%s", signal_id
+                )
 
             trades.append(
                 {

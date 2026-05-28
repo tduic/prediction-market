@@ -160,7 +160,7 @@ async def _check_unbalanced_arb_pairs(db: aiosqlite.Connection) -> int:
                COUNT(*) AS leg_count
         FROM orders o
         WHERE o.signal_id IN (
-            SELECT signal_id FROM orders GROUP BY signal_id HAVING COUNT(*) = 2
+            SELECT signal_id FROM orders GROUP BY signal_id HAVING COUNT(*) >= 2
         )
         GROUP BY o.signal_id
         HAVING filled_count = 1
