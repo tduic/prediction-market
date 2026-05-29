@@ -108,7 +108,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
         allow_headers=["*"],
     )
 
-    # ── helpers ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+    # ── helpers ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
     async def get_db() -> aiosqlite.Connection:
         db = await aiosqlite.connect(_DB_PATH)
@@ -134,7 +134,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
             if own_db:
                 await close_db(db)
 
-    # ── endpoints ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+    # ── endpoints ──────────────────────────────────────────────────────────────────────────────────────────────
 
     @app.get("/api/overview")
     async def get_overview() -> Dict[str, Any]:
@@ -461,12 +461,16 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
                     else PAPER_CAPITAL
                 )
 
-            cursor = await db.execute("""
+            _cutoff_90d = (datetime.now(timezone.utc) - timedelta(days=90)).isoformat()
+            cursor = await db.execute(
+                """
                 SELECT total_capital, realized_pnl_total + unrealized_pnl as net_pnl
                 FROM pnl_snapshots
-                WHERE snapshotted_at >= datetime('now', '-90 days')
+                WHERE snapshotted_at >= ?
                 ORDER BY snapshotted_at DESC
-                """)
+                """,
+                (_cutoff_90d,),
+            )
             snapshots = list(await cursor.fetchall())
 
             max_drawdown = 0.0
@@ -650,8 +654,15 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
             daily_loss_available = True
             daily_loss = 0.0
             try:
+                from datetime import date as _date
+
+                _today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+                _tomorrow = (
+                    _date.fromisoformat(_today) + timedelta(days=1)
+                ).isoformat()
                 cursor = await db.execute(
-                    "SELECT COALESCE(SUM(actual_pnl - COALESCE(fees_total,0)),0) FROM trade_outcomes WHERE DATE(created_at) = DATE('now')"
+                    "SELECT COALESCE(SUM(actual_pnl - COALESCE(fees_total,0)),0) FROM trade_outcomes WHERE created_at >= ? AND created_at < ?",
+                    (_today, _tomorrow),
                 )
                 pnl_row = await cursor.fetchone()
                 net_pnl = pnl_row[0] if pnl_row else 0.0
@@ -814,7 +825,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
             if db is not None:
                 await close_db(db)
 
-    # ── Serve React frontend if static_dir provided ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+    # ── Serve React frontend if static_dir provided ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
     if static_dir and Path(static_dir).is_dir():
         app.mount(
             "/",
