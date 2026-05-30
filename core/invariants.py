@@ -30,7 +30,7 @@ import aiosqlite
 logger = logging.getLogger(__name__)
 
 
-# ── Types ─────────────────────────────────────────────────────────────────────────────
+# -- Types --------------------------------------------------------------------
 
 
 @dataclass
@@ -47,14 +47,14 @@ class InvariantViolation(RuntimeError):
     """Raised by check_all_invariants when mode='halt' and any check fails."""
 
 
-# ── Individual invariant checks ─────────────────────────────────────────────────────
+# -- Individual invariant checks ----------------------------------------------
 
 
 async def check_pnl_sanity(db: aiosqlite.Connection) -> InvariantResult:
     """Verify no closed position has realized_pnl > entry_size.
 
     The maximum theoretical profit on a binary outcome is the full stake
-    (buy at price→0, market resolves YES→1). Any position exceeding its
+    (buy at price=0, market resolves YES=1). Any position exceeding its
     stake is a data error or calculation bug.
     """
     cursor = await db.execute(
@@ -91,7 +91,7 @@ async def check_position_duration(db: aiosqlite.Connection) -> InvariantResult:
     Atomic arbitrage trades legitimately open and close in the same tick
     (``ArbitrageEngine._execute_arb_trade`` writes ``opened_at == closed_at``
     when both legs fill), so zero-duration positions are allowed. What is
-    never legitimate is a close timestamp *strictly before* the open — that
+    never legitimate is a close timestamp *strictly before* the open -- that
     would indicate a real timestamp bug in ``mark_and_close_positions`` or
     the settlement path.
     """
@@ -174,7 +174,7 @@ async def check_fee_ratio(db: aiosqlite.Connection) -> InvariantResult:
         return InvariantResult(
             name="fee_ratio",
             passed=True,
-            message="No closed positions with notional — fee ratio check skipped.",
+            message="No closed positions with notional -- fee ratio check skipped.",
         )
 
     ratio = total_fees / total_notional
@@ -207,7 +207,7 @@ def check_engine_state(arb_engine=None) -> InvariantResult:
         return InvariantResult(
             name="engine_state",
             passed=True,
-            message="No ArbitrageEngine provided — engine state check skipped.",
+            message="No ArbitrageEngine provided -- engine state check skipped.",
         )
 
     fired_count = len(arb_engine.fired_state)
@@ -219,7 +219,7 @@ def check_engine_state(arb_engine=None) -> InvariantResult:
             passed=False,
             message=(
                 f"fired_state has {fired_count} entries but _pairs has only "
-                f"{pairs_count}. Ghost entries in fired_state — possible memory leak."
+                f"{pairs_count}. Ghost entries in fired_state -- possible memory leak."
             ),
         )
 
@@ -230,7 +230,7 @@ def check_engine_state(arb_engine=None) -> InvariantResult:
     )
 
 
-# ── Orchestrator ────────────────────────────────────────────────────────────────────────────
+# -- Orchestrator -------------------------------------------------------------
 
 
 async def check_all_invariants(
@@ -244,8 +244,8 @@ async def check_all_invariants(
     Args:
         db: Active aiosqlite connection with the full schema applied.
         arb_engine: Optional ArbitrageEngine for in-memory state checks.
-        mode: "warn" — log and return results without raising.
-              "halt" — raise InvariantViolation on the first failure.
+        mode: "warn" -- log and return results without raising.
+              "halt" -- raise InvariantViolation on the first failure.
         alert_manager: Optional AlertManager to send Discord alerts on failure.
 
     Returns:
@@ -275,7 +275,7 @@ async def check_all_invariants(
 
         logger.warning("INVARIANT VIOLATION [%s]: %s", result.name, result.message)
 
-        # Persist to DB — deduplicate within 1-hour window so the same
+        # Persist to DB -- deduplicate within 1-hour window so the same
         # persistent failure doesn't generate a new row every scheduler cycle.
         try:
             dedup_cutoff = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
@@ -321,7 +321,7 @@ async def check_all_invariants(
     if mode == "halt" and first_failure is not None:
         raise InvariantViolation(
             f"Invariant '{first_failure.name}' violated: {first_failure.message}. "
-            "System halted — human intervention required."
+            "System halted -- human intervention required."
         )
 
     return results

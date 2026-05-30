@@ -1,1 +1,625 @@
-"""\nSingle-platform trading strategies.\n\nProvides detect_single_platform_opportunities, mark_and_close_positions,\nand related helper functions for P2-P5 strategies that operate on individual\nmarkets without needing a cross-platform match.\n"""\n\nimport logging\nimport os\nimport re\nimport statistics\nimport uuid\nfrom collections import defaultdict\nfrom datetime import datetime, timedelta, timezone\n\nimport aiosqlite\n\nlogger = logging.getLogger(__name__)\n\n# Month/date suffix pattern for _p2_title_root\n_MONTH_PAT = (\n    r\"(january|february|march|april|may|june|july|august|september|\"\n    r\"october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|oct|nov|dec)\"\n)\n_STRIP_SUFFIX = re.compile(\n    rf\"\\s+(?:{_MONTH_PAT}|20\\d{{2}}|q[1-4]|h[1-2]|\"\n    r\"\\$?[\\d,]+\\.?\\d*[km%]?(?:\\s*[-–to]+\\s*\\$?[\\d,]+\\.?\\d*[km%]?)?)\\ *$\",\n    re.IGNORECASE,\n)\n\n\ndef _p2_title_root(title: str) -> str:\n    \"\"\"Strip trailing date/value suffixes to find the shared event root.\n\n    Used to group series markets (e.g. \"Will GDP grow in Q1?\" / \"...Q2?\")\n    so we can detect over-sum inconsistency across the series.\n    \"\"\"\n    t = title.lower().strip().rstrip(\"?.,!\")\n    # Iteratively strip up to 3 trailing tokens (e.g. \"March 2025 $50k\")\n    for _ in range(3):\n        new_t = _STRIP_SUFFIX.sub(\"\", t)\n        if new_t == t:\n            break\n        t = new_t.rstrip(\"?.,! \")\n    return t\n\n\ndef _cross_strategy_dedup(opportunities: list[dict]) -> list[dict]:\n    \"\"\"Keep only the highest-signal_strength entry per market_id (5.1).\n\n    A market that qualifies for both P3 and P4 in the same cycle contributes\n    one position — for the strategy most confident about it.\n    \"\"\"\n    best: dict[str, dict] = {}\n    for opp in opportunities:\n        mid = opp[\"market\"][\"id\"]\n        if mid not in best or opp[\"signal_strength\"] > best[mid][\"signal_strength\"]:\n            best[mid] = opp\n    return list(best.values())\n\n\ndef _normalize_signal_strengths(opportunities: list[dict]) -> list[dict]:\n    \"\"\"Z-score normalize signal_strength within each strategy bucket (5.3).\n\n    Adds a signal_strength_normalized key to each opportunity. The original\n    signal_strength is preserved. Single-item buckets receive 0.0.\n    \"\"\"\n    by_strategy: dict[str, list[dict]] = {}\n    for opp in opportunities:\n        by_strategy.setdefault(opp[\"strategy\"], []).append(opp)\n\n    result = []\n    for opps in by_strategy.values():\n        strengths = [o[\"signal_strength\"] for o in opps]\n        if len(strengths) == 1:\n            result.append({**opps[0], \"signal_strength_normalized\": 0.0})\n            continue\n        mean = statistics.mean(strengths)\n        stdev = statistics.stdev(strengths)\n        for opp in opps:\n            z = (opp[\"signal_strength\"] - mean) / stdev if stdev > 0 else 0.0\n            result.append({**opp, \"signal_strength_normalized\": z})\n    return result\n\n\nasync def _get_strategy_rolling_pnl(\n    db: aiosqlite.Connection,\n    strategy: str,\n    window_s: int,\n) -> tuple[int, float]:\n    \"\"\"Return (trade_count, total_pnl) for strategy over the last window_s seconds.\n\n    Only counts realistic-model closed positions (pnl_model='realistic').\n    Used by the per-strategy kill-switch (5.6).\n    \"\"\"\n    cutoff = (datetime.now(timezone.utc) - timedelta(seconds=window_s)).isoformat()\n    cursor = await db.execute(\n        \"SELECT COUNT(*), COALESCE(SUM(realized_pnl), 0.0) \"\n        \"FROM positions \"\n        \"WHERE strategy=? AND pnl_model='realistic' AND status='closed' AND closed_at >= ?\",\n        (strategy, cutoff),\n    )\n    row = await cursor.fetchone()\n    if row is None:\n        return 0, 0.0\n    return row[0], row[1]\n\n\nasync def mark_and_close_positions(\n    db: aiosqlite.Connection,\n    holding_period_s: int = 300,\n    price_cache: dict | None = None,\n) -> int:\n    \"\"\"Close open positions that have exceeded their holding period.\n\n    Walks all positions with status='open' opened more than holding_period_s\n    ago, queries the latest market price, computes realized_pnl, and closes\n    them. Positions with no current price data are left open (stale handling).\n\n    Returns the number of positions closed.\n    \"\"\"\n    now_dt = datetime.now(timezone.utc)\n    cutoff = (now_dt - timedelta(seconds=holding_period_s)).isoformat()\n    now = now_dt.isoformat()\n\n    cursor = await db.execute(\n        \"SELECT id, market_id, side, entry_price, entry_size, fees_paid \"\n        \"FROM positions WHERE status='open' AND opened_at <= ?\",\n        (cutoff,),\n    )\n    rows = await cursor.fetchall()\n\n    closed = 0\n    for row in rows:\n        pos_id, market_id, side, entry_price, entry_size, fees_paid = row\n\n        # Use live cache price if available, fall back to DB\n        if price_cache and market_id in price_cache:\n            current_price = price_cache[market_id]\n        else:\n            price_cursor = await db.execute(\n                \"SELECT yes_price FROM market_prices WHERE market_id=? \"\n                \"ORDER BY polled_at DESC LIMIT 1\",\n                (market_id,),\n            )\n            price_row = await price_cursor.fetchone()\n            if price_row is None:\n                logger.debug(\n                    \"mark_and_close: no price for market %s — leaving open\", market_id\n                )\n                continue\n            current_price = price_row[0]\n        if side == \"BUY\":\n            realized_pnl = round(\n                (current_price - entry_price) * entry_size - (fees_paid or 0), 4\n            )\n        else:\n            realized_pnl = round(\n                (entry_price - current_price) * entry_size - (fees_paid or 0), 4\n            )\n\n        await db.execute(\n            \"\"\"UPDATE positions\n               SET status='closed', exit_price=?, exit_size=?,\n                   realized_pnl=?, current_price=?, closed_at=?, updated_at=?\n             WHERE id=?\"\"\",\n            (current_price, entry_size, realized_pnl, current_price, now, now, pos_id),\n        )\n        closed += 1\n        logger.debug(\n            \"mark_and_close: closed pos=%s market=%s pnl=%.4f\",\n            pos_id,\n            market_id,\n            realized_pnl,\n        )\n\n    if closed:\n        await db.commit()\n        logger.info(\"mark_and_close_positions: closed %d expired positions\", closed)\n\n    return closed\n\n\nasync def detect_single_platform_opportunities(\n    db: aiosqlite.Connection,\n    max_trades: int = 20,\n    risk_config=None,\n    price_cache: dict | None = None,\n    circuit_breaker=None,\n) -> list[dict]:\n    \"\"\"\n    Find trading opportunities on individual markets (no cross-platform match needed).\n\n    Strategies:\n    - P3_calibration_bias: Market is mispriced vs estimated fair value\n      (e.g., price far from 0.50 on a coin-flip event, or spread is wide)\n    - P4_liquidity_timing: Wide bid/ask spread indicates market maker opportunity\n    - P5_mean_reversion: Price moved sharply, bet on reversion\n    \"\"\"\n    from core.config import RiskControlConfig\n    from core.signals.risk import get_portfolio_value\n    from core.signals.sizing import compute_kelly_fraction, compute_position_size\n    from execution.factory import _make_single_execution_client\n    from execution.models import OrderLeg\n\n    _risk_cfg: RiskControlConfig = risk_config or RiskControlConfig()\n\n    execution_mode = os.getenv(\"EXECUTION_MODE\", \"paper\")\n    # Cache clients by platform to avoid re-initializing per trade\n    _clients: dict = {}\n\n    # Get all markets with their latest prices.\n    # Joining on MAX(id) per market_id selects the most recently inserted row,\n    # handling ties from duplicate polled_at timestamps safely.\n    cursor = await db.execute(\"\"\"\n        SELECT m.id, m.platform, m.title,\n               mp.yes_price, mp.no_price, mp.spread,\n               mp.volume_24h, mp.liquidity\n        FROM markets m\n        JOIN market_prices mp ON mp.id = (\n            SELECT MAX(mp2.id)\n            FROM market_prices mp2\n            WHERE mp2.market_id = m.id\n        )\n        WHERE m.status = 'open'\n          AND mp.yes_price > 0.05\n          AND mp.yes_price < 0.95\n    \"\"\")\n    rows = await cursor.fetchall()\n\n    markets = []\n    for row in rows:\n        markets.append(\n            {\n                \"id\": row[0],\n                \"platform\": row[1],\n                \"title\": row[2],\n                \"yes_price\": row[3],\n                \"no_price\": row[4],\n                \"spread\": row[5] or 0.02,\n                \"volume_24h\": row[6] or 0,\n                \"liquidity\": row[7] or 0,\n            }\n        )\n\n    # Override with live websocket prices where available\n    if price_cache:\n        for m in markets:\n            cached = price_cache.get(m[\"id\"])\n            if cached is not None:\n                m[\"yes_price\"] = cached\n                m[\"no_price\"] = round(1.0 - cached, 4)\n        # Re-apply price bounds filter after override\n        markets = [m for m in markets if 0.05 < m[\"yes_price\"] < 0.95]\n\n    trades = []\n    opportunities = []\n\n    for m in markets:\n        price = m[\"yes_price\"]\n\n        # Strategy: Calibration bias — markets with extreme prices\n        # (far from 0.50) have high implied conviction. We bet toward\n        # the center, assuming mean reversion over time.\n        # Edge = 2% of the distance from center (conservative).\n        distance_from_center = abs(price - 0.50)\n        if distance_from_center > 0.20:\n            side = \"BUY\" if price < 0.50 else \"SELL\"\n            edge = round(distance_from_center * 0.10, 4)  # 10% of distance\n            opportunities.append(\n                {\n                    \"market\": m,\n                    \"strategy\": \"P3_calibration_bias\",\n                    \"side\": side,\n                    \"edge\": max(edge, 0.02),\n                    \"signal_strength\": distance_from_center,\n                }\n            )\n\n        # Strategy: Liquidity timing — markets in the \"uncertain zone\"\n        # (0.35 - 0.65) are most liquid and have the tightest spreads.\n        # For markets slightly outside this zone (0.20-0.35 or 0.65-0.80),\n        # there's often a liquidity premium we can capture.\n        if 0.15 < price < 0.35 or 0.65 < price < 0.85:\n            side = \"BUY\" if price < 0.50 else \"SELL\"\n            edge = round(abs(price - 0.50) * 0.14, 4)  # 14% of distance\n            opportunities.append(\n                {\n                    \"market\": m,\n                    \"strategy\": \"P4_liquidity_timing\",\n                    \"side\": side,\n                    \"edge\": max(edge, 0.02),\n                    \"signal_strength\": abs(price - 0.50),\n                }\n            )\n\n        # Strategy: Information latency — wide bid-ask spread combined with an\n        # extreme price indicates that market makers haven't caught up to recent\n        # information. The directional signal is already in the price; the edge\n        # is the spread compression that occurs as information propagates.\n        if m[\"spread\"] >= 0.08 and (price < 0.25 or price > 0.75):\n            side = \"BUY\" if price < 0.50 else \"SELL\"\n            edge = round(m[\"spread\"] * 0.30, 4)  # capture ~30% of the spread\n            opportunities.append(\n                {\n                    \"market\": m,\n                    \"strategy\": \"P5_information_latency\",\n                    \"side\": side,\n                    \"edge\": max(edge, 0.005),\n                    \"signal_strength\": m[\"spread\"],\n                }\n            )\n\n    # Strategy: Structured event inconsistency — group same-platform markets by\n    # title root (stripping date/value suffixes). When the YES prices of a\n    # mutually-exclusive series sum > 1.05, sell the most overpriced member.\n    _p2_groups: dict[tuple, list[dict]] = defaultdict(list)\n    _p2_min_root_len = _risk_cfg.strategy_p2_min_root_len\n    for m in markets:\n        root = _p2_title_root(m[\"title\"])\n        if len(root) >= _p2_min_root_len:\n            _p2_groups[(m[\"platform\"], root)].append(m)\n\n    for (_plat, _root), group in _p2_groups.items():\n        if len(group) < 2 or len(group) > 10:\n            continue\n        total_yes = sum(m[\"yes_price\"] for m in group)\n        if total_yes <= 1.05:\n            continue\n        expected = 1.0 / len(group)\n        best = max(group, key=lambda m: m[\"yes_price\"] - expected)\n        edge = round((total_yes - 1.0) / len(group), 4)\n        opportunities.append(\n            {\n                \"market\": best,\n                \"strategy\": \"P2_structured_event\",\n                \"side\": \"SELL\",\n                \"edge\": max(edge, 0.005),\n                \"signal_strength\": total_yes - 1.0,\n            }\n        )\n\n    # ── Phase 5: Strategy hygiene ─────────────────────────────────────────────\n\n    # 5.4 — Filter strategies disabled via config flags\n    _strategy_enabled = {\n        \"P2_structured_event\": _risk_cfg.strategy_p2_enabled,\n        \"P3_calibration_bias\": _risk_cfg.strategy_p3_enabled,\n        \"P4_liquidity_timing\": _risk_cfg.strategy_p4_enabled,\n        \"P5_information_latency\": _risk_cfg.strategy_p5_enabled,\n    }\n    opportunities = [\n        o for o in opportunities if _strategy_enabled.get(o[\"strategy\"], True)\n    ]\n\n    # 5.1 — Cross-strategy dedup: same market → keep highest signal_strength only\n    opportunities = _cross_strategy_dedup(opportunities)\n\n    # 5.2 — Consecutive-cycle dedup: skip recently-traded markets unless price moved\n    _cooldown = _risk_cfg.strategy_replay_cooldown_s\n    _min_move = _risk_cfg.strategy_replay_min_move\n\n    _cutoff = (datetime.now(timezone.utc) - timedelta(seconds=_cooldown)).isoformat()\n    _recent_cursor = await db.execute(\n        \"SELECT market_id, entry_price FROM positions \"\n        \"WHERE (status='open' OR (status='closed' AND closed_at >= ?)) \"\n        \"ORDER BY opened_at DESC\",\n        (_cutoff,),\n    )\n    _recently_traded: dict[str, float] = {}\n    for _row in await _recent_cursor.fetchall():\n        _mid, _ep = _row[0], _row[1]\n        if _mid not in _recently_traded:\n            _recently_traded[_mid] = _ep or 0.0\n\n    _filtered: list[dict] = []\n    for opp in opportunities:\n        mid = opp[\"market\"][\"id\"]\n        if mid in _recently_traded:\n            ep = _recently_traded[mid]\n            cp = opp[\"market\"][\"yes_price\"]\n            move = abs(cp - ep) / max(ep, 0.001) if ep else 1.0\n            if move < _min_move:\n                logger.debug(\n                    \"5.2 replay-dedup: skip market=%s move=%.4f < min=%.4f\",\n                    mid,\n                    move,\n                    _min_move,\n                )\n                continue\n        _filtered.append(opp)\n    opportunities = _filtered\n\n    # 5.6 — Per-strategy kill-switch: disable strategy if rolling PnL is negative\n    # and enough trades have been recorded to be statistically meaningful.\n    _killed_strategies: set[str] = set()\n    for _strat in list({o[\"strategy\"] for o in opportunities}):\n        _count, _pnl = await _get_strategy_rolling_pnl(\n            db, _strat, _risk_cfg.strategy_killswitch_window_s\n        )\n        if _count >= _risk_cfg.strategy_killswitch_min_trades and _pnl < 0:\n            logger.warning(\n                \"KILLSWITCH: strategy=%s disabled — rolling_pnl=%.4f over %d trades\",\n                _strat,\n                _pnl,\n                _count,\n            )\n            _killed_strategies.add(_strat)\n    opportunities = [\n        o for o in opportunities if o[\"strategy\"] not in _killed_strategies\n    ]\n\n    # 5.3 — Normalize signal_strength within each strategy bucket (z-score)\n    opportunities = _normalize_signal_strengths(opportunities)\n\n    # ── Quota allocation ─────────────────────────────────────────────────────\n    # Reserve slots per strategy to prevent any single strategy crowding others.\n    # P2: 15%, P3: 50%, P4: 25%, P5: remainder (min 1 each).\n    p2_cap = max(1, int(max_trades * 0.15))\n    p3_cap = max(1, int(max_trades * 0.50))\n    p4_cap = max(2, int(max_trades * 0.25))\n    p5_cap = max(1, max_trades - p2_cap - p3_cap - p4_cap)\n\n    p2 = sorted(\n        [o for o in opportunities if o[\"strategy\"] == \"P2_structured_event\"],\n        key=lambda x: x[\"signal_strength\"],\n        reverse=True,\n    )[:p2_cap]\n    p3 = sorted(\n        [o for o in opportunities if o[\"strategy\"] == \"P3_calibration_bias\"],\n        key=lambda x: x[\"signal_strength\"],\n        reverse=True,\n    )[:p3_cap]\n    p4 = sorted(\n        [o for o in opportunities if o[\"strategy\"] == \"P4_liquidity_timing\"],\n        key=lambda x: x[\"signal_strength\"],\n        reverse=True,\n    )[:p4_cap]\n    p5 = sorted(\n        [o for o in opportunities if o[\"strategy\"] == \"P5_information_latency\"],\n        key=lambda x: x[\"signal_strength\"],\n        reverse=True,\n    )[:p5_cap]\n    opportunities = p2 + p3 + p4 + p5\n\n    if opportunities:\n        logger.info(\n            \"Found %d single-platform opportunities (from %d markets)\",\n            len(opportunities),\n            len(markets),\n        )\n\n    for opp in opportunities:\n        now = datetime.now(timezone.utc).isoformat()\n        m = opp[\"market\"]\n        strategy = opp[\"strategy\"]\n        side = opp[\"side\"]\n        edge = opp[\"edge\"]\n        price = m[\"yes_price\"]\n\n        # Phase 2.3: Kelly-based sizing (replaces hardcoded min(10, 100*edge)).\n        _kelly_f = compute_kelly_fraction(edge, 1.0, _risk_cfg.kelly_fraction)\n        _bankroll = await get_portfolio_value(db, _risk_cfg.starting_capital)\n        _max_size = _bankroll * _risk_cfg.max_position_pct\n        size = round(compute_position_size(_kelly_f, _bankroll, max_size=_max_size), 1)\n        if size <= 0:\n            logger.debug(\n                \"Kelly sizing zero for edge=%.4f strategy=%s — skip\", edge, strategy\n            )\n            continue\n\n        signal_id = f\"sig_{uuid.uuid4().hex[:12]}\"\n        violation_id = f\"viol_{uuid.uuid4().hex[:12]}\"\n\n        logger.info(\n            \"SINGLE-PLATFORM: %s | %s %s@%.3f spread=%.3f | %s | %s\",\n            strategy,\n            side,\n            m[\"platform\"],\n            price,\n            m[\"spread\"],\n            m[\"title\"][:50],\n            m[\"id\"][:25],\n        )\n\n        # Create self-referencing market pair for single-platform\n        pair_id = f\"sp_{m['id']}\"\n        try:\n            await db.execute(\n                \"\"\"INSERT OR IGNORE INTO market_pairs\n                   (id, market_id_a, market_id_b, pair_type, active, created_at, updated_at)\n                   VALUES (?, ?, ?, 'single_platform', 1, ?, ?)\"\"\",\n                (pair_id, m[\"id\"], m[\"id\"], now, now),\n            )\n        except Exception as e:\n            logger.debug(\"Market pair insert error: %s\", e)\n\n        # Write violation\n        try:\n            await db.execute(\n                \"\"\"INSERT OR IGNORE INTO violations\n                   (id, pair_id, violation_type, price_a_at_detect, price_b_at_detect,\n                    raw_spread, net_spread, status, detected_at, updated_at)\n                   VALUES (?, ?, 'single_platform', ?, ?, ?, ?, 'detected', ?, ?)\"\"\",\n                (\n                    violation_id,\n                    pair_id,\n                    price,\n                    m[\"no_price\"],\n                    m[\"spread\"],\n                    edge,\n                    now,\n                    now,\n                ),\n            )\n        except Exception as e:\n            logger.debug(\"Violation insert error: %s\", e)\n\n        # Write signal\n        try:\n            kelly = _kelly_f\n            await db.execute(\n                \"\"\"INSERT OR IGNORE INTO signals\n                   (id, violation_id, strategy, signal_type, market_id_a,\n                    model_edge, kelly_fraction, position_size_a,\n                    total_capital_at_risk, status, fired_at, updated_at)\n                   VALUES (?, ?, ?, 'single', ?, ?, ?, ?, ?, 'fired', ?, ?)\"\"\",\n                (\n                    signal_id,\n                    violation_id,\n                    strategy,\n                    m[\"id\"],\n                    edge,\n                    kelly,\n                    size,\n                    size,\n                    now,\n                    now,\n                ),\n            )\n        except Exception as e:\n            logger.debug(\"Signal insert error: %s\", e)\n\n        # Check circuit breaker before submitting any order.\n        if circuit_breaker is not None and await circuit_breaker.should_halt():\n            logger.warning(\n                \"CIRCUIT_BREAKER halted — skipping single-platform trade for %s\",\n                strategy,\n            )\n            break\n\n        # Get (or create) execution client for this market's platform\n        platform = m[\"platform\"]\n        if platform not in _clients:\n            _clients[platform] = _make_single_execution_client(\n                db, execution_mode, platform\n            )\n\n        leg = OrderLeg(\n            market_id=m[\"id\"],\n            platform=platform,\n            side=side,\n            size=size,\n            limit_price=price,\n            order_type=\"LIMIT\",\n        )\n        result = await _clients[platform].submit_order(\n            leg, signal_id=signal_id, strategy=strategy\n        )\n\n        if result.filled_price:\n            # Phase 4: open position, NO synthetic exit price.\n            # mark_and_close_positions() will close it after holding_period_s\n            # at the then-current market price, giving a realistic realized PnL.\n            pos_id = f\"pos_{uuid.uuid4().hex[:12]}\"\n            try:\n                await db.execute(\n                    \"\"\"INSERT INTO positions\n                       (id, signal_id, market_id, strategy, side, book, entry_price,\n                        entry_size, fees_paid, pnl_model, status, opened_at, updated_at)\n                       VALUES (?, ?, ?, ?, ?, 'YES', ?, ?, ?, 'realistic', 'open', ?, ?)\"\"\",\n                    (\n                        pos_id,\n                        signal_id,\n                        m[\"id\"],\n                        strategy,\n                        side,\n                        result.filled_price,\n                        size,\n                        result.fee_paid or 0,\n                        now,\n                        now,\n                    ),\n                )\n            except Exception as e:\n                logger.debug(\"Position insert error: %s\", e)\n\n            trades.append(\n                {\n                    \"strategy\": strategy,\n                    \"market\": f\"{m['platform']}:{m['id'][:20]}\",\n                    \"side\": side,\n                    \"price\": result.filled_price,\n                    \"edge\": edge,\n                    \"pos_id\": pos_id,\n                }\n            )\n\n            logger.info(\n                \"  OPENED: %s@%.4f edge=%.4f | pos=%s (holding until close)\",\n                side,\n                result.filled_price,\n                edge,\n                pos_id,\n            )\n\n            # Batch commit every 50 trades\n            if len(trades) % 50 == 0:\n                await db.commit()\n\n    # Final commit\n    await db.commit()\n    return trades\n
+"""
+Single-platform trading strategies.
+
+Provides detect_single_platform_opportunities, mark_and_close_positions,
+and related helper functions for P2-P5 strategies that operate on individual
+markets without needing a cross-platform match.
+"""
+
+import logging
+import os
+import re
+import statistics
+import uuid
+from collections import defaultdict
+from datetime import datetime, timedelta, timezone
+
+import aiosqlite
+
+logger = logging.getLogger(__name__)
+
+# Month/date suffix pattern for _p2_title_root
+_MONTH_PAT = (
+    r"(january|february|march|april|may|june|july|august|september|"
+    r"october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|oct|nov|dec)"
+)
+_STRIP_SUFFIX = re.compile(
+    rf"\s+(?:{_MONTH_PAT}|20\d{{2}}|q[1-4]|h[1-2]|"
+    r"\$?[\d,]+\.?\d*[km%]?(?:\s*[-–to]+\s*\$?[\d,]+\.?\d*[km%]?)?)\ *$",
+    re.IGNORECASE,
+)
+
+
+def _p2_title_root(title: str) -> str:
+    """Strip trailing date/value suffixes to find the shared event root.
+
+    Used to group series markets (e.g. "Will GDP grow in Q1?" / "...Q2?")
+    so we can detect over-sum inconsistency across the series.
+    """
+    t = title.lower().strip().rstrip("?.,!")
+    # Iteratively strip up to 3 trailing tokens (e.g. "March 2025 $50k")
+    for _ in range(3):
+        new_t = _STRIP_SUFFIX.sub("", t)
+        if new_t == t:
+            break
+        t = new_t.rstrip("?.,! ")
+    return t
+
+
+def _cross_strategy_dedup(opportunities: list[dict]) -> list[dict]:
+    """Keep only the highest-signal_strength entry per market_id (5.1).
+
+    A market that qualifies for both P3 and P4 in the same cycle contributes
+    one position -- for the strategy most confident about it.
+    """
+    best: dict[str, dict] = {}
+    for opp in opportunities:
+        mid = opp["market"]["id"]
+        if mid not in best or opp["signal_strength"] > best[mid]["signal_strength"]:
+            best[mid] = opp
+    return list(best.values())
+
+
+def _normalize_signal_strengths(opportunities: list[dict]) -> list[dict]:
+    """Z-score normalize signal_strength within each strategy bucket (5.3).
+
+    Adds a signal_strength_normalized key to each opportunity. The original
+    signal_strength is preserved. Single-item buckets receive 0.0.
+    """
+    by_strategy: dict[str, list[dict]] = {}
+    for opp in opportunities:
+        by_strategy.setdefault(opp["strategy"], []).append(opp)
+
+    result = []
+    for opps in by_strategy.values():
+        strengths = [o["signal_strength"] for o in opps]
+        if len(strengths) == 1:
+            result.append({**opps[0], "signal_strength_normalized": 0.0})
+            continue
+        mean = statistics.mean(strengths)
+        stdev = statistics.stdev(strengths)
+        for opp in opps:
+            z = (opp["signal_strength"] - mean) / stdev if stdev > 0 else 0.0
+            result.append({**opp, "signal_strength_normalized": z})
+    return result
+
+
+async def _get_strategy_rolling_pnl(
+    db: aiosqlite.Connection,
+    strategy: str,
+    window_s: int,
+) -> tuple[int, float]:
+    """Return (trade_count, total_pnl) for strategy over the last window_s seconds.
+
+    Only counts realistic-model closed positions (pnl_model='realistic').
+    Used by the per-strategy kill-switch (5.6).
+    """
+    cutoff = (datetime.now(timezone.utc) - timedelta(seconds=window_s)).isoformat()
+    cursor = await db.execute(
+        "SELECT COUNT(*), COALESCE(SUM(realized_pnl), 0.0) "
+        "FROM positions "
+        "WHERE strategy=? AND pnl_model='realistic' AND status='closed' AND closed_at >= ?",
+        (strategy, cutoff),
+    )
+    row = await cursor.fetchone()
+    if row is None:
+        return 0, 0.0
+    return row[0], row[1]
+
+
+async def mark_and_close_positions(
+    db: aiosqlite.Connection,
+    holding_period_s: int = 300,
+    price_cache: dict | None = None,
+) -> int:
+    """Close open positions that have exceeded their holding period.
+
+    Walks all positions with status='open' opened more than holding_period_s
+    ago, queries the latest market price, computes realized_pnl, and closes
+    them. Positions with no current price data are left open (stale handling).
+
+    Returns the number of positions closed.
+    """
+    now_dt = datetime.now(timezone.utc)
+    cutoff = (now_dt - timedelta(seconds=holding_period_s)).isoformat()
+    now = now_dt.isoformat()
+
+    cursor = await db.execute(
+        "SELECT id, market_id, side, entry_price, entry_size, fees_paid "
+        "FROM positions WHERE status='open' AND opened_at <= ?",
+        (cutoff,),
+    )
+    rows = await cursor.fetchall()
+
+    closed = 0
+    for row in rows:
+        pos_id, market_id, side, entry_price, entry_size, fees_paid = row
+
+        # Use live cache price if available, fall back to DB
+        if price_cache and market_id in price_cache:
+            current_price = price_cache[market_id]
+        else:
+            price_cursor = await db.execute(
+                "SELECT yes_price FROM market_prices WHERE market_id=? "
+                "ORDER BY polled_at DESC LIMIT 1",
+                (market_id,),
+            )
+            price_row = await price_cursor.fetchone()
+            if price_row is None:
+                logger.debug(
+                    "mark_and_close: no price for market %s -- leaving open", market_id
+                )
+                continue
+            current_price = price_row[0]
+        if side == "BUY":
+            realized_pnl = round(
+                (current_price - entry_price) * entry_size - (fees_paid or 0), 4
+            )
+        else:
+            realized_pnl = round(
+                (entry_price - current_price) * entry_size - (fees_paid or 0), 4
+            )
+
+        await db.execute(
+            """UPDATE positions
+               SET status='closed', exit_price=?, exit_size=?,
+                   realized_pnl=?, current_price=?, closed_at=?, updated_at=?
+             WHERE id=?""",
+            (current_price, entry_size, realized_pnl, current_price, now, now, pos_id),
+        )
+        closed += 1
+        logger.debug(
+            "mark_and_close: closed pos=%s market=%s pnl=%.4f",
+            pos_id,
+            market_id,
+            realized_pnl,
+        )
+
+    if closed:
+        await db.commit()
+        logger.info("mark_and_close_positions: closed %d expired positions", closed)
+
+    return closed
+
+
+async def detect_single_platform_opportunities(
+    db: aiosqlite.Connection,
+    max_trades: int = 20,
+    risk_config=None,
+    price_cache: dict | None = None,
+    circuit_breaker=None,
+) -> list[dict]:
+    """
+    Find trading opportunities on individual markets (no cross-platform match needed).
+
+    Strategies:
+    - P3_calibration_bias: Market is mispriced vs estimated fair value
+      (e.g., price far from 0.50 on a coin-flip event, or spread is wide)
+    - P4_liquidity_timing: Wide bid/ask spread indicates market maker opportunity
+    - P5_mean_reversion: Price moved sharply, bet on reversion
+    """
+    from core.config import RiskControlConfig
+    from core.signals.risk import get_portfolio_value
+    from core.signals.sizing import compute_kelly_fraction, compute_position_size
+    from execution.factory import _make_single_execution_client
+    from execution.models import OrderLeg
+
+    _risk_cfg: RiskControlConfig = risk_config or RiskControlConfig()
+
+    execution_mode = os.getenv("EXECUTION_MODE", "paper")
+    # Cache clients by platform to avoid re-initializing per trade
+    _clients: dict = {}
+
+    # Get all markets with their latest prices.
+    # Joining on MAX(id) per market_id selects the most recently inserted row,
+    # handling ties from duplicate polled_at timestamps safely.
+    cursor = await db.execute("""
+        SELECT m.id, m.platform, m.title,
+               mp.yes_price, mp.no_price, mp.spread,
+               mp.volume_24h, mp.liquidity
+        FROM markets m
+        JOIN market_prices mp ON mp.id = (
+            SELECT MAX(mp2.id)
+            FROM market_prices mp2
+            WHERE mp2.market_id = m.id
+        )
+        WHERE m.status = 'open'
+          AND mp.yes_price > 0.05
+          AND mp.yes_price < 0.95
+    """)
+    rows = await cursor.fetchall()
+
+    markets = []
+    for row in rows:
+        markets.append(
+            {
+                "id": row[0],
+                "platform": row[1],
+                "title": row[2],
+                "yes_price": row[3],
+                "no_price": row[4],
+                "spread": row[5] or 0.02,
+                "volume_24h": row[6] or 0,
+                "liquidity": row[7] or 0,
+            }
+        )
+
+    # Override with live websocket prices where available
+    if price_cache:
+        for m in markets:
+            cached = price_cache.get(m["id"])
+            if cached is not None:
+                m["yes_price"] = cached
+                m["no_price"] = round(1.0 - cached, 4)
+        # Re-apply price bounds filter after override
+        markets = [m for m in markets if 0.05 < m["yes_price"] < 0.95]
+
+    trades = []
+    opportunities = []
+
+    for m in markets:
+        price = m["yes_price"]
+
+        # Strategy: Calibration bias -- markets with extreme prices
+        # (far from 0.50) have high implied conviction. We bet toward
+        # the center, assuming mean reversion over time.
+        # Edge = 2% of the distance from center (conservative).
+        distance_from_center = abs(price - 0.50)
+        if distance_from_center > 0.20:
+            side = "BUY" if price < 0.50 else "SELL"
+            edge = round(distance_from_center * 0.04, 4)  # 4% of distance
+            opportunities.append(
+                {
+                    "market": m,
+                    "strategy": "P3_calibration_bias",
+                    "side": side,
+                    "edge": max(edge, 0.005),
+                    "signal_strength": distance_from_center,
+                }
+            )
+
+        # Strategy: Liquidity timing -- markets in the "uncertain zone"
+        # (0.35 - 0.65) are most liquid and have the tightest spreads.
+        # For markets slightly outside this zone (0.20-0.35 or 0.65-0.80),
+        # there's often a liquidity premium we can capture.
+        if 0.15 < price < 0.35 or 0.65 < price < 0.85:
+            side = "BUY" if price < 0.50 else "SELL"
+            edge = round(abs(price - 0.50) * 0.03, 4)  # 3% of distance
+            opportunities.append(
+                {
+                    "market": m,
+                    "strategy": "P4_liquidity_timing",
+                    "side": side,
+                    "edge": max(edge, 0.005),
+                    "signal_strength": abs(price - 0.50),
+                }
+            )
+
+        # Strategy: Information latency -- wide bid-ask spread combined with an
+        # extreme price indicates that market makers haven't caught up to recent
+        # information. The directional signal is already in the price; the edge
+        # is the spread compression that occurs as information propagates.
+        if m["spread"] >= 0.08 and (price < 0.25 or price > 0.75):
+            side = "BUY" if price < 0.50 else "SELL"
+            edge = round(m["spread"] * 0.30, 4)  # capture ~30% of the spread
+            opportunities.append(
+                {
+                    "market": m,
+                    "strategy": "P5_information_latency",
+                    "side": side,
+                    "edge": max(edge, 0.005),
+                    "signal_strength": m["spread"],
+                }
+            )
+
+    # Strategy: Structured event inconsistency -- group same-platform markets by
+    # title root (stripping date/value suffixes). When the YES prices of a
+    # mutually-exclusive series sum > 1.05, sell the most overpriced member.
+    _p2_groups: dict[tuple, list[dict]] = defaultdict(list)
+    _p2_min_root_len = _risk_cfg.strategy_p2_min_root_len
+    for m in markets:
+        root = _p2_title_root(m["title"])
+        if len(root) >= _p2_min_root_len:
+            _p2_groups[(m["platform"], root)].append(m)
+
+    for (_plat, _root), group in _p2_groups.items():
+        if len(group) < 2 or len(group) > 10:
+            continue
+        total_yes = sum(m["yes_price"] for m in group)
+        if total_yes <= 1.05:
+            continue
+        expected = 1.0 / len(group)
+        best = max(group, key=lambda m: m["yes_price"] - expected)
+        edge = round((total_yes - 1.0) / len(group), 4)
+        opportunities.append(
+            {
+                "market": best,
+                "strategy": "P2_structured_event",
+                "side": "SELL",
+                "edge": max(edge, 0.005),
+                "signal_strength": total_yes - 1.0,
+            }
+        )
+
+    # -- Phase 5: Strategy hygiene --------------------------------------------
+
+    # 5.4 -- Filter strategies disabled via config flags
+    _strategy_enabled = {
+        "P2_structured_event": _risk_cfg.strategy_p2_enabled,
+        "P3_calibration_bias": _risk_cfg.strategy_p3_enabled,
+        "P4_liquidity_timing": _risk_cfg.strategy_p4_enabled,
+        "P5_information_latency": _risk_cfg.strategy_p5_enabled,
+    }
+    opportunities = [
+        o for o in opportunities if _strategy_enabled.get(o["strategy"], True)
+    ]
+
+    # 5.1 -- Cross-strategy dedup: same market -> keep highest signal_strength only
+    opportunities = _cross_strategy_dedup(opportunities)
+
+    # 5.2 -- Consecutive-cycle dedup: skip recently-traded markets unless price moved
+    _cooldown = _risk_cfg.strategy_replay_cooldown_s
+    _min_move = _risk_cfg.strategy_replay_min_move
+
+    _cutoff = (datetime.now(timezone.utc) - timedelta(seconds=_cooldown)).isoformat()
+    _recent_cursor = await db.execute(
+        "SELECT market_id, entry_price FROM positions "
+        "WHERE (status='open' OR (status='closed' AND closed_at >= ?)) "
+        "ORDER BY opened_at DESC",
+        (_cutoff,),
+    )
+    _recently_traded: dict[str, float] = {}
+    for _row in await _recent_cursor.fetchall():
+        _mid, _ep = _row[0], _row[1]
+        if _mid not in _recently_traded:
+            _recently_traded[_mid] = _ep or 0.0
+
+    _filtered: list[dict] = []
+    for opp in opportunities:
+        mid = opp["market"]["id"]
+        if mid in _recently_traded:
+            ep = _recently_traded[mid]
+            cp = opp["market"]["yes_price"]
+            move = abs(cp - ep) / max(ep, 0.001) if ep else 1.0
+            if move < _min_move:
+                logger.debug(
+                    "5.2 replay-dedup: skip market=%s move=%.4f < min=%.4f",
+                    mid,
+                    move,
+                    _min_move,
+                )
+                continue
+        _filtered.append(opp)
+    opportunities = _filtered
+
+    # 5.6 -- Per-strategy kill-switch: disable strategy if rolling PnL is negative
+    # and enough trades have been recorded to be statistically meaningful.
+    _killed_strategies: set[str] = set()
+    for _strat in list({o["strategy"] for o in opportunities}):
+        _count, _pnl = await _get_strategy_rolling_pnl(
+            db, _strat, _risk_cfg.strategy_killswitch_window_s
+        )
+        if _count >= _risk_cfg.strategy_killswitch_min_trades and _pnl < 0:
+            logger.warning(
+                "KILLSWITCH: strategy=%s disabled -- rolling_pnl=%.4f over %d trades",
+                _strat,
+                _pnl,
+                _count,
+            )
+            _killed_strategies.add(_strat)
+    opportunities = [
+        o for o in opportunities if o["strategy"] not in _killed_strategies
+    ]
+
+    # 5.3 -- Normalize signal_strength within each strategy bucket (z-score)
+    opportunities = _normalize_signal_strengths(opportunities)
+
+    # -- Quota allocation -----------------------------------------------------
+    # Reserve slots per strategy to prevent any single strategy crowding others.
+    # P2: 15%, P3: 50%, P4: 25%, P5: remainder (min 1 each).
+    p2_cap = max(1, int(max_trades * 0.15))
+    p3_cap = max(1, int(max_trades * 0.50))
+    p4_cap = max(2, int(max_trades * 0.25))
+    p5_cap = max(1, max_trades - p2_cap - p3_cap - p4_cap)
+
+    p2 = sorted(
+        [o for o in opportunities if o["strategy"] == "P2_structured_event"],
+        key=lambda x: x["signal_strength"],
+        reverse=True,
+    )[:p2_cap]
+    p3 = sorted(
+        [o for o in opportunities if o["strategy"] == "P3_calibration_bias"],
+        key=lambda x: x["signal_strength"],
+        reverse=True,
+    )[:p3_cap]
+    p4 = sorted(
+        [o for o in opportunities if o["strategy"] == "P4_liquidity_timing"],
+        key=lambda x: x["signal_strength"],
+        reverse=True,
+    )[:p4_cap]
+    p5 = sorted(
+        [o for o in opportunities if o["strategy"] == "P5_information_latency"],
+        key=lambda x: x["signal_strength"],
+        reverse=True,
+    )[:p5_cap]
+    opportunities = p2 + p3 + p4 + p5
+
+    if opportunities:
+        logger.info(
+            "Found %d single-platform opportunities (from %d markets)",
+            len(opportunities),
+            len(markets),
+        )
+
+    _bankroll = await get_portfolio_value(db, _risk_cfg.starting_capital)
+
+    for opp in opportunities:
+        now = datetime.now(timezone.utc).isoformat()
+        m = opp["market"]
+        strategy = opp["strategy"]
+        side = opp["side"]
+        edge = opp["edge"]
+        price = m["yes_price"]
+
+        # Phase 2.3: Kelly-based sizing (replaces hardcoded min(10, 100*edge)).
+        _kelly_f = compute_kelly_fraction(edge, 1.0, _risk_cfg.kelly_fraction)
+        _max_size = _bankroll * _risk_cfg.max_position_pct
+        size = round(compute_position_size(_kelly_f, _bankroll, max_size=_max_size), 1)
+        if size <= 0:
+            logger.debug(
+                "Kelly sizing zero for edge=%.4f strategy=%s -- skip", edge, strategy
+            )
+            continue
+
+        signal_id = f"sig_{uuid.uuid4().hex[:12]}"
+        violation_id = f"viol_{uuid.uuid4().hex[:12]}"
+
+        logger.info(
+            "SINGLE-PLATFORM: %s | %s %s@%.3f spread=%.3f | %s | %s",
+            strategy,
+            side,
+            m["platform"],
+            price,
+            m["spread"],
+            m["title"][:50],
+            m["id"][:25],
+        )
+
+        # Create self-referencing market pair for single-platform
+        pair_id = f"sp_{m['id']}"
+        try:
+            await db.execute(
+                """INSERT OR IGNORE INTO market_pairs
+                   (id, market_id_a, market_id_b, pair_type, active, created_at, updated_at)
+                   VALUES (?, ?, ?, 'single_platform', 1, ?, ?)""",
+                (pair_id, m["id"], m["id"], now, now),
+            )
+        except Exception as e:
+            logger.debug("Market pair insert error: %s", e)
+
+        # Write violation
+        try:
+            await db.execute(
+                """INSERT OR IGNORE INTO violations
+                   (id, pair_id, violation_type, price_a_at_detect, price_b_at_detect,
+                    raw_spread, net_spread, status, detected_at, updated_at)
+                   VALUES (?, ?, 'single_platform', ?, ?, ?, ?, 'detected', ?, ?)""",
+                (
+                    violation_id,
+                    pair_id,
+                    price,
+                    m["no_price"],
+                    m["spread"],
+                    edge,
+                    now,
+                    now,
+                ),
+            )
+        except Exception as e:
+            logger.debug("Violation insert error: %s", e)
+
+        # Write signal
+        try:
+            kelly = _kelly_f
+            await db.execute(
+                """INSERT OR IGNORE INTO signals
+                   (id, violation_id, strategy, signal_type, market_id_a,
+                    model_edge, kelly_fraction, position_size_a,
+                    total_capital_at_risk, status, fired_at, updated_at)
+                   VALUES (?, ?, ?, 'single', ?, ?, ?, ?, ?, 'fired', ?, ?)""",
+                (
+                    signal_id,
+                    violation_id,
+                    strategy,
+                    m["id"],
+                    edge,
+                    kelly,
+                    size,
+                    size,
+                    now,
+                    now,
+                ),
+            )
+        except Exception as e:
+            logger.debug("Signal insert error: %s", e)
+
+        # Check circuit breaker before submitting any order.
+        if circuit_breaker is not None and await circuit_breaker.should_halt():
+            logger.warning(
+                "CIRCUIT_BREAKER halted -- skipping single-platform trade for %s",
+                strategy,
+            )
+            break
+
+        # Get (or create) execution client for this market's platform
+        platform = m["platform"]
+        if platform not in _clients:
+            _clients[platform] = _make_single_execution_client(
+                db, execution_mode, platform
+            )
+
+        leg = OrderLeg(
+            market_id=m["id"],
+            platform=platform,
+            side=side,
+            size=size,
+            limit_price=price,
+            order_type="LIMIT",
+        )
+        result = await _clients[platform].submit_order(
+            leg, signal_id=signal_id, strategy=strategy
+        )
+
+        if result.filled_price:
+            # Phase 4: open position, NO synthetic exit price.
+            # mark_and_close_positions() will close it after holding_period_s
+            # at the then-current market price, giving a realistic realized PnL.
+            pos_id = f"pos_{uuid.uuid4().hex[:12]}"
+            try:
+                await db.execute(
+                    """INSERT INTO positions
+                       (id, signal_id, market_id, strategy, side, book, entry_price,
+                        entry_size, fees_paid, pnl_model, status, opened_at, updated_at)
+                       VALUES (?, ?, ?, ?, ?, 'YES', ?, ?, ?, 'realistic', 'open', ?, ?)""",
+                    (
+                        pos_id,
+                        signal_id,
+                        m["id"],
+                        strategy,
+                        side,
+                        result.filled_price,
+                        size,
+                        result.fee_paid or 0,
+                        now,
+                        now,
+                    ),
+                )
+            except Exception as e:
+                logger.debug("Position insert error: %s", e)
+
+            trades.append(
+                {
+                    "strategy": strategy,
+                    "market": f"{m['platform']}:{m['id'][:20]}",
+                    "side": side,
+                    "price": result.filled_price,
+                    "edge": edge,
+                    "pos_id": pos_id,
+                }
+            )
+
+            logger.info(
+                "  OPENED: %s@%.4f edge=%.4f | pos=%s (holding until close)",
+                side,
+                result.filled_price,
+                edge,
+                pos_id,
+            )
+
+            # Batch commit every 50 trades
+            if len(trades) % 50 == 0:
+                await db.commit()
+
+    # Final commit
+    await db.commit()
+    return trades
