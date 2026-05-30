@@ -118,6 +118,7 @@ class ScheduledStrategyRunner:
             max_trades=self.max_trades,
             risk_config=self._risk_config,
             price_cache=self._price_cache,
+            circuit_breaker=self._circuit_breaker,
         )
 
     async def run(self, stop_event: asyncio.Event):

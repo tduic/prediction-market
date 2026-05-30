@@ -164,17 +164,11 @@ async def _check_unbalanced_arb_pairs(db: aiosqlite.Connection) -> int:
         )
         GROUP BY o.signal_id
         HAVING filled_count = 1
+          AND o.signal_id NOT IN (SELECT signal_id FROM positions WHERE signal_id IS NOT NULL)
         """)
     rows = await cursor.fetchall()
     count = 0
     for signal_id, filled_count, leg_count in rows:
-        # Skip if a position was written under this signal (balanced case).
-        pos_cursor = await db.execute(
-            "SELECT 1 FROM positions WHERE signal_id = ? LIMIT 1",
-            (signal_id,),
-        )
-        if await pos_cursor.fetchone():
-            continue
         await _log_discrepancy(
             db,
             platform="cross_platform",
