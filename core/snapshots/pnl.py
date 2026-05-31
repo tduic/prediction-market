@@ -6,7 +6,7 @@ trading performance metrics and printing strategy-level analytics reports.
 """
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import aiosqlite
 
@@ -48,6 +48,20 @@ async def take_trading_snapshot(db: aiosqlite.Connection) -> int | None:
         open_positions_count = pos_row[0] if pos_row else 0
         open_notional = float(pos_row[1]) if pos_row else 0.0
 
+        # ── Compute today's realized PnL and fees ──
+        from datetime import date as _date
+
+        _today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        _tomorrow = (_date.fromisoformat(_today) + timedelta(days=1)).isoformat()
+        today_cursor = await db.execute(
+            "SELECT COALESCE(SUM(actual_pnl),0), COALESCE(SUM(fees_total),0) "
+            "FROM trade_outcomes WHERE created_at >= ? AND created_at < ?",
+            (_today, _tomorrow),
+        )
+        today_row = await today_cursor.fetchone()
+        realized_pnl_today = float(today_row[0]) if today_row else 0.0
+        fees_today = float(today_row[1]) if today_row else 0.0
+
         # ── Insert pnl_snapshots row ──
         cursor = await db.execute(
             """INSERT INTO pnl_snapshots (
@@ -66,9 +80,9 @@ async def take_trading_snapshot(db: aiosqlite.Connection) -> int | None:
                 open_positions_count,
                 open_notional,
                 0.0,  # unrealized_pnl
-                0.0,  # realized_pnl_today (we could compute this, but keeping simple)
+                realized_pnl_today,
                 realized_pnl_total,
-                0.0,  # fees_today
+                fees_today,
                 fees_total,
                 0.0,
                 0.0,
@@ -194,5 +208,5 @@ async def print_analytics(db: aiosqlite.Connection):
     print(f"  Trades executed: {total}")
     print(f"  Total PnL: ${total_pnl:.4f}")
     print(f"  Total fees: ${total_fees:.4f}")
-    print(f"  Net: ${total_pnl:.4f}")
+    print(f"  Net: ${total_pnl - total_fees:.4f}")
     print("=" * 70)

@@ -211,16 +211,17 @@ class AlertManager:
             f"{alert.component}|{alert.severity.value}|{alert.title}".encode()
         ).hexdigest()
 
-    def _is_duplicate(self, alert: Alert) -> bool:
+    def _is_duplicate(self, alert: Alert, window_s: float | None = None) -> bool:
         now = time.time()
         key = self._dedup_key(alert)
+        window = window_s if window_s is not None else self.dedup_window_s
 
         # Opportunistic cleanup of old entries
         cutoff = now - self.dedup_window_s
         self._recent = {k: t for k, t in self._recent.items() if t > cutoff}
 
         last = self._recent.get(key)
-        if last is not None and (now - last) < self.dedup_window_s:
+        if last is not None and (now - last) < window:
             return True
         self._recent[key] = now
         return False
@@ -245,7 +246,13 @@ class AlertManager:
             component=component,
         )
 
-        if self._is_duplicate(alert):
+        critical_window = 10.0
+        dedup_window = (
+            critical_window
+            if alert.severity == Severity.CRITICAL
+            else self.dedup_window_s
+        )
+        if self._is_duplicate(alert, window_s=dedup_window):
             logger.debug(
                 "Dedup suppressed alert [%s] %s", alert.severity.value, alert.title
             )
@@ -306,7 +313,7 @@ class AlertManager:
         task.add_done_callback(self._pending_tasks.discard)
 
 
-# ── Module-level factory ──────────────────────────────────────
+# ── Module-level factory ────────────────────────────
 
 _manager: AlertManager | None = None
 

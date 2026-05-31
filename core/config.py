@@ -168,6 +168,9 @@ class RiskControlConfig:
     reconcile_every: int = field(
         default_factory=lambda: int(os.getenv("RECONCILE_EVERY", "5"))
     )
+    reconcile_stuck_pending_threshold_s: int = field(
+        default_factory=lambda: int(os.getenv("STUCK_PENDING_THRESHOLD_S", "300"))
+    )
     # Minimum character length of a stripped title root before a market is
     # eligible for P2 series grouping. Lower values increase recall but risk
     # false groupings on short generic titles. Minimum recommended: 15.

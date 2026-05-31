@@ -23,9 +23,6 @@ import aiosqlite
 
 logger = logging.getLogger(__name__)
 
-# Pending orders older than this are considered stuck.
-STUCK_PENDING_THRESHOLD_S = 300
-
 
 async def reconcile_internal_state(db: aiosqlite.Connection) -> dict[str, int]:
     """Run all internal reconciliation checks.
@@ -110,7 +107,10 @@ async def _check_stuck_pending_orders(db: aiosqlite.Connection) -> int:
     `submitted_at` is stored as TEXT but arb_engine/base client write it
     as str(int(time.time())) — so CAST to INTEGER works for comparison.
     """
-    cutoff = int(time.time()) - STUCK_PENDING_THRESHOLD_S
+    from core.config import get_config
+
+    threshold_s = get_config().risk_controls.reconcile_stuck_pending_threshold_s
+    cutoff = int(time.time()) - threshold_s
     cursor = await db.execute(
         """
         SELECT id, platform, signal_id, market_id, submitted_at
