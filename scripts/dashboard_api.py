@@ -108,7 +108,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
         allow_headers=["*"],
     )
 
-    # ── helpers ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+    # ── helpers ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
     async def get_db() -> aiosqlite.Connection:
         db = await aiosqlite.connect(_DB_PATH)
@@ -134,7 +134,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
             if own_db:
                 await close_db(db)
 
-    # ── endpoints ──────────────────────────────────────────────────────────────────────────────────────────────
+    # ── endpoints ───────────────────────────────────────────────────────────────────────────────────────────────────────
 
     @app.get("/api/overview")
     async def get_overview() -> Dict[str, Any]:
@@ -464,10 +464,10 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
             _cutoff_90d = (datetime.now(timezone.utc) - timedelta(days=90)).isoformat()
             cursor = await db.execute(
                 """
-                SELECT total_capital, realized_pnl_total + unrealized_pnl as net_pnl
+                SELECT total_capital
                 FROM pnl_snapshots
                 WHERE snapshotted_at >= ?
-                ORDER BY snapshotted_at DESC
+                ORDER BY snapshotted_at ASC
                 """,
                 (_cutoff_90d,),
             )
@@ -477,7 +477,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
             max_drawdown_dollar = 0.0
             if snapshots:
                 peak_capital = None
-                for snap in reversed(snapshots):
+                for snap in snapshots:
                     current_capital = snap["total_capital"] or 0
                     if peak_capital is None or current_capital > peak_capital:
                         peak_capital = current_capital
@@ -825,7 +825,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
             if db is not None:
                 await close_db(db)
 
-    # ── Serve React frontend if static_dir provided ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+    # ── Serve React frontend if static_dir provided ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
     if static_dir and Path(static_dir).is_dir():
         app.mount(
             "/",
