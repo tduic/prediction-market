@@ -627,6 +627,7 @@ class ArbitrageEngine:
         buy_result = await self._submit_with_retry(
             buy_client, buy_leg, signal_id=signal_id, strategy=strategy
         )
+        _buy_fill_ms = int(time.time() * 1000)
         sell_result = await self._submit_with_retry(
             sell_client, sell_leg, signal_id=signal_id, strategy=strategy
         )
@@ -672,8 +673,8 @@ class ArbitrageEngine:
                     """INSERT INTO positions
                        (id, signal_id, market_id, strategy, side, book, entry_price,
                         entry_size, exit_price, exit_size, realized_pnl, fees_paid,
-                        status, opened_at, closed_at, updated_at)
-                       VALUES (?, ?, ?, ?, 'BUY', 'YES', ?, ?, ?, ?, ?, ?, 'closed', ?, ?, ?)""",
+                        pnl_model, status, opened_at, closed_at, updated_at)
+                       VALUES (?, ?, ?, ?, 'BUY', 'YES', ?, ?, ?, ?, ?, ?, 'realistic', 'closed', ?, ?, ?)""",
                     # TODO[no-naked-shorts]: when the translated-NO path becomes live
                     # for arbs, propagate the resolved book here instead of 'YES'.
                     (
@@ -725,7 +726,7 @@ class ArbitrageEngine:
                             else 0
                         ),
                         int(time.time() * 1000) - _trade_start_ms,
-                        max(1, int(time.time() * 1000) - _trade_start_ms),
+                        int(time.time() * 1000) - _buy_fill_ms,
                         now,
                         now,
                     ),
