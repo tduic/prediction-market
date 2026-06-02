@@ -1,10 +1,11 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 
 interface UseApiResult<T> {
   data: T | null
   loading: boolean
   error: string | null
   lastUpdated: Date | null
+  refresh: () => void
 }
 
 interface UseApiParams {
@@ -21,11 +22,17 @@ export function useApi<T>(
   const [error, setError] = useState<string | null>(null)
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
   const hasDataRef = useRef(false)
+  // Incrementing this counter triggers an immediate re-fetch from the effect.
+  const [manualRefreshTick, setManualRefreshTick] = useState(0)
 
   // Serialize params so a new object with the same values doesn't re-trigger
   // the effect on every render. Without this, inline objects like `{ days }`
   // get a new reference each render, causing an infinite fetch loop.
   const paramsKey = JSON.stringify(params ?? null)
+
+  const refresh = useCallback(() => {
+    setManualRefreshTick((t) => t + 1)
+  }, [])
 
   useEffect(() => {
     const fetchData = async () => {
@@ -74,7 +81,7 @@ export function useApi<T>(
 
     return () => clearInterval(interval)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [url, refreshInterval, paramsKey])
+  }, [url, refreshInterval, paramsKey, manualRefreshTick])
 
-  return { data, loading, error, lastUpdated }
+  return { data, loading, error, lastUpdated, refresh }
 }

@@ -49,6 +49,17 @@ function App() {
   const riskResult = useApi<RiskMetrics>('/api/risk', REFRESH_INTERVAL)
   const circuitBreakerResult = useApi<CircuitBreakerStatus>('/api/circuit-breaker', CB_REFRESH_INTERVAL)
 
+  const refreshAll = () => {
+    overviewResult.refresh()
+    metricsResult.refresh()
+    pnlResult.refresh()
+    equityResult.refresh()
+    tradesResult.refresh()
+    feeResult.refresh()
+    riskResult.refresh()
+    circuitBreakerResult.refresh()
+  }
+
   // Get unique strategies for trade log filter
   const strategies = Array.from(
     new Set(
@@ -149,8 +160,17 @@ function App() {
                   </select>
                 </div>
               </div>
-              <div className="text-xs text-gray-500 whitespace-nowrap">
-                Last refresh: {lastUpdated ? lastUpdated.toLocaleTimeString() : '—'}
+              <div className="flex items-center gap-2">
+                <div className="text-xs text-gray-500 whitespace-nowrap">
+                  Last refresh: {lastUpdated ? lastUpdated.toLocaleTimeString() : '—'}
+                </div>
+                <button
+                  onClick={refreshAll}
+                  title="Refresh all data now"
+                  className="text-xs text-gray-400 hover:text-gray-100 border border-gray-700 hover:border-gray-500 rounded px-2 py-1 transition-colors"
+                >
+                  ↺ Refresh
+                </button>
               </div>
             </div>
           </div>
