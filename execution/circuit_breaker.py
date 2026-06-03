@@ -1,1 +1,397 @@
-"""\nDaily loss circuit breaker.\n\nUnlike the per-signal ``check_daily_loss_limit`` risk check, the circuit\nbreaker is a STICKY halt. Once today's realized losses exceed the configured\nthreshold, the breaker trips and rejects all subsequent signals until either:\n\n  1. The UTC day rolls over (automatic daily reset), or\n  2. An operator calls ``reset()`` manually (after investigating).\n\nThe breaker also tracks consecutive order execution failures — if the router\nreports N failures in a row, the breaker trips to avoid hammering a degraded\nexchange. This provides a second, orthogonal halt signal.\n\nState is persisted in the ``system_events`` table so trips survive process\nrestarts within the same UTC day (on startup, the breaker checks whether it\nwas already tripped today and restores that state).\n"""\n\nfrom __future__ import annotations\n\nimport json\nimport logging\nfrom dataclasses import dataclass\nfrom datetime import date, datetime, timedelta, timezone\nfrom typing import Any\n\nimport aiosqlite\n\nfrom core.alerting import Severity, get_alert_manager\n\nlogger = logging.getLogger(__name__)\n\n\n@dataclass\nclass BreakerState:\n    """Snapshot of the current circuit-breaker state."""\n\n    tripped: bool\n    reason: str | None\n    tripped_at: str | None\n    daily_loss: float\n    daily_loss_limit: float\n    consecutive_failures: int\n    consecutive_failure_limit: int\n    utc_day: str\n    daily_loss_available: bool = True\n\n\nclass DailyLossCircuitBreaker:\n    """\n    Sticky daily-loss + consecutive-failure circuit breaker.\n\n    Usage::\n\n        breaker = DailyLossCircuitBreaker(\n            db=conn,\n            starting_capital=10_000,\n            max_daily_loss_pct=0.02,\n            consecutive_failure_limit=5,\n        )\n        await breaker.load_state()          # restore from DB on startup\n\n        # Before routing every signal:\n        if await breaker.should_halt():\n            # reject — log and return\n\n        # After each order lifecycle:\n        await breaker.record_order_result(success=True_or_False)\n    """\n\n    def __init__(\n        self,\n        db: aiosqlite.Connection,\n        starting_capital: float,\n        max_daily_loss_pct: float,\n        consecutive_failure_limit: int = 5,\n    ) -> None:\n        self.db = db\n        self.starting_capital = starting_capital\n        self.max_daily_loss_pct = max_daily_loss_pct\n        self.consecutive_failure_limit = consecutive_failure_limit\n\n        self._tripped: bool = False\n        self._reason: str | None = None\n        self._tripped_at: str | None = None\n        self._consecutive_failures: int = 0\n        self._utc_day: str = self._today()\n\n    # ── Public API ────────────────────────────────────────────────────\n\n    async def load_state(self) -> None:\n        """\n        Restore trip state from ``system_events``.\n\n        If a ``CIRCUIT_BREAKER_TRIPPED`` event was written earlier today (UTC),\n        the breaker remains tripped on startup. Trips from previous days are\n        ignored — the breaker auto-resets at day boundary.\n        """\n        today = self._today()\n        self._utc_day = today\n        try:\n            cursor = await self.db.execute(\n                """\n                SELECT detail, context, occurred_at\n                FROM system_events\n                WHERE event_type = 'CIRCUIT_BREAKER_TRIPPED'\n                  AND DATE(occurred_at) = ?\n                ORDER BY id DESC\n                LIMIT 1\n                """,\n                (today,),\n            )\n            row = await cursor.fetchone()\n            if row:\n                self._tripped = True\n                self._reason = row[0]\n                self._tripped_at = row[2]\n                logger.warning(\n                    "Circuit breaker restored to TRIPPED state from %s: %s",\n                    self._tripped_at,\n                    self._reason,\n                )\n            else:\n                logger.info("Circuit breaker clean for %s", today)\n        except Exception as e:\n            logger.error("Failed to load circuit breaker state: %s", e)\n\n    async def should_halt(self) -> bool:\n        """\n        Returns True if trading should be halted.\n\n        Performs a day-rollover check (auto-reset at UTC midnight) and then\n        re-evaluates daily loss against the limit. If either the sticky\n        ``_tripped`` flag is set OR the fresh daily-loss query exceeds the\n        limit, returns True and trips the breaker if not already tripped.\n        """\n        await self._maybe_rollover()\n\n        if self._tripped:\n            return True\n\n        try:\n            daily_loss = await self._compute_daily_loss()\n        except Exception as e:\n            logger.error(\n                "Failed to compute daily loss — halting as safe default: %s", e\n            )\n            await self._trip(\n                reason=f"DB error during daily-loss query: {e}",\n                context={"trip_type": "db_error", "error": str(e)},\n            )\n            return True\n\n        limit = self._daily_loss_limit()\n\n        if daily_loss >= limit:\n            await self._trip(\n                reason=(\n                    f"Daily loss ${daily_loss:.2f} >= limit ${limit:.2f} "\n                    f"({self.max_daily_loss_pct:.1%} of ${self.starting_capital:.2f})"\n                ),\n                context={\n                    "trip_type": "daily_loss",\n                    "daily_loss": daily_loss,\n                    "limit": limit,\n                },\n            )\n            return True\n\n        return False\n\n    async def record_order_result(self, success: bool) -> None:\n        """\n        Track order outcomes for the consecutive-failure halt path.\n\n        Call this after each order submission regardless of whether the order\n        filled, errored, or timed out. A single success resets the counter;\n        N consecutive failures trip the breaker.\n        """\n        if success:\n            if self._consecutive_failures > 0:\n                logger.info(\n                    "Circuit breaker consecutive failures reset after success (was %d)",\n                    self._consecutive_failures,\n                )\n            self._consecutive_failures = 0\n            return\n\n        self._consecutive_failures += 1\n        logger.warning(\n            "Circuit breaker consecutive failure %d/%d",\n            self._consecutive_failures,\n            self.consecutive_failure_limit,\n        )\n\n        if self._consecutive_failures >= self.consecutive_failure_limit:\n            await self._trip(\n                reason=(\n                    f"{self._consecutive_failures} consecutive order failures "\n                    f"(limit {self.consecutive_failure_limit})"\n                ),\n                context={\n                    "trip_type": "consecutive_failures",\n                    "failures": self._consecutive_failures,\n                    "limit": self.consecutive_failure_limit,\n                },\n            )\n\n    async def reset(self, reason: str = "manual reset") -> None:\n        """Manually clear the tripped state (for operator kill-switch off)."""\n        was_tripped = self._tripped\n        previous_reason = self._reason\n        self._tripped = False\n        self._reason = None\n        self._tripped_at = None\n        self._consecutive_failures = 0\n        if was_tripped:\n            await self._log_event(\n                "CIRCUIT_BREAKER_RESET",\n                severity="warning",\n                detail=reason,\n                context={"previous_reason": previous_reason},\n            )\n            logger.warning("Circuit breaker RESET: %s", reason)\n            try:\n                await get_alert_manager().send(\n                    title="Circuit breaker RESET — trading resumed",\n                    message=reason,\n                    severity=Severity.WARNING,\n                    component="circuit_breaker",\n                )\n            except Exception as e:\n                logger.error("Failed to send reset alert: %s", e)\n\n    async def get_state(self) -> BreakerState:\n        """Return a snapshot of current state (for dashboards / status API)."""\n        daily_loss_available = True\n        try:\n            daily_loss = await self._compute_daily_loss()\n        except Exception as e:\n            logger.warning(\n                "get_state: failed to compute daily loss — reporting unavailable: %s", e\n            )\n            daily_loss = 0.0\n            daily_loss_available = False\n        return BreakerState(\n            tripped=self._tripped,\n            reason=self._reason,\n            tripped_at=self._tripped_at,\n            daily_loss=daily_loss,\n            daily_loss_limit=self._daily_loss_limit(),\n            consecutive_failures=self._consecutive_failures,\n            consecutive_failure_limit=self.consecutive_failure_limit,\n            utc_day=self._utc_day,\n            daily_loss_available=daily_loss_available,\n        )\n\n    # ── Internal helpers ──────────────────────────────────────────────\n\n    @staticmethod\n    def _today() -> str:\n        return datetime.now(timezone.utc).strftime("%Y-%m-%d")\n\n    def _daily_loss_limit(self) -> float:\n        return self.starting_capital * self.max_daily_loss_pct\n\n    async def _compute_daily_loss(self) -> float:\n        """\n        Return today's realized net losses as a positive float.\n\n        Sums ``actual_pnl - fees_total`` from ``trade_outcomes`` dated\n        today (UTC). Returns 0.0 if net P&L is positive (no loss).\n\n        Uses a range comparison on ``created_at`` so the query planner can\n        use the B-tree index on that column. ``created_at`` is always written\n        as ``datetime.now(timezone.utc).isoformat()`` (e.g.\n        ``'2026-05-21T10:16:51.246719+00:00'``); the ISO prefix sorts\n        correctly under SQLite's byte-order string comparison.\n\n        Raises:\n            Exception: Re-raised if the DB query fails so that ``should_halt``\n                can apply the safe-by-default halt policy on DB errors.\n        """\n        today = self._today()\n        # Compute the exclusive upper bound (next calendar day in UTC).\n        tomorrow = (date.fromisoformat(today) + timedelta(days=1)).isoformat()\n        cursor = await self.db.execute(\n            """\n            SELECT COALESCE(SUM(actual_pnl - COALESCE(fees_total, 0)), 0)\n            FROM trade_outcomes\n            WHERE created_at >= ? AND created_at < ?\n            """,\n            (today, tomorrow),\n        )\n        row = await cursor.fetchone()\n        net_pnl = float(row[0]) if row and row[0] is not None else 0.0\n        return max(0.0, -net_pnl)\n\n    async def _maybe_rollover(self) -> None:\n        """Auto-reset at UTC day boundary."""\n        today = self._today()\n        if today != self._utc_day:\n            was_tripped = self._tripped\n            previous_reason = self._reason\n            previous_day = self._utc_day\n            logger.info(\n                "Circuit breaker day rollover %s → %s, auto-reset",\n                previous_day,\n                today,\n            )\n            self._utc_day = today\n            self._tripped = False\n            self._reason = None\n            self._tripped_at = None\n            self._consecutive_failures = 0\n            if was_tripped:\n                detail = (\n                    f"UTC day rollover {previous_day} → {today}; "\n                    f"previous trip reason: {previous_reason}"\n                )\n                await self._log_event(\n                    "CIRCUIT_BREAKER_RESET",\n                    severity="warning",\n                    detail=detail,\n                    context={\n                        "reset_type": "utc_day_rollover",\n                        "previous_reason": previous_reason,\n                        "previous_day": previous_day,\n                        "new_day": today,\n                    },\n                )\n                logger.warning(\n                    "Circuit breaker auto-reset on UTC day rollover (was tripped: %s)",\n                    previous_reason,\n                )\n                try:\n                    await get_alert_manager().send(\n                        title="Circuit breaker auto-reset — UTC day rollover",\n                        message=detail,\n                        severity=Severity.WARNING,\n                        component="circuit_breaker",\n                    )\n                except Exception as e:\n                    logger.error("Failed to send auto-reset alert: %s", e)\n\n    async def _trip(self, reason: str, context: dict[str, Any]) -> None:\n        """Mark the breaker tripped and persist a system event."""\n        if self._tripped:\n            return\n        self._tripped = True\n        self._reason = reason\n        self._tripped_at = datetime.now(timezone.utc).isoformat()\n        logger.error("CIRCUIT BREAKER TRIPPED: %s", reason)\n        await self._log_event(\n            "CIRCUIT_BREAKER_TRIPPED",\n            severity="critical",\n            detail=reason,\n            context=context,\n        )\n        try:\n            await get_alert_manager().send(\n                title="Circuit breaker TRIPPED — trading halted",\n                message=reason,\n                severity=Severity.CRITICAL,\n                context=context,\n                component="circuit_breaker",\n            )\n        except Exception as e:\n            logger.error("Failed to send circuit-breaker alert: %s", e)\n\n    async def _log_event(\n        self,\n        event_type: str,\n        severity: str,\n        detail: str,\n        context: dict[str, Any] | None = None,\n    ) -> None:\n        try:\n            await self.db.execute(\n                """\n                INSERT INTO system_events\n                (event_type, severity, component, detail, context, occurred_at)\n                VALUES (?, ?, ?, ?, ?, ?)\n                """,\n                (\n                    event_type,\n                    severity,\n                    "circuit_breaker",\n                    detail,\n                    json.dumps(context) if context else None,\n                    datetime.now(timezone.utc).isoformat(),\n                ),\n            )\n            await self.db.commit()\n        except Exception as e:\n            logger.error("Failed to log circuit breaker event: %s", e)\n
+"""
+Daily loss circuit breaker.
+
+Unlike the per-signal ``check_daily_loss_limit`` risk check, the circuit
+breaker is a STICKY halt. Once today's realized losses exceed the configured
+threshold, the breaker trips and rejects all subsequent signals until either:
+
+  1. The UTC day rolls over (automatic daily reset), or
+  2. An operator calls ``reset()`` manually (after investigating).
+
+The breaker also tracks consecutive order execution failures — if the router
+reports N failures in a row, the breaker trips to avoid hammering a degraded
+exchange. This provides a second, orthogonal halt signal.
+
+State is persisted in the ``system_events`` table so trips survive process
+restarts within the same UTC day (on startup, the breaker checks whether it
+was already tripped today and restores that state).
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+from dataclasses import dataclass
+from datetime import date, datetime, timedelta, timezone
+from typing import Any
+
+import aiosqlite
+
+from core.alerting import Severity, get_alert_manager
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class BreakerState:
+    """Snapshot of the current circuit-breaker state."""
+
+    tripped: bool
+    reason: str | None
+    tripped_at: str | None
+    daily_loss: float
+    daily_loss_limit: float
+    consecutive_failures: int
+    consecutive_failure_limit: int
+    utc_day: str
+    daily_loss_available: bool = True
+
+
+class DailyLossCircuitBreaker:
+    """
+    Sticky daily-loss + consecutive-failure circuit breaker.
+
+    Usage::
+
+        breaker = DailyLossCircuitBreaker(
+            db=conn,
+            starting_capital=10_000,
+            max_daily_loss_pct=0.02,
+            consecutive_failure_limit=5,
+        )
+        await breaker.load_state()          # restore from DB on startup
+
+        # Before routing every signal:
+        if await breaker.should_halt():
+            # reject — log and return
+
+        # After each order lifecycle:
+        await breaker.record_order_result(success=True_or_False)
+    """
+
+    def __init__(
+        self,
+        db: aiosqlite.Connection,
+        starting_capital: float,
+        max_daily_loss_pct: float,
+        consecutive_failure_limit: int = 5,
+    ) -> None:
+        self.db = db
+        self.starting_capital = starting_capital
+        self.max_daily_loss_pct = max_daily_loss_pct
+        self.consecutive_failure_limit = consecutive_failure_limit
+
+        self._tripped: bool = False
+        self._reason: str | None = None
+        self._tripped_at: str | None = None
+        self._consecutive_failures: int = 0
+        self._utc_day: str = self._today()
+
+    # ── Public API ────────────────────────────────────────────────────
+
+    async def load_state(self) -> None:
+        """
+        Restore trip state from ``system_events``.
+
+        If a ``CIRCUIT_BREAKER_TRIPPED`` event was written earlier today (UTC),
+        the breaker remains tripped on startup. Trips from previous days are
+        ignored — the breaker auto-resets at day boundary.
+        """
+        today = self._today()
+        self._utc_day = today
+        try:
+            cursor = await self.db.execute(
+                """
+                SELECT detail, context, occurred_at
+                FROM system_events
+                WHERE event_type = 'CIRCUIT_BREAKER_TRIPPED'
+                  AND DATE(occurred_at) = ?
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (today,),
+            )
+            row = await cursor.fetchone()
+            if row:
+                self._tripped = True
+                self._reason = row[0]
+                self._tripped_at = row[2]
+                logger.warning(
+                    "Circuit breaker restored to TRIPPED state from %s: %s",
+                    self._tripped_at,
+                    self._reason,
+                )
+            else:
+                logger.info("Circuit breaker clean for %s", today)
+        except Exception as e:
+            logger.error("Failed to load circuit breaker state: %s", e)
+
+    async def should_halt(self) -> bool:
+        """
+        Returns True if trading should be halted.
+
+        Performs a day-rollover check (auto-reset at UTC midnight) and then
+        re-evaluates daily loss against the limit. If either the sticky
+        ``_tripped`` flag is set OR the fresh daily-loss query exceeds the
+        limit, returns True and trips the breaker if not already tripped.
+        """
+        await self._maybe_rollover()
+
+        if self._tripped:
+            return True
+
+        try:
+            daily_loss = await self._compute_daily_loss()
+        except Exception as e:
+            logger.error(
+                "Failed to compute daily loss — halting as safe default: %s", e
+            )
+            await self._trip(
+                reason=f"DB error during daily-loss query: {e}",
+                context={"trip_type": "db_error", "error": str(e)},
+            )
+            return True
+
+        limit = self._daily_loss_limit()
+
+        if daily_loss >= limit:
+            await self._trip(
+                reason=(
+                    f"Daily loss ${daily_loss:.2f} >= limit ${limit:.2f} "
+                    f"({self.max_daily_loss_pct:.1%} of ${self.starting_capital:.2f})"
+                ),
+                context={
+                    "trip_type": "daily_loss",
+                    "daily_loss": daily_loss,
+                    "limit": limit,
+                },
+            )
+            return True
+
+        return False
+
+    async def record_order_result(self, success: bool) -> None:
+        """
+        Track order outcomes for the consecutive-failure halt path.
+
+        Call this after each order submission regardless of whether the order
+        filled, errored, or timed out. A single success resets the counter;
+        N consecutive failures trip the breaker.
+        """
+        if success:
+            if self._consecutive_failures > 0:
+                logger.info(
+                    "Circuit breaker consecutive failures reset after success (was %d)",
+                    self._consecutive_failures,
+                )
+            self._consecutive_failures = 0
+            return
+
+        self._consecutive_failures += 1
+        logger.warning(
+            "Circuit breaker consecutive failure %d/%d",
+            self._consecutive_failures,
+            self.consecutive_failure_limit,
+        )
+
+        if self._consecutive_failures >= self.consecutive_failure_limit:
+            await self._trip(
+                reason=(
+                    f"{self._consecutive_failures} consecutive order failures "
+                    f"(limit {self.consecutive_failure_limit})"
+                ),
+                context={
+                    "trip_type": "consecutive_failures",
+                    "failures": self._consecutive_failures,
+                    "limit": self.consecutive_failure_limit,
+                },
+            )
+
+    async def reset(self, reason: str = "manual reset") -> None:
+        """Manually clear the tripped state (for operator kill-switch off)."""
+        was_tripped = self._tripped
+        previous_reason = self._reason
+        self._tripped = False
+        self._reason = None
+        self._tripped_at = None
+        self._consecutive_failures = 0
+        if was_tripped:
+            await self._log_event(
+                "CIRCUIT_BREAKER_RESET",
+                severity="warning",
+                detail=reason,
+                context={"previous_reason": previous_reason},
+            )
+            logger.warning("Circuit breaker RESET: %s", reason)
+            try:
+                await get_alert_manager().send(
+                    title="Circuit breaker RESET — trading resumed",
+                    message=reason,
+                    severity=Severity.WARNING,
+                    component="circuit_breaker",
+                )
+            except Exception as e:
+                logger.error("Failed to send reset alert: %s", e)
+
+    async def get_state(self) -> BreakerState:
+        """Return a snapshot of current state (for dashboards / status API)."""
+        daily_loss_available = True
+        try:
+            daily_loss = await self._compute_daily_loss()
+        except Exception as e:
+            logger.warning(
+                "get_state: failed to compute daily loss — reporting unavailable: %s", e
+            )
+            daily_loss = 0.0
+            daily_loss_available = False
+        return BreakerState(
+            tripped=self._tripped,
+            reason=self._reason,
+            tripped_at=self._tripped_at,
+            daily_loss=daily_loss,
+            daily_loss_limit=self._daily_loss_limit(),
+            consecutive_failures=self._consecutive_failures,
+            consecutive_failure_limit=self.consecutive_failure_limit,
+            utc_day=self._utc_day,
+            daily_loss_available=daily_loss_available,
+        )
+
+    # ── Internal helpers ──────────────────────────────────────────────
+
+    @staticmethod
+    def _today() -> str:
+        return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+    def _daily_loss_limit(self) -> float:
+        return self.starting_capital * self.max_daily_loss_pct
+
+    async def _compute_daily_loss(self) -> float:
+        """
+        Return today's realized net losses as a positive float.
+
+        Sums ``actual_pnl - fees_total`` from ``trade_outcomes`` dated
+        today (UTC). Returns 0.0 if net P&L is positive (no loss).
+
+        Uses a range comparison on ``created_at`` so the query planner can
+        use the B-tree index on that column. ``created_at`` is always written
+        as ``datetime.now(timezone.utc).isoformat()`` (e.g.
+        ``'2026-05-21T10:16:51.246719+00:00'``); the ISO prefix sorts
+        correctly under SQLite's byte-order string comparison.
+
+        Raises:
+            Exception: Re-raised if the DB query fails so that ``should_halt``
+                can apply the safe-by-default halt policy on DB errors.
+        """
+        today = self._today()
+        # Compute the exclusive upper bound (next calendar day in UTC).
+        tomorrow = (date.fromisoformat(today) + timedelta(days=1)).isoformat()
+        cursor = await self.db.execute(
+            """
+            SELECT COALESCE(SUM(actual_pnl - COALESCE(fees_total, 0)), 0)
+            FROM trade_outcomes
+            WHERE created_at >= ? AND created_at < ?
+            """,
+            (today, tomorrow),
+        )
+        row = await cursor.fetchone()
+        net_pnl = float(row[0]) if row and row[0] is not None else 0.0
+        return max(0.0, -net_pnl)
+
+    async def _maybe_rollover(self) -> None:
+        """Auto-reset at UTC day boundary."""
+        today = self._today()
+        if today != self._utc_day:
+            was_tripped = self._tripped
+            previous_reason = self._reason
+            previous_day = self._utc_day
+            logger.info(
+                "Circuit breaker day rollover %s → %s, auto-reset",
+                previous_day,
+                today,
+            )
+            self._utc_day = today
+            self._tripped = False
+            self._reason = None
+            self._tripped_at = None
+            self._consecutive_failures = 0
+            if was_tripped:
+                detail = (
+                    f"UTC day rollover {previous_day} → {today}; "
+                    f"previous trip reason: {previous_reason}"
+                )
+                await self._log_event(
+                    "CIRCUIT_BREAKER_RESET",
+                    severity="warning",
+                    detail=detail,
+                    context={
+                        "reset_type": "utc_day_rollover",
+                        "previous_reason": previous_reason,
+                        "previous_day": previous_day,
+                        "new_day": today,
+                    },
+                )
+                logger.warning(
+                    "Circuit breaker auto-reset on UTC day rollover (was tripped: %s)",
+                    previous_reason,
+                )
+                try:
+                    await get_alert_manager().send(
+                        title="Circuit breaker auto-reset — UTC day rollover",
+                        message=detail,
+                        severity=Severity.WARNING,
+                        component="circuit_breaker",
+                    )
+                except Exception as e:
+                    logger.error("Failed to send auto-reset alert: %s", e)
+
+    async def _trip(self, reason: str, context: dict[str, Any]) -> None:
+        """Mark the breaker tripped and persist a system event."""
+        if self._tripped:
+            return
+        self._tripped = True
+        self._reason = reason
+        self._tripped_at = datetime.now(timezone.utc).isoformat()
+        logger.error("CIRCUIT BREAKER TRIPPED: %s", reason)
+        await self._log_event(
+            "CIRCUIT_BREAKER_TRIPPED",
+            severity="critical",
+            detail=reason,
+            context=context,
+        )
+        try:
+            await get_alert_manager().send(
+                title="Circuit breaker TRIPPED — trading halted",
+                message=reason,
+                severity=Severity.CRITICAL,
+                context=context,
+                component="circuit_breaker",
+            )
+        except Exception as e:
+            logger.error("Failed to send circuit-breaker alert: %s", e)
+
+    async def _log_event(
+        self,
+        event_type: str,
+        severity: str,
+        detail: str,
+        context: dict[str, Any] | None = None,
+    ) -> None:
+        try:
+            await self.db.execute(
+                """
+                INSERT INTO system_events
+                (event_type, severity, component, detail, context, occurred_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    event_type,
+                    severity,
+                    "circuit_breaker",
+                    detail,
+                    json.dumps(context) if context else None,
+                    datetime.now(timezone.utc).isoformat(),
+                ),
+            )
+            await self.db.commit()
+        except Exception as e:
+            logger.error("Failed to log circuit breaker event: %s", e)

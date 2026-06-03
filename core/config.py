@@ -291,6 +291,10 @@ class Config:
                 f"STRATEGY_HOLDING_PERIOD_S must be > 0, "
                 f"got {self.risk_controls.strategy_holding_period_s}"
             )
+        if self.risk_controls.arb_cooldown_s < 0:
+            raise ValueError(
+                f"ARB_COOLDOWN_S must be >= 0, got {self.risk_controls.arb_cooldown_s}"
+            )
 
 
 def load_config() -> Config:
