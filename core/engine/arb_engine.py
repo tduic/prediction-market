@@ -799,6 +799,7 @@ class ArbitrageEngine:
         return {
             "pairs_monitored": len(self._pairs),
             "pairs_eligible_now": eligible,
+            "min_spread": self.min_spread,
             "recently_fired": muted_count,
             "last_arb_fired_at": self.last_arb_fired_at,
             "ticks_since_last_fire": self._ticks_since_last_fire,
