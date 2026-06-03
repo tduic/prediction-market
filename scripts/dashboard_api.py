@@ -108,7 +108,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
         allow_headers=["*"],
     )
 
-    # ── helpers ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+    # ── helpers ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
     async def get_db() -> aiosqlite.Connection:
         db = await aiosqlite.connect(_DB_PATH)
@@ -134,7 +134,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
             if own_db:
                 await close_db(db)
 
-    # ── endpoints ───────────────────────────────────────────────────────────────────────────────────────────────────────
+    # ── endpoints ───────────────────────────────────────────────────────────────────────────────────────────────────────────
 
     @app.get("/api/overview")
     async def get_overview() -> Dict[str, Any]:
@@ -532,6 +532,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
                 "max_drawdown_pct": round(max_drawdown, 2),
                 "concentration_pct": round(concentration, 2),
                 "daily_var": round(daily_var, 2),
+                "daily_var_sample_size": len(daily_pnls),
                 "sharpe_overall": round(overall_sharpe, 2),
             }
         finally:
@@ -825,7 +826,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
             if db is not None:
                 await close_db(db)
 
-    # ── Serve React frontend if static_dir provided ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+    # ── Serve React frontend if static_dir provided ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
     if static_dir and Path(static_dir).is_dir():
         app.mount(
             "/",
