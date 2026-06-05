@@ -1,5 +1,4 @@
-"""
-Single-platform trading strategies.
+"""Single-platform trading strategies.
 
 Provides detect_single_platform_opportunities, mark_and_close_positions,
 and related helper functions for P2-P5 strategies that operate on individual
@@ -25,7 +24,7 @@ _MONTH_PAT = (
 )
 _STRIP_SUFFIX = re.compile(
     rf"\s+(?:{_MONTH_PAT}|20\d{{2}}|q[1-4]|h[1-2]|"
-    r"\$?[\d,]+\.?\d*[km%]?(?:\s*[-–to]+\s*\$?[\d,]+\.?\d*[km%]?)?)\ *$",
+    r"\$?[\d,]+\.?\d*[km%]?(?:\s*[-–to]+\s*\$?[\d,]+\.?\d*[km%]?)?)\s*$",
     re.IGNORECASE,
 )
 
@@ -125,7 +124,7 @@ async def mark_and_close_positions(
     now = now_dt.isoformat()
 
     cursor = await db.execute(
-        "SELECT id, market_id, side, entry_price, entry_size, fees_paid "
+        "SELECT id, signal_id, market_id, strategy, side, entry_price, entry_size, fees_paid "
         "FROM positions WHERE status='open' AND opened_at <= ?",
         (cutoff,),
     )
@@ -133,7 +132,16 @@ async def mark_and_close_positions(
 
     closed = 0
     for row in rows:
-        pos_id, market_id, side, entry_price, entry_size, fees_paid = row
+        (
+            pos_id,
+            signal_id,
+            market_id,
+            strategy,
+            side,
+            entry_price,
+            entry_size,
+            fees_paid,
+        ) = row
 
         # Use live cache price if available, fall back to DB
         if price_cache and market_id in price_cache:
@@ -167,6 +175,27 @@ async def mark_and_close_positions(
              WHERE id=?""",
             (current_price, entry_size, realized_pnl, current_price, now, now, pos_id),
         )
+        # Write a trade_outcomes row so P2-P5 results appear in dashboard analytics.
+        # id is deterministic on pos_id so INSERT OR IGNORE is idempotent on retries.
+        try:
+            await db.execute(
+                """INSERT OR IGNORE INTO trade_outcomes
+                   (id, signal_id, strategy, market_id_a,
+                    actual_pnl, fees_total, resolved_at, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    f"trade_{pos_id[4:]}",  # deterministic: strip "pos_" prefix
+                    signal_id,
+                    strategy,
+                    market_id,
+                    realized_pnl,
+                    fees_paid or 0,
+                    now,
+                    now,
+                ),
+            )
+        except Exception as e:
+            logger.debug("trade_outcomes insert failed for pos=%s: %s", pos_id, e)
         closed += 1
         logger.debug(
             "mark_and_close: closed pos=%s market=%s pnl=%.4f",
@@ -620,6 +649,7 @@ async def detect_single_platform_opportunities(
             if len(trades) % 50 == 0:
                 await db.commit()
 
-    # Final commit
-    await db.commit()
+    if trades:
+        await db.commit()
+
     return trades
