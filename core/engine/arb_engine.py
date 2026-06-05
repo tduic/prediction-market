@@ -707,8 +707,8 @@ class ArbitrageEngine:
                        (id, signal_id, strategy, violation_id, market_id_a, market_id_b,
                         predicted_edge, predicted_pnl, actual_pnl, fees_total,
                         edge_captured_pct, signal_to_fill_ms, holding_period_ms,
-                        resolved_at, created_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        spread_at_signal, resolved_at, created_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         f"trade_{uuid.uuid4().hex[:12]}",
                         signal_id,
@@ -727,6 +727,7 @@ class ArbitrageEngine:
                         ),
                         int(time.time() * 1000) - _trade_start_ms,
                         int(time.time() * 1000) - _buy_fill_ms,
+                        spread,
                         now,
                         now,
                     ),
