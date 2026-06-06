@@ -108,7 +108,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
         allow_headers=["*"],
     )
 
-    # ── helpers ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+    # ── helpers ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
     async def get_db() -> aiosqlite.Connection:
         db = await aiosqlite.connect(_DB_PATH)
@@ -134,7 +134,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
             if own_db:
                 await close_db(db)
 
-    # ── endpoints ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+    # ── endpoints ───────────────────────────────────────────────────────────────────────────────────────────────────────────
 
     @app.get("/api/overview")
     async def get_overview() -> Dict[str, Any]:
@@ -211,7 +211,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
             await close_db(db)
 
     @app.get("/api/strategies")
-    async def get_strategies(days: int = Query(30, ge=1)) -> List[Dict[str, Any]]:
+    async def get_strategies(days: int = Query(30, ge=1, le=365)) -> List[Dict[str, Any]]:
         db = await get_db()
         try:
             cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
@@ -333,7 +333,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
 
     @app.get("/api/strategies/pnl-series")
     async def get_strategies_pnl_series(
-        days: int = Query(7, ge=1),
+        days: int = Query(7, ge=1, le=365),
     ) -> List[Dict[str, Any]]:
         db = await get_db()
         try:
@@ -368,7 +368,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
             await close_db(db)
 
     @app.get("/api/equity-curve")
-    async def get_equity_curve(days: int = Query(30, ge=1)) -> List[Dict[str, Any]]:
+    async def get_equity_curve(days: int = Query(30, ge=1, le=365)) -> List[Dict[str, Any]]:
         db = await get_db()
         try:
             cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
@@ -400,7 +400,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
     @app.get("/api/trades")
     async def get_trades(
         strategy: Optional[str] = Query(None),
-        days: int = Query(30, ge=1),
+        days: int = Query(30, ge=1, le=365),
         limit: int = Query(200, ge=1, le=1000),
     ) -> List[Dict[str, Any]]:
         db = await get_db()
@@ -597,7 +597,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
     @app.get("/api/signals")
     async def get_signals(
         strategy: Optional[str] = Query(None),
-        days: int = Query(7, ge=1),
+        days: int = Query(7, ge=1, le=365),
         limit: int = Query(200, ge=1, le=1000),
     ) -> List[Dict[str, Any]]:
         db = await get_db()
@@ -837,7 +837,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
             if db is not None:
                 await close_db(db)
 
-    # ── Serve React frontend if static_dir provided ───────────────────────────────────────────────────────────────────────────────────────────────────────────────
+    # ── Serve React frontend if static_dir provided ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
     if static_dir and Path(static_dir).is_dir():
         app.mount(
             "/",
