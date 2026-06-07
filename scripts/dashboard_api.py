@@ -84,7 +84,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
     """
     app = FastAPI(title="Prediction Market Dashboard API")
 
-    # HTTP Basic Auth — enabled when DASHBOARD_PASSWORD env var is set.
+    # HTTP Basic Auth -- enabled when DASHBOARD_PASSWORD env var is set.
     # Add before CORS so unauthenticated requests are rejected at the gate.
     _dash_password = os.getenv("DASHBOARD_PASSWORD", "")
     if _dash_password:
@@ -96,7 +96,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
     # CORS middleware.
     #
     # Note: allow_origins=["*"] and allow_credentials=True are mutually
-    # exclusive per the CORS spec — Starlette silently drops the wildcard
+    # exclusive per the CORS spec -- Starlette silently drops the wildcard
     # when credentials are enabled, which rejects every origin. The dashboard
     # doesn't use cookies or credentialed requests, so we keep the wildcard
     # and disable credentials.
@@ -108,11 +108,12 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
         allow_headers=["*"],
     )
 
-    # ── helpers ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+    # -- helpers --
 
     async def get_db() -> aiosqlite.Connection:
         db = await aiosqlite.connect(_DB_PATH)
         db.row_factory = aiosqlite.Row
+        await db.execute("PRAGMA busy_timeout=5000")
         return db
 
     async def close_db(db: aiosqlite.Connection) -> None:
@@ -134,7 +135,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
             if own_db:
                 await close_db(db)
 
-    # ── endpoints ───────────────────────────────────────────────────────────────────────────────────────────────────────────
+    # -- endpoints --
 
     @app.get("/api/overview")
     async def get_overview() -> Dict[str, Any]:
@@ -152,7 +153,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
                 open_positions = snapshot.get("open_positions_count", 0) or 0
                 snapshotted_at = snapshot.get("snapshotted_at")
             else:
-                # No snapshots yet — compute live from trade_outcomes
+                # No snapshots yet -- compute live from trade_outcomes
                 cursor = await db.execute(
                     "SELECT COALESCE(SUM(actual_pnl), 0), COALESCE(SUM(fees_total), 0) FROM trade_outcomes"
                 )
@@ -212,7 +213,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
 
     @app.get("/api/strategies")
     async def get_strategies(
-        days: int = Query(30, ge=1, le=365)
+        days: int = Query(30, ge=1, le=365),
     ) -> List[Dict[str, Any]]:
         db = await get_db()
         try:
@@ -260,7 +261,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
                 if pnl_count > 1:
                     mean_pnl = row_dict.get("avg_pnl", 0) or 0
                     sum_sq = row_dict.get("sum_pnl_sq", 0) or 0
-                    # Sample variance (Bessel's correction, N-1) — matches
+                    # Sample variance (Bessel's correction, N-1) -- matches
                     # statistics.stdev() used in /api/risk for consistency.
                     # max(0.0) guards against tiny negatives from floating-point
                     # cancellation when all PnLs cluster near the same value.
@@ -371,7 +372,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
 
     @app.get("/api/equity-curve")
     async def get_equity_curve(
-        days: int = Query(30, ge=1, le=365)
+        days: int = Query(30, ge=1, le=365),
     ) -> List[Dict[str, Any]]:
         db = await get_db()
         try:
@@ -841,7 +842,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
             if db is not None:
                 await close_db(db)
 
-    # ── Serve React frontend if static_dir provided ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+    # -- Serve React frontend if static_dir provided --
     if static_dir and Path(static_dir).is_dir():
         app.mount(
             "/",
@@ -888,8 +889,8 @@ def _enforce_host_auth_policy(host: str) -> str:
     0.0.0.0 silently served every endpoint unauthenticated.
     """
     if not _is_loopback_host(host) and not os.getenv("DASHBOARD_PASSWORD", ""):
-        logger.error(
-            "Refusing to bind dashboard to %s with no DASHBOARD_PASSWORD set — "
+        logger.warning(
+            "Refusing to bind dashboard to %s with no DASHBOARD_PASSWORD set -- "
             "falling back to 127.0.0.1. Set DASHBOARD_PASSWORD in the "
             "environment to expose publicly.",
             host,
