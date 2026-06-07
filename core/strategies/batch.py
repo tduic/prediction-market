@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 Batch/legacy cross-platform trade detection.
 
@@ -194,7 +195,7 @@ async def detect_violations_and_trade(
             if actual_pnl > _pnl_cap:
                 logger.warning(
                     "PNL_SANITY_CAP blocked dual-platform arb actual_pnl=%.4f > cap=%.4f "
-                    "(size=%.1f). Likely false-positive pair — skipping DB write.",
+                    "(size=%.1f). Likely false-positive pair -- skipping DB write.",
                     actual_pnl,
                     _pnl_cap,
                     size,
@@ -207,8 +208,8 @@ async def detect_violations_and_trade(
                     """INSERT INTO positions
                        (id, signal_id, market_id, strategy, side, book, entry_price,
                         entry_size, exit_price, exit_size, realized_pnl, fees_paid,
-                        status, opened_at, closed_at, updated_at)
-                       VALUES (?, ?, ?, ?, 'BUY', 'YES', ?, ?, ?, ?, ?, ?, 'closed', ?, ?, ?)""",
+                        pnl_model, status, opened_at, closed_at, updated_at)
+                       VALUES (?, ?, ?, ?, 'BUY', 'YES', ?, ?, ?, ?, ?, ?, 'realistic', 'closed', ?, ?, ?)""",
                     (
                         pos_id,
                         signal_id,
@@ -238,8 +239,8 @@ async def detect_violations_and_trade(
                        (id, signal_id, strategy, violation_id, market_id_a, market_id_b,
                         predicted_edge, predicted_pnl, actual_pnl, fees_total,
                         edge_captured_pct, signal_to_fill_ms, holding_period_ms,
-                        spread_at_signal, resolved_at, created_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        resolved_at, created_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         f"trade_{uuid.uuid4().hex[:12]}",
                         signal_id,
@@ -259,7 +260,6 @@ async def detect_violations_and_trade(
                         buy_result.submission_latency_ms
                         + (buy_result.fill_latency_ms or 0),
                         max(1, int(time.time() * 1000) - _trade_start_ms),
-                        spread,
                         now,
                         now,
                     ),
