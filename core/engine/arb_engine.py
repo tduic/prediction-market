@@ -107,7 +107,9 @@ class ArbitrageEngine:
                 self._last_tick_at[m["kalshi_id"]] = seed_ts
 
         # Execution clients (live or paper depending on EXECUTION_MODE)
-        effective_mode: str = execution_mode or os.getenv("EXECUTION_MODE", "paper") or "paper"
+        effective_mode: str = (
+            execution_mode or os.getenv("EXECUTION_MODE", "paper") or "paper"
+        )
         from execution.factory import _make_execution_clients
 
         self._poly_client, self._kalshi_client = _make_execution_clients(

@@ -24,7 +24,7 @@ _MONTH_PAT = (
 )
 _STRIP_SUFFIX = re.compile(
     rf"\s+(?:{_MONTH_PAT}|20\d{{2}}|q[1-4]|h[1-2]|"
-    r"\$?[\d,]+\.?\d*[km%]?(?:\s*[-–to]+\s*\$?[\d,]+\.?\d*[km%]?)?)\s*$",
+    r"\$?[\d,]+\.?\d*[km%]?(?:\s*[-–to]+\s*\$?[\d,]+\.?\d*[km%]?)?)\ *$",
     re.IGNORECASE,
 )
 
@@ -491,7 +491,10 @@ async def detect_single_platform_opportunities(
         price = m["yes_price"]
 
         # Phase 2.3: Kelly-based sizing (replaces hardcoded min(10, 100*edge)).
-        _kelly_f = compute_kelly_fraction(edge, 1.0, _risk_cfg.kelly_fraction)
+        # Pass the actual bet price so Kelly uses the correct denominator
+        # (edge / (1 - bet_price) for YES, edge / bet_price for NO).
+        _bet_price = price if side == "BUY" else round(1.0 - price, 4)
+        _kelly_f = compute_kelly_fraction(edge, _bet_price, _risk_cfg.kelly_fraction)
         _max_size = _bankroll * _risk_cfg.max_position_pct
         size = round(compute_position_size(_kelly_f, _bankroll, max_size=_max_size), 1)
         if size <= 0:
