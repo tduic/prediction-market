@@ -335,7 +335,7 @@ async def run_all_checks(
             if item.passed:
                 logger.debug("[PASS] %s: %s", item.check_type, item.detail)
             else:
-                logger.info("[FAIL] %s: %s", item.check_type, item.detail)
+                logger.warning("[FAIL] %s: %s", item.check_type, item.detail)
 
     all_passed = all(r.passed for r in results)
 
