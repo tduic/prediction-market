@@ -24,5 +24,4 @@ jobs:
         run: |
           gh release create "${{ inputs.tag }}" \
             --title "${{ inputs.tag }}" \
-            --notes "${{ inputs.notes }}" \
-            --target fd0f7d0d32f933f2639744d8f3df9d4f855ca045
+            --notes "${{ inputs.notes }}"
