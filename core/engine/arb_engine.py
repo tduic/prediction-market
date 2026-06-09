@@ -755,6 +755,19 @@ class ArbitrageEngine:
                     signal_id,
                 )
 
+            try:
+                await self.db.execute(
+                    "UPDATE violations SET status='executed', updated_at=? WHERE id=?",
+                    (now, violation_id),
+                )
+                await self.db.commit()
+            except Exception:
+                logger.debug(
+                    "violations status update failed for violation_id=%s",
+                    violation_id,
+                    exc_info=True,
+                )
+
             logger.info(
                 "  ARB FILLED: pnl=$%.4f fees=$%.4f | buy@%.4f sell@%.4f",
                 actual_pnl,
