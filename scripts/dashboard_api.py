@@ -1,1 +1,960 @@
-"""\nFastAPI server for the prediction market dashboard.\nQueries the SQLite trading database and serves JSON to the React frontend.\n\nCan be run standalone:\n    python scripts/dashboard_api.py --db prediction_market.db\n\nOr embedded in trading_session.py as a background asyncio task:\n    from scripts.dashboard_api import create_dashboard_app, start_dashboard_server\n"""\n\nimport argparse\nimport base64\nimport logging\nimport math\nimport os\nimport secrets\nimport statistics\nfrom datetime import datetime, timedelta, timezone\nfrom pathlib import Path\nfrom typing import Any, Dict, List, Optional, Union\n\nimport aiosqlite\nimport uvicorn\nfrom fastapi import FastAPI, Query\nfrom fastapi.middleware.cors import CORSMiddleware\nfrom fastapi.staticfiles import StaticFiles\nfrom starlette.middleware.base import BaseHTTPMiddleware\nfrom starlette.requests import Request\nfrom starlette.responses import Response\n\nfrom core.config import get_config\n\nlogger = logging.getLogger(__name__)\n\n# ---------------------------------------------------------------------------\n# Module-level DB path (set by configure() or create_dashboard_app())\n# ---------------------------------------------------------------------------\n_DB_PATH: str = "./data/prediction_market.db"\n\n\ndef configure(db_path: str) -> None:\n    """Set the database path for all endpoints. Call before starting server."""\n    global _DB_PATH\n    _DB_PATH = db_path\n\n\nclass _BasicAuthMiddleware(BaseHTTPMiddleware):\n    """HTTP Basic Auth gate. Applied only when DASHBOARD_PASSWORD is set."""\n\n    def __init__(self, app, username: str, password: str) -> None:\n        super().__init__(app)\n        self._username = username\n        self._password = password\n\n    async def dispatch(self, request: Request, call_next):\n        auth = request.headers.get("Authorization", "")\n        if auth.startswith("Basic "):\n            try:\n                decoded = base64.b64decode(auth[6:]).decode("utf-8", errors="replace")\n                user, _, pwd = decoded.partition(":")\n                user_ok = secrets.compare_digest(user.encode(), self._username.encode())\n                pass_ok = secrets.compare_digest(pwd.encode(), self._password.encode())\n                if user_ok and pass_ok:\n                    return await call_next(request)\n            except Exception:\n                pass\n        return Response(\n            "Unauthorized",\n            status_code=401,\n            headers={"WWW-Authenticate": 'Basic realm="Predictor Dashboard"'},\n        )\n\n\ndef _build_app(static_dir: Optional[str] = None) -> FastAPI:\n    """\n    Build the FastAPI application.\n\n    Parameters\n    ----------\n    static_dir : str or None\n        If provided, mount the React build directory at "/" so the\n        frontend is served from the same process.\n    """\n    app = FastAPI(title="Prediction Market Dashboard API")\n\n    # HTTP Basic Auth -- enabled when DASHBOARD_PASSWORD env var is set.\n    # Add before CORS so unauthenticated requests are rejected at the gate.\n    _dash_password = os.getenv("DASHBOARD_PASSWORD", "")\n    if _dash_password:\n        _dash_user = os.getenv("DASHBOARD_USER", "admin")\n        app.add_middleware(\n            _BasicAuthMiddleware, username=_dash_user, password=_dash_password\n        )\n\n    # CORS middleware.\n    #\n    # Note: allow_origins=["*"] and allow_credentials=True are mutually\n    # exclusive per the CORS spec -- Starlette silently drops the wildcard\n    # when credentials are enabled, which rejects every origin. The dashboard\n    # doesn't use cookies or credentialed requests, so we keep the wildcard\n    # and disable credentials.\n    app.add_middleware(\n        CORSMiddleware,\n        allow_origins=["*"],\n        allow_credentials=False,\n        allow_methods=["*"],\n        allow_headers=["*"],\n    )\n\n    # -- helpers --\n\n    async def get_db() -> aiosqlite.Connection:\n        db = await aiosqlite.connect(_DB_PATH)\n        db.row_factory = aiosqlite.Row\n        await db.execute("PRAGMA busy_timeout=5000")\n        return db\n\n    async def close_db(db: aiosqlite.Connection) -> None:\n        await db.close()\n\n    async def get_latest_snapshot(\n        db: Optional[aiosqlite.Connection] = None,\n    ) -> Optional[Dict[str, Any]]:\n        own_db = db is None\n        if db is None:\n            db = await get_db()\n        try:\n            cursor = await db.execute(\n                "SELECT * FROM pnl_snapshots ORDER BY snapshotted_at DESC LIMIT 1"\n            )\n            row = await cursor.fetchone()\n            return dict(row) if row else None\n        finally:\n            if own_db:\n                await close_db(db)\n\n    # -- endpoints --\n\n    @app.get("/api/overview")\n    async def get_overview() -> Dict[str, Any]:\n        PAPER_CAPITAL = get_config().risk_controls.starting_capital\n        db = await get_db()\n        try:\n            snapshot = await get_latest_snapshot(db)\n            if snapshot:\n                total_capital = snapshot.get("total_capital", 0) or 0\n                cash = snapshot.get("cash", 0) or 0\n                unrealized_pnl = snapshot.get("unrealized_pnl", 0) or 0\n                realized_pnl_total = snapshot.get("realized_pnl_total", 0) or 0\n                total_fees = snapshot.get("fees_total", 0) or 0\n                deployed = total_capital - cash if total_capital > 0 else 0\n                open_positions = snapshot.get("open_positions_count", 0) or 0\n                snapshotted_at = snapshot.get("snapshotted_at")\n            else:\n                # No snapshots yet -- compute live from trade_outcomes\n                cursor = await db.execute(\n                    "SELECT COALESCE(SUM(actual_pnl), 0), COALESCE(SUM(fees_total), 0) FROM trade_outcomes"\n                )\n                row = await cursor.fetchone()\n                realized_pnl_total = row[0] if row else 0\n                total_fees = row[1] if row else 0\n                total_capital = PAPER_CAPITAL + realized_pnl_total - total_fees\n                cash = total_capital\n                deployed = 0\n                unrealized_pnl = 0\n                open_positions = 0\n                snapshotted_at = None\n\n            net_return_pct = 0.0\n            if total_capital > 0:\n                net_pnl = realized_pnl_total + unrealized_pnl - total_fees\n                net_return_pct = (net_pnl / PAPER_CAPITAL) * 100\n\n            signals_24h = 0\n            violations_24h = 0\n            _cutoff_24h = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()\n            try:\n                _sig_cursor = await db.execute(\n                    "SELECT COUNT(*) FROM signals WHERE fired_at >= ?",\n                    (_cutoff_24h,),\n                )\n                _sig_row = await _sig_cursor.fetchone()\n                signals_24h = _sig_row[0] if _sig_row else 0\n            except Exception as _sig_err:\n                logger.debug("overview: signals_24h query failed: %s", _sig_err)\n\n            try:\n                _v_cursor = await db.execute(\n                    "SELECT COUNT(*) FROM violations WHERE detected_at >= ?",\n                    (_cutoff_24h,),\n                )\n                _v_row = await _v_cursor.fetchone()\n                violations_24h = _v_row[0] if _v_row else 0\n            except Exception as _v_err:\n                logger.debug("overview: violations_24h query failed: %s", _v_err)\n\n            return {\n                "total_capital": round(total_capital, 2),\n                "cash": round(cash, 2),\n                "deployed": round(deployed, 2),\n                "open_positions": open_positions,\n                "unrealized_pnl": round(unrealized_pnl, 2),\n                "realized_pnl_total": round(realized_pnl_total, 2),\n                "total_fees": round(total_fees, 2),\n                "net_return_pct": round(net_return_pct, 2),\n                "snapshotted_at": snapshotted_at,\n                "signals_24h": signals_24h,\n                "violations_24h": violations_24h,\n            }\n        finally:\n            await close_db(db)\n\n    @app.get("/api/strategies")\n    async def get_strategies(\n        days: int = Query(30, ge=1, le=365),\n    ) -> List[Dict[str, Any]]:\n        db = await get_db()\n        try:\n            cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)\n            cursor = await db.execute(\n                """\n                SELECT\n                    strategy,\n                    COUNT(*) as trade_count,\n                    SUM(CASE WHEN actual_pnl > 0 THEN 1 ELSE 0 END) as win_count,\n                    COALESCE(AVG(actual_pnl), 0) as avg_pnl,\n                    COALESCE(SUM(actual_pnl), 0) as total_pnl,\n                    COALESCE(SUM(fees_total), 0) as total_fees,\n                    COALESCE(AVG(edge_captured_pct), 0) as avg_edge_capture,\n                    COALESCE(AVG(signal_to_fill_ms), 0) as avg_execution_time_ms,\n                    COALESCE(SUM(actual_pnl * actual_pnl), 0) as sum_pnl_sq,\n                    COUNT(actual_pnl) as pnl_count,\n                    COALESCE(AVG(spread_at_signal), 0) as avg_spread_at_signal\n                FROM trade_outcomes\n                WHERE created_at >= ?\n                GROUP BY strategy\n                """,\n                (cutoff_date.isoformat(),),\n            )\n            rows = await cursor.fetchall()\n\n            cutoff_24h = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()\n            signals_cursor = await db.execute(\n                "SELECT strategy, COUNT(*) as cnt FROM signals "\n                "WHERE fired_at >= ? GROUP BY strategy",\n                (cutoff_24h,),\n            )\n            signals_rows = await signals_cursor.fetchall()\n            signals_24h_map = {r["strategy"]: r["cnt"] for r in signals_rows}\n\n            strategies = []\n            for row in rows:\n                row_dict = dict(row)\n                trade_count = row_dict.get("trade_count", 0) or 0\n                win_count = row_dict.get("win_count", 0) or 0\n                win_rate = (win_count / trade_count) if trade_count > 0 else 0\n\n                sharpe_ratio = 0.0\n                pnl_count = row_dict.get("pnl_count", 0) or 0\n                if pnl_count > 1:\n                    mean_pnl = row_dict.get("avg_pnl", 0) or 0\n                    sum_sq = row_dict.get("sum_pnl_sq", 0) or 0\n                    # Sample variance (Bessel's correction, N-1) -- matches\n                    # statistics.stdev() used in /api/risk for consistency.\n                    # max(0.0) guards against tiny negatives from floating-point\n                    # cancellation when all PnLs cluster near the same value.\n                    variance = max(\n                        0.0, (sum_sq - pnl_count * mean_pnl**2) / (pnl_count - 1)\n                    )\n                    if variance > 0:\n                        sharpe_ratio = mean_pnl / math.sqrt(variance)\n\n                strategies.append(\n                    {\n                        "strategy": row_dict.get("strategy"),\n                        "trade_count": trade_count,\n                        "win_count": win_count,\n                        "win_rate": round(win_rate, 2),\n                        "avg_pnl": round(row_dict.get("avg_pnl", 0) or 0, 2),\n                        "total_pnl": round(row_dict.get("total_pnl", 0) or 0, 2),\n                        "total_fees": round(row_dict.get("total_fees", 0) or 0, 2),\n                        "net_pnl": round(\n                            (row_dict.get("total_pnl", 0) or 0)\n                            - (row_dict.get("total_fees", 0) or 0),\n                            2,\n                        ),\n                        "sharpe_ratio": round(sharpe_ratio, 2),\n                        "sharpe_note": "per-trade mean/stdev; not annualized",\n                        "avg_edge_capture": round(\n                            row_dict.get("avg_edge_capture", 0) or 0, 2\n                        ),\n                        "avg_execution_time_ms": round(\n                            row_dict.get("avg_execution_time_ms", 0) or 0, 0\n                        ),\n                        "signals_24h": signals_24h_map.get(row_dict.get("strategy"), 0),\n                        "avg_spread_at_signal": round(\n                            row_dict.get("avg_spread_at_signal", 0) or 0, 4\n                        ),\n                    }\n                )\n\n            # Include strategies that fired signals but have no trade_outcomes yet.\n            # Without this, risk-rejected strategies are invisible on the dashboard.\n            seen_strategies = {s["strategy"] for s in strategies}\n            signal_only_cursor = await db.execute(\n                "SELECT DISTINCT strategy FROM signals WHERE fired_at >= ?",\n                (cutoff_date.isoformat(),),\n            )\n            signal_only_rows = await signal_only_cursor.fetchall()\n            for row in signal_only_rows:\n                strat = row["strategy"]\n                if strat not in seen_strategies:\n                    strategies.append(\n                        {\n                            "strategy": strat,\n                            "trade_count": 0,\n                            "win_count": 0,\n                            "win_rate": 0.0,\n                            "avg_pnl": 0.0,\n                            "total_pnl": 0.0,\n                            "total_fees": 0.0,\n                            "net_pnl": 0.0,\n                            "sharpe_ratio": 0.0,\n                            "sharpe_note": "per-trade mean/stdev; not annualized",\n                            "avg_edge_capture": 0.0,\n                            "avg_execution_time_ms": 0.0,\n                            "signals_24h": signals_24h_map.get(strat, 0),\n                            "avg_spread_at_signal": 0.0,\n                        }\n                    )\n\n            return strategies\n        finally:\n            await close_db(db)\n\n    @app.get("/api/strategies/pnl-series")\n    async def get_strategies_pnl_series(\n        days: int = Query(7, ge=1, le=365),\n    ) -> List[Dict[str, Any]]:\n        db = await get_db()\n        try:\n            cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)\n            cursor = await db.execute(\n                """\n                SELECT\n                    p.snapshotted_at, s.strategy,\n                    s.realized_pnl, s.unrealized_pnl,\n                    s.fees, s.trade_count, s.win_count\n                FROM strategy_pnl_snapshots s\n                JOIN pnl_snapshots p ON s.snapshot_id = p.id\n                WHERE p.snapshotted_at >= ?\n                ORDER BY p.snapshotted_at, s.strategy\n                """,\n                (cutoff_date.isoformat(),),\n            )\n            rows = await cursor.fetchall()\n            return [\n                {\n                    "snapshotted_at": dict(r).get("snapshotted_at"),\n                    "strategy": dict(r).get("strategy"),\n                    "realized_pnl": round(dict(r).get("realized_pnl", 0) or 0, 2),\n                    "unrealized_pnl": round(dict(r).get("unrealized_pnl", 0) or 0, 2),\n                    "fees": round(dict(r).get("fees", 0) or 0, 2),\n                    "trade_count": dict(r).get("trade_count", 0) or 0,\n                    "win_count": dict(r).get("win_count", 0) or 0,\n                }\n                for r in rows\n            ]\n        finally:\n            await close_db(db)\n\n    @app.get("/api/equity-curve")\n    async def get_equity_curve(\n        days: int = Query(30, ge=1, le=365),\n    ) -> List[Dict[str, Any]]:\n        db = await get_db()\n        try:\n            cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)\n            cursor = await db.execute(\n                """\n                SELECT snapshotted_at, total_capital, unrealized_pnl,\n                       realized_pnl_total, fees_total\n                FROM pnl_snapshots WHERE snapshotted_at >= ?\n                ORDER BY snapshotted_at\n                """,\n                (cutoff_date.isoformat(),),\n            )\n            rows = await cursor.fetchall()\n            return [\n                {\n                    "snapshotted_at": dict(r).get("snapshotted_at"),\n                    "total_capital": round(dict(r).get("total_capital", 0) or 0, 2),\n                    "unrealized_pnl": round(dict(r).get("unrealized_pnl", 0) or 0, 2),\n                    "realized_pnl_total": round(\n                        dict(r).get("realized_pnl_total", 0) or 0, 2\n                    ),\n                    "fees_total": round(dict(r).get("fees_total", 0) or 0, 2),\n                }\n                for r in rows\n            ]\n        finally:\n            await close_db(db)\n\n    @app.get("/api/trades")\n    async def get_trades(\n        strategy: Optional[str] = Query(None),\n        days: int = Query(30, ge=1, le=365),\n        limit: int = Query(200, ge=1, le=1000),\n    ) -> List[Dict[str, Any]]:\n        db = await get_db()\n        try:\n            cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)\n            if strategy:\n                cursor = await db.execute(\n                    "SELECT * FROM trade_outcomes WHERE created_at >= ? AND strategy = ? ORDER BY created_at DESC LIMIT ?",\n                    (cutoff_date.isoformat(), strategy, limit),\n                )\n            else:\n                cursor = await db.execute(\n                    "SELECT * FROM trade_outcomes WHERE created_at >= ? ORDER BY created_at DESC LIMIT ?",\n                    (cutoff_date.isoformat(), limit),\n                )\n            rows = await cursor.fetchall()\n            result = []\n            for row in rows:\n                d = dict(row)\n                result.append(\n                    {\n                        "id": d.get("id"),\n                        "signal_id": d.get("signal_id"),\n                        "strategy": d.get("strategy"),\n                        "violation_id": d.get("violation_id"),\n                        "market_id_a": d.get("market_id_a"),\n                        "market_id_b": d.get("market_id_b"),\n                        "predicted_edge": round(d.get("predicted_edge", 0) or 0, 4),\n                        "predicted_pnl": round(d.get("predicted_pnl", 0) or 0, 2),\n                        "actual_pnl": round(d.get("actual_pnl", 0) or 0, 2),\n                        "fees_total": round(d.get("fees_total", 0) or 0, 2),\n                        "edge_captured_pct": round(\n                            d.get("edge_captured_pct", 0) or 0, 2\n                        ),\n                        "signal_to_fill_ms": d.get("signal_to_fill_ms"),\n                        "holding_period_ms": d.get("holding_period_ms"),\n                        "spread_at_signal": round(d.get("spread_at_signal", 0) or 0, 4),\n                        "volume_at_signal": round(d.get("volume_at_signal", 0) or 0, 2),\n                        "liquidity_at_signal": round(\n                            d.get("liquidity_at_signal", 0) or 0, 2\n                        ),\n                        "resolved_at": d.get("resolved_at"),\n                        "created_at": d.get("created_at"),\n                    }\n                )\n            return result\n        finally:\n            await close_db(db)\n\n    @app.get("/api/risk")\n    async def get_risk() -> Dict[str, Any]:\n        PAPER_CAPITAL = get_config().risk_controls.starting_capital\n        db = await get_db()\n        try:\n            snapshot = await get_latest_snapshot(db)\n            if snapshot:\n                total_capital = snapshot.get("total_capital", 0) or PAPER_CAPITAL\n            else:\n                # Compute from trade_outcomes if no snapshots yet\n                cursor = await db.execute(\n                    "SELECT COALESCE(SUM(actual_pnl), 0), COALESCE(SUM(fees_total), 0) FROM trade_outcomes"\n                )\n                row = await cursor.fetchone()\n                total_capital = (\n                    PAPER_CAPITAL + (row[0] or 0) - (row[1] or 0)\n                    if row\n                    else PAPER_CAPITAL\n                )\n\n            _cutoff_90d = (datetime.now(timezone.utc) - timedelta(days=90)).isoformat()\n            cursor = await db.execute(\n                """\n                SELECT total_capital\n                FROM pnl_snapshots\n                WHERE snapshotted_at >= ?\n                ORDER BY snapshotted_at ASC\n                """,\n                (_cutoff_90d,),\n            )\n            snapshots = list(await cursor.fetchall())\n\n            max_drawdown = 0.0\n            max_drawdown_dollar = 0.0\n            if snapshots:\n                peak_capital = None\n                for snap in snapshots:\n                    current_capital = snap["total_capital"] or 0\n                    if peak_capital is None or current_capital > peak_capital:\n                        peak_capital = current_capital\n                    if peak_capital and peak_capital > 0:\n                        dd_dollar = peak_capital - current_capital\n                        drawdown = dd_dollar / peak_capital * 100\n                        if drawdown > max_drawdown:\n                            max_drawdown = drawdown\n                            max_drawdown_dollar = dd_dollar\n\n            cursor = await db.execute(\n                "SELECT MAX(entry_price * entry_size) as max_pos FROM positions WHERE status = 'open'"\n            )\n            row = await cursor.fetchone()\n            max_pos_exposure = row["max_pos"] or 0 if row else 0\n            concentration = (\n                (max_pos_exposure / total_capital * 100) if total_capital > 0 else 0\n            )\n\n            cursor = await db.execute(\"\"\"\n                SELECT DATE(created_at) as trade_date, SUM(actual_pnl) as daily_pnl\n                FROM trade_outcomes GROUP BY DATE(created_at)\n                ORDER BY trade_date DESC LIMIT 30\n                \"\"\")\n            daily_rows = await cursor.fetchall()\n            daily_pnls = [\n                r["daily_pnl"] for r in daily_rows if r["daily_pnl"] is not None\n            ]\n\n            daily_var = 0.0\n            if len(daily_pnls) > 1:\n                daily_pnls_sorted = sorted(daily_pnls)\n                percentile_5_idx = max(0, int(len(daily_pnls_sorted) * 0.05))\n                # VaR = magnitude of loss at 5th percentile.  A positive P&L at\n                # the 5th percentile means no loss-tail risk, so VaR = 0.\n                daily_var = max(0.0, -daily_pnls_sorted[percentile_5_idx])\n\n            cursor = await db.execute(\n                "SELECT actual_pnl FROM trade_outcomes WHERE actual_pnl IS NOT NULL"\n                " ORDER BY created_at DESC LIMIT 500"\n            )\n            pnl_rows = await cursor.fetchall()\n            pnl_values = [r["actual_pnl"] for r in pnl_rows]\n\n            overall_sharpe = 0\n            if len(pnl_values) > 1:\n                mean_pnl = statistics.mean(pnl_values)\n                stdev_pnl = statistics.stdev(pnl_values)\n                if stdev_pnl > 0:\n                    overall_sharpe = mean_pnl / stdev_pnl\n\n            return {\n                "max_drawdown": round(max_drawdown_dollar, 2),\n                "max_drawdown_pct": round(max_drawdown, 2),\n                "concentration_pct": round(concentration, 2),\n                "daily_var": round(daily_var, 2),\n                "daily_var_sample_size": len(daily_pnls),\n                "daily_var_reliable": len(daily_pnls) >= 20,\n                "sharpe_overall": round(overall_sharpe, 2),\n            }\n        finally:\n            await close_db(db)\n\n    @app.get("/api/fees")\n    async def get_fees() -> Dict[str, Any]:\n        db = await get_db()\n        try:\n            cursor = await db.execute(\"\"\"\n                SELECT platform, COALESCE(SUM(fee_paid), 0) as total_fees\n                FROM orders WHERE fee_paid IS NOT NULL GROUP BY platform\n                \"\"\")\n            platform_rows = await cursor.fetchall()\n            fees_by_platform = [\n                {\n                    "platform": row["platform"],\n                    "total_fees": round(row["total_fees"] or 0, 2),\n                }\n                for row in platform_rows\n            ]\n\n            cursor = await db.execute(\"\"\"\n                SELECT strategy, COALESCE(SUM(fees_total), 0) as total_fees\n                FROM trade_outcomes WHERE fees_total IS NOT NULL GROUP BY strategy\n                \"\"\")\n            strategy_rows = await cursor.fetchall()\n            fees_by_strategy = [\n                {\n                    "strategy": row["strategy"],\n                    "total_fees": round(row["total_fees"] or 0, 2),\n                }\n                for row in strategy_rows\n            ]\n\n            fees_total_cursor = await db.execute(\n                "SELECT COALESCE(SUM(fees_total), 0) as total FROM trade_outcomes"\n            )\n            fees_total_row = await fees_total_cursor.fetchone()\n            total_fees = round(\n                float(fees_total_row["total"] or 0) if fees_total_row else 0.0, 2\n            )\n            return {\n                "total_fees": round(total_fees, 2),\n                "by_platform": fees_by_platform,\n                "by_strategy": fees_by_strategy,\n            }\n        finally:\n            await close_db(db)\n\n    @app.get("/api/signals")\n    async def get_signals(\n        strategy: Optional[str] = Query(None),\n        days: int = Query(7, ge=1, le=365),\n        limit: int = Query(200, ge=1, le=1000),\n    ) -> List[Dict[str, Any]]:\n        db = await get_db()\n        try:\n            cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)\n            if strategy:\n                cursor = await db.execute(\n                    "SELECT id, violation_id, strategy, signal_type, market_id_a, market_id_b, "\n                    "model_edge, kelly_fraction, position_size_a, position_size_b, "\n                    "total_capital_at_risk, status, fired_at, updated_at "\n                    "FROM signals WHERE fired_at >= ? AND strategy = ? ORDER BY fired_at DESC LIMIT ?",\n                    (cutoff_date.isoformat(), strategy, limit),\n                )\n            else:\n                cursor = await db.execute(\n                    "SELECT id, violation_id, strategy, signal_type, market_id_a, market_id_b, "\n                    "model_edge, kelly_fraction, position_size_a, position_size_b, "\n                    "total_capital_at_risk, status, fired_at, updated_at "\n                    "FROM signals WHERE fired_at >= ? ORDER BY fired_at DESC LIMIT ?",\n                    (cutoff_date.isoformat(), limit),\n                )\n            rows = await cursor.fetchall()\n            result = []\n            for row in rows:\n                d = dict(row)\n                result.append(\n                    {\n                        "id": d.get("id"),\n                        "violation_id": d.get("violation_id"),\n                        "strategy": d.get("strategy"),\n                        "signal_type": d.get("signal_type"),\n                        "market_id_a": d.get("market_id_a"),\n                        "market_id_b": d.get("market_id_b"),\n                        "model_edge": round(d.get("model_edge", 0) or 0, 4),\n                        "kelly_fraction": round(d.get("kelly_fraction", 0) or 0, 4),\n                        "position_size_a": round(d.get("position_size_a", 0) or 0, 2),\n                        "position_size_b": round(d.get("position_size_b", 0) or 0, 2),\n                        "total_capital_at_risk": round(\n                            d.get("total_capital_at_risk", 0) or 0, 2\n                        ),\n                        "status": d.get("status"),\n                        "fired_at": d.get("fired_at"),\n                        "updated_at": d.get("updated_at"),\n                    }\n                )\n            return result\n        finally:\n            await close_db(db)\n\n    @app.get("/api/circuit-breaker")\n    async def get_circuit_breaker() -> Dict[str, Any]:\n        db = await get_db()\n        try:\n            cursor = await db.execute(\n                "SELECT event_type, detail, occurred_at FROM system_events WHERE event_type IN ('CIRCUIT_BREAKER_TRIPPED','CIRCUIT_BREAKER_RESET') AND DATE(occurred_at) = DATE('now') ORDER BY id DESC LIMIT 1"\n            )\n            event_row = await cursor.fetchone()\n            if event_row and event_row["event_type"] == "CIRCUIT_BREAKER_TRIPPED":\n                tripped = True\n                reason = event_row["detail"]\n                tripped_at = event_row["occurred_at"]\n            else:\n                tripped = False\n                reason = None\n                tripped_at = None\n            daily_loss_available = True\n            daily_loss = 0.0\n            try:\n                from datetime import date as _date\n\n                _today = datetime.now(timezone.utc).strftime("%Y-%m-%d")\n                _tomorrow = (\n                    _date.fromisoformat(_today) + timedelta(days=1)\n                ).isoformat()\n                cursor = await db.execute(\n                    "SELECT COALESCE(SUM(actual_pnl - COALESCE(fees_total,0)),0) FROM trade_outcomes WHERE created_at >= ? AND created_at < ?",\n                    (_today, _tomorrow),\n                )\n                pnl_row = await cursor.fetchone()\n                net_pnl = pnl_row[0] if pnl_row else 0.0\n                daily_loss = max(0.0, -net_pnl)\n            except Exception as e:\n                logger.warning(\n                    "circuit-breaker endpoint: daily_loss query failed: %s", e\n                )\n                daily_loss_available = False\n            cfg = get_config().risk_controls\n            daily_loss_limit_pct = cfg.max_daily_loss_pct\n            daily_loss_limit = cfg.starting_capital * daily_loss_limit_pct\n            return {\n                "tripped": tripped,\n                "reason": reason,\n                "tripped_at": tripped_at,\n                "daily_loss": daily_loss,\n                "daily_loss_available": daily_loss_available,\n                "daily_loss_limit": daily_loss_limit,\n                "daily_loss_limit_pct": daily_loss_limit_pct,\n            }\n        finally:\n            await close_db(db)\n\n    @app.get("/api/positions")\n    async def get_positions(\n        status: Optional[str] = Query(None),\n        limit: int = Query(200, ge=1, le=1000),\n    ) -> List[Dict[str, Any]]:\n        db = await get_db()\n        try:\n            if status:\n                cursor = await db.execute(\n                    "SELECT * FROM positions WHERE status = ? ORDER BY updated_at DESC LIMIT ?",\n                    (status, limit),\n                )\n            else:\n                cursor = await db.execute(\n                    "SELECT * FROM positions ORDER BY updated_at DESC LIMIT ?",\n                    (limit,),\n                )\n            rows = await cursor.fetchall()\n            return [dict(row) for row in rows]\n        finally:\n            await close_db(db)\n\n    @app.get("/api/pnl-split")\n    async def get_pnl_split() -> Dict[str, Any]:\n        """Realistic vs synthetic PnL totals across all closed positions.\n\n        realistic: positions closed by mark_and_close_positions at real price.\n        synthetic: legacy positions with pre-computed exit_price at open time.\n        """\n        db = await get_db()\n        try:\n            cursor = await db.execute(\"\"\"SELECT\n                       pnl_model,\n                       COUNT(*) AS trade_count,\n                       COALESCE(SUM(realized_pnl), 0.0) AS total_pnl,\n                       COALESCE(SUM(fees_paid), 0.0) AS total_fees\n                   FROM positions\n                   WHERE status = 'closed'\n                     AND realized_pnl IS NOT NULL\n                   GROUP BY pnl_model\"\"\")\n            rows = await cursor.fetchall()\n            result: Dict[str, Any] = {\n                "realistic": {"trade_count": 0, "total_pnl": 0.0, "total_fees": 0.0},\n                "synthetic": {"trade_count": 0, "total_pnl": 0.0, "total_fees": 0.0},\n            }\n            for row in rows:\n                model = row[0] or "synthetic"\n                if model not in result:\n                    result[model] = {\n                        "trade_count": 0,\n                        "total_pnl": 0.0,\n                        "total_fees": 0.0,\n                    }\n                result[model] = {\n                    "trade_count": row[1],\n                    "total_pnl": round(row[2], 4),\n                    "total_fees": round(row[3], 4),\n                }\n            return result\n        finally:\n            await close_db(db)\n\n    @app.get("/api/invariants")\n    async def get_invariants(limit: int = Query(20, ge=1, le=100)) -> Dict[str, Any]:\n        """Invariant violation log: total count and most recent failures."""\n        db = await get_db()\n        try:\n            count_cursor = await db.execute("SELECT COUNT(*) FROM invariant_violations")\n            count_row = await count_cursor.fetchone()\n            violation_count = count_row[0] if count_row else 0\n\n            recent_cursor = await db.execute(\n                \"\"\"SELECT id, name, message, severity, violated_at\n                   FROM invariant_violations\n                   ORDER BY violated_at DESC\n                   LIMIT ?\"\"\",\n                (limit,),\n            )\n            rows = await recent_cursor.fetchall()\n            recent = [dict(row) for row in rows]\n\n            return {\n                "violation_count": violation_count,\n                "recent_violations": recent,\n            }\n        finally:\n            await close_db(db)\n\n    @app.get("/api/reconciliation")\n    async def get_reconciliation(\n        limit: int = Query(20, ge=1, le=100),\n    ) -> Dict[str, Any]:\n        """Reconciliation discrepancy log: counts by type and most recent rows."""\n        db = await get_db()\n        try:\n            total_cursor = await db.execute("SELECT COUNT(*) FROM reconciliation_log")\n            total_row = await total_cursor.fetchone()\n            total_count = total_row[0] if total_row else 0\n\n            discrepancy_cursor = await db.execute(\n                "SELECT COUNT(*) FROM reconciliation_log WHERE status = 'discrepancy'"\n            )\n            discrepancy_row = await discrepancy_cursor.fetchone()\n            discrepancy_count = discrepancy_row[0] if discrepancy_row else 0\n\n            recent_cursor = await db.execute(\n                \"\"\"SELECT id, platform, check_type, discrepancy, status, detail, checked_at\n                   FROM reconciliation_log\n                   ORDER BY checked_at DESC\n                   LIMIT ?\"\"\",\n                (limit,),\n            )\n            rows = await recent_cursor.fetchall()\n            recent = [dict(row) for row in rows]\n\n            return {\n                "total_count": total_count,\n                "discrepancy_count": discrepancy_count,\n                "recent_discrepancies": recent,\n            }\n        finally:\n            await close_db(db)\n\n    @app.get("/health", response_model=None)\n    async def health_check() -> Union[Dict[str, Any], Response]:\n        db = None\n        try:\n            db = await get_db()\n            await db.execute("SELECT 1")\n            return {"status": "ok"}\n        except Exception as e:\n            from fastapi.responses import JSONResponse\n\n            return JSONResponse({"status": "error", "detail": str(e)}, status_code=503)\n        finally:\n            if db is not None:\n                await close_db(db)\n\n    # -- Serve React frontend if static_dir provided --\n    if static_dir and Path(static_dir).is_dir():\n        app.mount(\n            "/",\n            StaticFiles(directory=static_dir, html=True),\n            name="frontend",\n        )\n\n    return app\n\n\ndef create_dashboard_app(\n    db_path: str,\n    static_dir: Optional[str] = None,\n) -> FastAPI:\n    """\n    Public factory: create a fully configured dashboard app.\n\n    Parameters\n    ----------\n    db_path : str\n        Path to the SQLite database.\n    static_dir : str or None\n        Path to the React build directory (dashboard/dist/).\n        If provided, the SPA is served at "/".\n    """\n    configure(db_path)\n    return _build_app(static_dir=static_dir)\n\n\n_LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}\n\n\ndef _is_loopback_host(host: str) -> bool:\n    return host in _LOOPBACK_HOSTS\n\n\ndef _enforce_host_auth_policy(host: str) -> str:\n    """Fail-closed auth guard for dashboard host binding.\n\n    If the caller asked to bind to a non-loopback interface but no\n    DASHBOARD_PASSWORD is set, refuse to expose the dashboard publicly and\n    force-bind to 127.0.0.1 instead. Previously the auth middleware was only\n    attached when DASHBOARD_PASSWORD was non-empty, so an unset password on\n    0.0.0.0 silently served every endpoint unauthenticated.\n    """\n    if not _is_loopback_host(host) and not os.getenv("DASHBOARD_PASSWORD", ""):\n        logger.warning(\n            "Refusing to bind dashboard to %s with no DASHBOARD_PASSWORD set -- "\n            "falling back to 127.0.0.1. Set DASHBOARD_PASSWORD in the "\n            "environment to expose publicly.",\n            host,\n        )\n        return "127.0.0.1"\n    return host\n\n\nasync def start_dashboard_server(\n    app: FastAPI,\n    host: str = "127.0.0.1",\n    port: int = 8000,\n) -> None:\n    """\n    Start uvicorn as an async coroutine (non-blocking).\n    Designed to be launched as an asyncio.create_task() inside\n    trading_session.py.\n    """\n    host = _enforce_host_auth_policy(host)\n\n    config = uvicorn.Config(\n        app,\n        host=host,\n        port=port,\n        log_level="info",\n    )\n    server = uvicorn.Server(config)\n    await server.serve()\n\n\n# ---------------------------------------------------------------------------\n# Standalone mode\n# ---------------------------------------------------------------------------\ndef main():\n    """Run the FastAPI server standalone."""\n    parser = argparse.ArgumentParser(description="Prediction Market Dashboard API")\n    parser.add_argument(\n        "--db",\n        type=str,\n        default="./data/prediction_market.db",\n        help="Path to SQLite database",\n    )\n    parser.add_argument("--host", type=str, default="127.0.0.1", help="Host to bind to")\n    parser.add_argument("--port", type=int, default=8000, help="Port to bind to")\n    args = parser.parse_args()\n\n    db_file = Path(args.db)\n    if not db_file.parent.exists():\n        db_file.parent.mkdir(parents=True, exist_ok=True)\n\n    # Auto-detect dashboard/dist/ relative to this script\n    script_dir = Path(__file__).resolve().parent\n    dist_dir = script_dir.parent / "dashboard" / "dist"\n    static_dir = str(dist_dir) if dist_dir.is_dir() else None\n\n    app = create_dashboard_app(db_path=args.db, static_dir=static_dir)\n\n    host = _enforce_host_auth_policy(args.host)\n\n    uvicorn.run(app, host=host, port=args.port, log_level="info")\n\n\nif __name__ == "__main__":\n    main()\n
+"""
+FastAPI server for the prediction market dashboard.
+Queries the SQLite trading database and serves JSON to the React frontend.
+
+Can be run standalone:
+    python scripts/dashboard_api.py --db prediction_market.db
+
+Or embedded in trading_session.py as a background asyncio task:
+    from scripts.dashboard_api import create_dashboard_app, start_dashboard_server
+"""
+
+import argparse
+import base64
+import logging
+import math
+import os
+import secrets
+import statistics
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Union
+
+import aiosqlite
+import uvicorn
+from fastapi import FastAPI, Query
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+from starlette.responses import Response
+
+from core.config import get_config
+
+logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Module-level DB path (set by configure() or create_dashboard_app())
+# ---------------------------------------------------------------------------
+_DB_PATH: str = "./data/prediction_market.db"
+
+
+def configure(db_path: str) -> None:
+    """Set the database path for all endpoints. Call before starting server."""
+    global _DB_PATH
+    _DB_PATH = db_path
+
+
+class _BasicAuthMiddleware(BaseHTTPMiddleware):
+    """HTTP Basic Auth gate. Applied only when DASHBOARD_PASSWORD is set."""
+
+    def __init__(self, app, username: str, password: str) -> None:
+        super().__init__(app)
+        self._username = username
+        self._password = password
+
+    async def dispatch(self, request: Request, call_next):
+        if request.url.path == "/health":
+            return await call_next(request)
+        auth = request.headers.get("Authorization", "")
+        if auth.startswith("Basic "):
+            try:
+                decoded = base64.b64decode(auth[6:]).decode("utf-8", errors="replace")
+                user, _, pwd = decoded.partition(":")
+                user_ok = secrets.compare_digest(user.encode(), self._username.encode())
+                pass_ok = secrets.compare_digest(pwd.encode(), self._password.encode())
+                if user_ok and pass_ok:
+                    return await call_next(request)
+            except Exception:
+                pass
+        return Response(
+            "Unauthorized",
+            status_code=401,
+            headers={"WWW-Authenticate": 'Basic realm="Predictor Dashboard"'},
+        )
+
+
+def _build_app(static_dir: Optional[str] = None) -> FastAPI:
+    """
+    Build the FastAPI application.
+
+    Parameters
+    ----------
+    static_dir : str or None
+        If provided, mount the React build directory at "/" so the
+        frontend is served from the same process.
+    """
+    app = FastAPI(title="Prediction Market Dashboard API")
+
+    # HTTP Basic Auth -- enabled when DASHBOARD_PASSWORD env var is set.
+    # Add before CORS so unauthenticated requests are rejected at the gate.
+    _dash_password = os.getenv("DASHBOARD_PASSWORD", "")
+    if _dash_password:
+        _dash_user = os.getenv("DASHBOARD_USER", "admin")
+        app.add_middleware(
+            _BasicAuthMiddleware, username=_dash_user, password=_dash_password
+        )
+
+    # CORS middleware.
+    #
+    # Note: allow_origins=["*"] and allow_credentials=True are mutually
+    # exclusive per the CORS spec -- Starlette silently drops the wildcard
+    # when credentials are enabled, which rejects every origin. The dashboard
+    # doesn't use cookies or credentialed requests, so we keep the wildcard
+    # and disable credentials.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=False,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    # -- helpers --
+
+    async def get_db() -> aiosqlite.Connection:
+        db = await aiosqlite.connect(_DB_PATH)
+        db.row_factory = aiosqlite.Row
+        await db.execute("PRAGMA busy_timeout=5000")
+        return db
+
+    async def close_db(db: aiosqlite.Connection) -> None:
+        await db.close()
+
+    async def get_latest_snapshot(
+        db: Optional[aiosqlite.Connection] = None,
+    ) -> Optional[Dict[str, Any]]:
+        own_db = db is None
+        if db is None:
+            db = await get_db()
+        try:
+            cursor = await db.execute(
+                "SELECT * FROM pnl_snapshots ORDER BY snapshotted_at DESC LIMIT 1"
+            )
+            row = await cursor.fetchone()
+            return dict(row) if row else None
+        finally:
+            if own_db:
+                await close_db(db)
+
+    # -- endpoints --
+
+    @app.get("/api/overview")
+    async def get_overview() -> Dict[str, Any]:
+        PAPER_CAPITAL = get_config().risk_controls.starting_capital
+        db = await get_db()
+        try:
+            snapshot = await get_latest_snapshot(db)
+            if snapshot:
+                total_capital = snapshot.get("total_capital", 0) or 0
+                cash = snapshot.get("cash", 0) or 0
+                unrealized_pnl = snapshot.get("unrealized_pnl", 0) or 0
+                realized_pnl_total = snapshot.get("realized_pnl_total", 0) or 0
+                total_fees = snapshot.get("fees_total", 0) or 0
+                deployed = total_capital - cash if total_capital > 0 else 0
+                open_positions = snapshot.get("open_positions_count", 0) or 0
+                snapshotted_at = snapshot.get("snapshotted_at")
+            else:
+                # No snapshots yet -- compute live from trade_outcomes
+                cursor = await db.execute(
+                    "SELECT COALESCE(SUM(actual_pnl), 0), COALESCE(SUM(fees_total), 0) FROM trade_outcomes"
+                )
+                row = await cursor.fetchone()
+                realized_pnl_total = row[0] if row else 0
+                total_fees = row[1] if row else 0
+                total_capital = PAPER_CAPITAL + realized_pnl_total - total_fees
+                cash = total_capital
+                deployed = 0
+                unrealized_pnl = 0
+                open_positions = 0
+                snapshotted_at = None
+
+            net_return_pct = 0.0
+            if total_capital > 0:
+                net_pnl = realized_pnl_total + unrealized_pnl - total_fees
+                net_return_pct = (net_pnl / PAPER_CAPITAL) * 100
+
+            signals_24h = 0
+            violations_24h = 0
+            _cutoff_24h = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+            try:
+                _sig_cursor = await db.execute(
+                    "SELECT COUNT(*) FROM signals WHERE fired_at >= ?",
+                    (_cutoff_24h,),
+                )
+                _sig_row = await _sig_cursor.fetchone()
+                signals_24h = _sig_row[0] if _sig_row else 0
+            except Exception as _sig_err:
+                logger.debug("overview: signals_24h query failed: %s", _sig_err)
+
+            try:
+                _v_cursor = await db.execute(
+                    "SELECT COUNT(*) FROM violations WHERE detected_at >= ?",
+                    (_cutoff_24h,),
+                )
+                _v_row = await _v_cursor.fetchone()
+                violations_24h = _v_row[0] if _v_row else 0
+            except Exception as _v_err:
+                logger.debug("overview: violations_24h query failed: %s", _v_err)
+
+            return {
+                "total_capital": round(total_capital, 2),
+                "cash": round(cash, 2),
+                "deployed": round(deployed, 2),
+                "open_positions": open_positions,
+                "unrealized_pnl": round(unrealized_pnl, 2),
+                "realized_pnl_total": round(realized_pnl_total, 2),
+                "total_fees": round(total_fees, 2),
+                "net_return_pct": round(net_return_pct, 2),
+                "snapshotted_at": snapshotted_at,
+                "signals_24h": signals_24h,
+                "violations_24h": violations_24h,
+            }
+        finally:
+            await close_db(db)
+
+    @app.get("/api/strategies")
+    async def get_strategies(
+        days: int = Query(30, ge=1, le=365),
+    ) -> List[Dict[str, Any]]:
+        db = await get_db()
+        try:
+            cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
+            cursor = await db.execute(
+                """
+                SELECT
+                    strategy,
+                    COUNT(*) as trade_count,
+                    SUM(CASE WHEN actual_pnl > 0 THEN 1 ELSE 0 END) as win_count,
+                    COALESCE(AVG(actual_pnl), 0) as avg_pnl,
+                    COALESCE(SUM(actual_pnl), 0) as total_pnl,
+                    COALESCE(SUM(fees_total), 0) as total_fees,
+                    COALESCE(AVG(edge_captured_pct), 0) as avg_edge_capture,
+                    COALESCE(AVG(signal_to_fill_ms), 0) as avg_execution_time_ms,
+                    COALESCE(SUM(actual_pnl * actual_pnl), 0) as sum_pnl_sq,
+                    COUNT(actual_pnl) as pnl_count,
+                    COALESCE(AVG(spread_at_signal), 0) as avg_spread_at_signal
+                FROM trade_outcomes
+                WHERE created_at >= ?
+                GROUP BY strategy
+                """,
+                (cutoff_date.isoformat(),),
+            )
+            rows = await cursor.fetchall()
+
+            cutoff_24h = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+            signals_cursor = await db.execute(
+                "SELECT strategy, COUNT(*) as cnt FROM signals "
+                "WHERE fired_at >= ? GROUP BY strategy",
+                (cutoff_24h,),
+            )
+            signals_rows = await signals_cursor.fetchall()
+            signals_24h_map = {r["strategy"]: r["cnt"] for r in signals_rows}
+
+            strategies = []
+            for row in rows:
+                row_dict = dict(row)
+                trade_count = row_dict.get("trade_count", 0) or 0
+                win_count = row_dict.get("win_count", 0) or 0
+                win_rate = (win_count / trade_count) if trade_count > 0 else 0
+
+                sharpe_ratio = 0.0
+                pnl_count = row_dict.get("pnl_count", 0) or 0
+                if pnl_count > 1:
+                    mean_pnl = row_dict.get("avg_pnl", 0) or 0
+                    sum_sq = row_dict.get("sum_pnl_sq", 0) or 0
+                    # Sample variance (Bessel's correction, N-1) -- matches
+                    # statistics.stdev() used in /api/risk for consistency.
+                    # max(0.0) guards against tiny negatives from floating-point
+                    # cancellation when all PnLs cluster near the same value.
+                    variance = max(
+                        0.0, (sum_sq - pnl_count * mean_pnl**2) / (pnl_count - 1)
+                    )
+                    if variance > 0:
+                        sharpe_ratio = mean_pnl / math.sqrt(variance)
+
+                strategies.append(
+                    {
+                        "strategy": row_dict.get("strategy"),
+                        "trade_count": trade_count,
+                        "win_count": win_count,
+                        "win_rate": round(win_rate, 2),
+                        "avg_pnl": round(row_dict.get("avg_pnl", 0) or 0, 2),
+                        "total_pnl": round(row_dict.get("total_pnl", 0) or 0, 2),
+                        "total_fees": round(row_dict.get("total_fees", 0) or 0, 2),
+                        "net_pnl": round(
+                            (row_dict.get("total_pnl", 0) or 0)
+                            - (row_dict.get("total_fees", 0) or 0),
+                            2,
+                        ),
+                        "sharpe_ratio": round(sharpe_ratio, 2),
+                        "sharpe_note": "per-trade mean/stdev; not annualized",
+                        "avg_edge_capture": round(
+                            row_dict.get("avg_edge_capture", 0) or 0, 2
+                        ),
+                        "avg_execution_time_ms": round(
+                            row_dict.get("avg_execution_time_ms", 0) or 0, 0
+                        ),
+                        "signals_24h": signals_24h_map.get(row_dict.get("strategy"), 0),
+                        "avg_spread_at_signal": round(
+                            row_dict.get("avg_spread_at_signal", 0) or 0, 4
+                        ),
+                    }
+                )
+
+            # Include strategies that fired signals but have no trade_outcomes yet.
+            # Without this, risk-rejected strategies are invisible on the dashboard.
+            seen_strategies = {s["strategy"] for s in strategies}
+            signal_only_cursor = await db.execute(
+                "SELECT DISTINCT strategy FROM signals WHERE fired_at >= ?",
+                (cutoff_date.isoformat(),),
+            )
+            signal_only_rows = await signal_only_cursor.fetchall()
+            for row in signal_only_rows:
+                strat = row["strategy"]
+                if strat not in seen_strategies:
+                    strategies.append(
+                        {
+                            "strategy": strat,
+                            "trade_count": 0,
+                            "win_count": 0,
+                            "win_rate": 0.0,
+                            "avg_pnl": 0.0,
+                            "total_pnl": 0.0,
+                            "total_fees": 0.0,
+                            "net_pnl": 0.0,
+                            "sharpe_ratio": 0.0,
+                            "sharpe_note": "per-trade mean/stdev; not annualized",
+                            "avg_edge_capture": 0.0,
+                            "avg_execution_time_ms": 0.0,
+                            "signals_24h": signals_24h_map.get(strat, 0),
+                            "avg_spread_at_signal": 0.0,
+                        }
+                    )
+
+            return strategies
+        finally:
+            await close_db(db)
+
+    @app.get("/api/strategies/pnl-series")
+    async def get_strategies_pnl_series(
+        days: int = Query(7, ge=1, le=365),
+    ) -> List[Dict[str, Any]]:
+        db = await get_db()
+        try:
+            cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
+            cursor = await db.execute(
+                """
+                SELECT
+                    p.snapshotted_at, s.strategy,
+                    s.realized_pnl, s.unrealized_pnl,
+                    s.fees, s.trade_count, s.win_count
+                FROM strategy_pnl_snapshots s
+                JOIN pnl_snapshots p ON s.snapshot_id = p.id
+                WHERE p.snapshotted_at >= ?
+                ORDER BY p.snapshotted_at, s.strategy
+                """,
+                (cutoff_date.isoformat(),),
+            )
+            rows = await cursor.fetchall()
+            return [
+                {
+                    "snapshotted_at": dict(r).get("snapshotted_at"),
+                    "strategy": dict(r).get("strategy"),
+                    "realized_pnl": round(dict(r).get("realized_pnl", 0) or 0, 2),
+                    "unrealized_pnl": round(dict(r).get("unrealized_pnl", 0) or 0, 2),
+                    "fees": round(dict(r).get("fees", 0) or 0, 2),
+                    "trade_count": dict(r).get("trade_count", 0) or 0,
+                    "win_count": dict(r).get("win_count", 0) or 0,
+                }
+                for r in rows
+            ]
+        finally:
+            await close_db(db)
+
+    @app.get("/api/equity-curve")
+    async def get_equity_curve(
+        days: int = Query(30, ge=1, le=365),
+    ) -> List[Dict[str, Any]]:
+        db = await get_db()
+        try:
+            cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
+            cursor = await db.execute(
+                """
+                SELECT snapshotted_at, total_capital, unrealized_pnl,
+                       realized_pnl_total, fees_total
+                FROM pnl_snapshots WHERE snapshotted_at >= ?
+                ORDER BY snapshotted_at
+                """,
+                (cutoff_date.isoformat(),),
+            )
+            rows = await cursor.fetchall()
+            return [
+                {
+                    "snapshotted_at": dict(r).get("snapshotted_at"),
+                    "total_capital": round(dict(r).get("total_capital", 0) or 0, 2),
+                    "unrealized_pnl": round(dict(r).get("unrealized_pnl", 0) or 0, 2),
+                    "realized_pnl_total": round(
+                        dict(r).get("realized_pnl_total", 0) or 0, 2
+                    ),
+                    "fees_total": round(dict(r).get("fees_total", 0) or 0, 2),
+                }
+                for r in rows
+            ]
+        finally:
+            await close_db(db)
+
+    @app.get("/api/trades")
+    async def get_trades(
+        strategy: Optional[str] = Query(None),
+        days: int = Query(30, ge=1, le=365),
+        limit: int = Query(200, ge=1, le=1000),
+    ) -> List[Dict[str, Any]]:
+        db = await get_db()
+        try:
+            cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
+            if strategy:
+                cursor = await db.execute(
+                    "SELECT * FROM trade_outcomes WHERE created_at >= ? AND strategy = ? ORDER BY created_at DESC LIMIT ?",
+                    (cutoff_date.isoformat(), strategy, limit),
+                )
+            else:
+                cursor = await db.execute(
+                    "SELECT * FROM trade_outcomes WHERE created_at >= ? ORDER BY created_at DESC LIMIT ?",
+                    (cutoff_date.isoformat(), limit),
+                )
+            rows = await cursor.fetchall()
+            result = []
+            for row in rows:
+                d = dict(row)
+                result.append(
+                    {
+                        "id": d.get("id"),
+                        "signal_id": d.get("signal_id"),
+                        "strategy": d.get("strategy"),
+                        "violation_id": d.get("violation_id"),
+                        "market_id_a": d.get("market_id_a"),
+                        "market_id_b": d.get("market_id_b"),
+                        "predicted_edge": round(d.get("predicted_edge", 0) or 0, 4),
+                        "predicted_pnl": round(d.get("predicted_pnl", 0) or 0, 2),
+                        "actual_pnl": round(d.get("actual_pnl", 0) or 0, 2),
+                        "fees_total": round(d.get("fees_total", 0) or 0, 2),
+                        "edge_captured_pct": round(
+                            d.get("edge_captured_pct", 0) or 0, 2
+                        ),
+                        "signal_to_fill_ms": d.get("signal_to_fill_ms"),
+                        "holding_period_ms": d.get("holding_period_ms"),
+                        "spread_at_signal": round(d.get("spread_at_signal", 0) or 0, 4),
+                        "volume_at_signal": round(d.get("volume_at_signal", 0) or 0, 2),
+                        "liquidity_at_signal": round(
+                            d.get("liquidity_at_signal", 0) or 0, 2
+                        ),
+                        "resolved_at": d.get("resolved_at"),
+                        "created_at": d.get("created_at"),
+                    }
+                )
+            return result
+        finally:
+            await close_db(db)
+
+    @app.get("/api/risk")
+    async def get_risk() -> Dict[str, Any]:
+        PAPER_CAPITAL = get_config().risk_controls.starting_capital
+        db = await get_db()
+        try:
+            snapshot = await get_latest_snapshot(db)
+            if snapshot:
+                total_capital = snapshot.get("total_capital", 0) or PAPER_CAPITAL
+            else:
+                # Compute from trade_outcomes if no snapshots yet
+                cursor = await db.execute(
+                    "SELECT COALESCE(SUM(actual_pnl), 0), COALESCE(SUM(fees_total), 0) FROM trade_outcomes"
+                )
+                row = await cursor.fetchone()
+                total_capital = (
+                    PAPER_CAPITAL + (row[0] or 0) - (row[1] or 0)
+                    if row
+                    else PAPER_CAPITAL
+                )
+
+            _cutoff_90d = (datetime.now(timezone.utc) - timedelta(days=90)).isoformat()
+            cursor = await db.execute(
+                """
+                SELECT total_capital
+                FROM pnl_snapshots
+                WHERE snapshotted_at >= ?
+                ORDER BY snapshotted_at ASC
+                """,
+                (_cutoff_90d,),
+            )
+            snapshots = list(await cursor.fetchall())
+
+            max_drawdown = 0.0
+            max_drawdown_dollar = 0.0
+            if snapshots:
+                peak_capital = None
+                for snap in snapshots:
+                    current_capital = snap["total_capital"] or 0
+                    if peak_capital is None or current_capital > peak_capital:
+                        peak_capital = current_capital
+                    if peak_capital and peak_capital > 0:
+                        dd_dollar = peak_capital - current_capital
+                        drawdown = dd_dollar / peak_capital * 100
+                        if drawdown > max_drawdown:
+                            max_drawdown = drawdown
+                            max_drawdown_dollar = dd_dollar
+
+            cursor = await db.execute(
+                "SELECT MAX(entry_price * entry_size) as max_pos FROM positions WHERE status = 'open'"
+            )
+            row = await cursor.fetchone()
+            max_pos_exposure = row["max_pos"] or 0 if row else 0
+            concentration = (
+                (max_pos_exposure / total_capital * 100) if total_capital > 0 else 0
+            )
+
+            cursor = await db.execute("""
+                SELECT DATE(created_at) as trade_date, SUM(actual_pnl) as daily_pnl
+                FROM trade_outcomes GROUP BY DATE(created_at)
+                ORDER BY trade_date DESC LIMIT 30
+                """)
+            daily_rows = await cursor.fetchall()
+            daily_pnls = [
+                r["daily_pnl"] for r in daily_rows if r["daily_pnl"] is not None
+            ]
+
+            daily_var = 0.0
+            if len(daily_pnls) > 1:
+                daily_pnls_sorted = sorted(daily_pnls)
+                percentile_5_idx = max(0, int(len(daily_pnls_sorted) * 0.05))
+                # VaR = magnitude of loss at 5th percentile.  A positive P&L at
+                # the 5th percentile means no loss-tail risk, so VaR = 0.
+                daily_var = max(0.0, -daily_pnls_sorted[percentile_5_idx])
+
+            cursor = await db.execute(
+                "SELECT actual_pnl FROM trade_outcomes WHERE actual_pnl IS NOT NULL"
+                " ORDER BY created_at DESC LIMIT 500"
+            )
+            pnl_rows = await cursor.fetchall()
+            pnl_values = [r["actual_pnl"] for r in pnl_rows]
+
+            overall_sharpe = 0
+            if len(pnl_values) > 1:
+                mean_pnl = statistics.mean(pnl_values)
+                stdev_pnl = statistics.stdev(pnl_values)
+                if stdev_pnl > 0:
+                    overall_sharpe = mean_pnl / stdev_pnl
+
+            return {
+                "max_drawdown": round(max_drawdown_dollar, 2),
+                "max_drawdown_pct": round(max_drawdown, 2),
+                "concentration_pct": round(concentration, 2),
+                "daily_var": round(daily_var, 2),
+                "daily_var_sample_size": len(daily_pnls),
+                "daily_var_reliable": len(daily_pnls) >= 20,
+                "sharpe_overall": round(overall_sharpe, 2),
+            }
+        finally:
+            await close_db(db)
+
+    @app.get("/api/fees")
+    async def get_fees() -> Dict[str, Any]:
+        db = await get_db()
+        try:
+            cursor = await db.execute("""
+                SELECT platform, COALESCE(SUM(fee_paid), 0) as total_fees
+                FROM orders WHERE fee_paid IS NOT NULL GROUP BY platform
+                """)
+            platform_rows = await cursor.fetchall()
+            fees_by_platform = [
+                {
+                    "platform": row["platform"],
+                    "total_fees": round(row["total_fees"] or 0, 2),
+                }
+                for row in platform_rows
+            ]
+
+            cursor = await db.execute("""
+                SELECT strategy, COALESCE(SUM(fees_total), 0) as total_fees
+                FROM trade_outcomes WHERE fees_total IS NOT NULL GROUP BY strategy
+                """)
+            strategy_rows = await cursor.fetchall()
+            fees_by_strategy = [
+                {
+                    "strategy": row["strategy"],
+                    "total_fees": round(row["total_fees"] or 0, 2),
+                }
+                for row in strategy_rows
+            ]
+
+            fees_total_cursor = await db.execute(
+                "SELECT COALESCE(SUM(fees_total), 0) as total FROM trade_outcomes"
+            )
+            fees_total_row = await fees_total_cursor.fetchone()
+            total_fees = round(
+                float(fees_total_row["total"] or 0) if fees_total_row else 0.0, 2
+            )
+            return {
+                "total_fees": round(total_fees, 2),
+                "by_platform": fees_by_platform,
+                "by_strategy": fees_by_strategy,
+            }
+        finally:
+            await close_db(db)
+
+    @app.get("/api/signals")
+    async def get_signals(
+        strategy: Optional[str] = Query(None),
+        days: int = Query(7, ge=1, le=365),
+        limit: int = Query(200, ge=1, le=1000),
+    ) -> List[Dict[str, Any]]:
+        db = await get_db()
+        try:
+            cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
+            if strategy:
+                cursor = await db.execute(
+                    "SELECT id, violation_id, strategy, signal_type, market_id_a, market_id_b, "
+                    "model_edge, kelly_fraction, position_size_a, position_size_b, "
+                    "total_capital_at_risk, status, fired_at, updated_at "
+                    "FROM signals WHERE fired_at >= ? AND strategy = ? ORDER BY fired_at DESC LIMIT ?",
+                    (cutoff_date.isoformat(), strategy, limit),
+                )
+            else:
+                cursor = await db.execute(
+                    "SELECT id, violation_id, strategy, signal_type, market_id_a, market_id_b, "
+                    "model_edge, kelly_fraction, position_size_a, position_size_b, "
+                    "total_capital_at_risk, status, fired_at, updated_at "
+                    "FROM signals WHERE fired_at >= ? ORDER BY fired_at DESC LIMIT ?",
+                    (cutoff_date.isoformat(), limit),
+                )
+            rows = await cursor.fetchall()
+            result = []
+            for row in rows:
+                d = dict(row)
+                result.append(
+                    {
+                        "id": d.get("id"),
+                        "violation_id": d.get("violation_id"),
+                        "strategy": d.get("strategy"),
+                        "signal_type": d.get("signal_type"),
+                        "market_id_a": d.get("market_id_a"),
+                        "market_id_b": d.get("market_id_b"),
+                        "model_edge": round(d.get("model_edge", 0) or 0, 4),
+                        "kelly_fraction": round(d.get("kelly_fraction", 0) or 0, 4),
+                        "position_size_a": round(d.get("position_size_a", 0) or 0, 2),
+                        "position_size_b": round(d.get("position_size_b", 0) or 0, 2),
+                        "total_capital_at_risk": round(
+                            d.get("total_capital_at_risk", 0) or 0, 2
+                        ),
+                        "status": d.get("status"),
+                        "fired_at": d.get("fired_at"),
+                        "updated_at": d.get("updated_at"),
+                    }
+                )
+            return result
+        finally:
+            await close_db(db)
+
+    @app.get("/api/circuit-breaker")
+    async def get_circuit_breaker() -> Dict[str, Any]:
+        db = await get_db()
+        try:
+            cursor = await db.execute(
+                "SELECT event_type, detail, occurred_at FROM system_events WHERE event_type IN ('CIRCUIT_BREAKER_TRIPPED','CIRCUIT_BREAKER_RESET') AND DATE(occurred_at) = DATE('now') ORDER BY id DESC LIMIT 1"
+            )
+            event_row = await cursor.fetchone()
+            if event_row and event_row["event_type"] == "CIRCUIT_BREAKER_TRIPPED":
+                tripped = True
+                reason = event_row["detail"]
+                tripped_at = event_row["occurred_at"]
+            else:
+                tripped = False
+                reason = None
+                tripped_at = None
+            daily_loss_available = True
+            daily_loss = 0.0
+            try:
+                from datetime import date as _date
+
+                _today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+                _tomorrow = (
+                    _date.fromisoformat(_today) + timedelta(days=1)
+                ).isoformat()
+                cursor = await db.execute(
+                    "SELECT COALESCE(SUM(actual_pnl - COALESCE(fees_total,0)),0) FROM trade_outcomes WHERE created_at >= ? AND created_at < ?",
+                    (_today, _tomorrow),
+                )
+                pnl_row = await cursor.fetchone()
+                net_pnl = pnl_row[0] if pnl_row else 0.0
+                daily_loss = max(0.0, -net_pnl)
+            except Exception as e:
+                logger.warning(
+                    "circuit-breaker endpoint: daily_loss query failed: %s", e
+                )
+                daily_loss_available = False
+            cfg = get_config().risk_controls
+            daily_loss_limit_pct = cfg.max_daily_loss_pct
+            daily_loss_limit = cfg.starting_capital * daily_loss_limit_pct
+            return {
+                "tripped": tripped,
+                "reason": reason,
+                "tripped_at": tripped_at,
+                "daily_loss": daily_loss,
+                "daily_loss_available": daily_loss_available,
+                "daily_loss_limit": daily_loss_limit,
+                "daily_loss_limit_pct": daily_loss_limit_pct,
+            }
+        finally:
+            await close_db(db)
+
+    @app.get("/api/positions")
+    async def get_positions(
+        status: Optional[str] = Query(None),
+        limit: int = Query(200, ge=1, le=1000),
+    ) -> List[Dict[str, Any]]:
+        db = await get_db()
+        try:
+            if status:
+                cursor = await db.execute(
+                    "SELECT * FROM positions WHERE status = ? ORDER BY updated_at DESC LIMIT ?",
+                    (status, limit),
+                )
+            else:
+                cursor = await db.execute(
+                    "SELECT * FROM positions ORDER BY updated_at DESC LIMIT ?",
+                    (limit,),
+                )
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+        finally:
+            await close_db(db)
+
+    @app.get("/api/pnl-split")
+    async def get_pnl_split() -> Dict[str, Any]:
+        """Realistic vs synthetic PnL totals across all closed positions.
+
+        realistic: positions closed by mark_and_close_positions at real price.
+        synthetic: legacy positions with pre-computed exit_price at open time.
+        """
+        db = await get_db()
+        try:
+            cursor = await db.execute("""SELECT
+                       pnl_model,
+                       COUNT(*) AS trade_count,
+                       COALESCE(SUM(realized_pnl), 0.0) AS total_pnl,
+                       COALESCE(SUM(fees_paid), 0.0) AS total_fees
+                   FROM positions
+                   WHERE status = 'closed'
+                     AND realized_pnl IS NOT NULL
+                   GROUP BY pnl_model""")
+            rows = await cursor.fetchall()
+            result: Dict[str, Any] = {
+                "realistic": {"trade_count": 0, "total_pnl": 0.0, "total_fees": 0.0},
+                "synthetic": {"trade_count": 0, "total_pnl": 0.0, "total_fees": 0.0},
+            }
+            for row in rows:
+                model = row[0] or "synthetic"
+                if model not in result:
+                    result[model] = {
+                        "trade_count": 0,
+                        "total_pnl": 0.0,
+                        "total_fees": 0.0,
+                    }
+                result[model] = {
+                    "trade_count": row[1],
+                    "total_pnl": round(row[2], 4),
+                    "total_fees": round(row[3], 4),
+                }
+            return result
+        finally:
+            await close_db(db)
+
+    @app.get("/api/invariants")
+    async def get_invariants(limit: int = Query(20, ge=1, le=100)) -> Dict[str, Any]:
+        """Invariant violation log: total count and most recent failures."""
+        db = await get_db()
+        try:
+            count_cursor = await db.execute("SELECT COUNT(*) FROM invariant_violations")
+            count_row = await count_cursor.fetchone()
+            violation_count = count_row[0] if count_row else 0
+
+            recent_cursor = await db.execute(
+                """SELECT id, name, message, severity, violated_at
+                   FROM invariant_violations
+                   ORDER BY violated_at DESC
+                   LIMIT ?""",
+                (limit,),
+            )
+            rows = await recent_cursor.fetchall()
+            recent = [dict(row) for row in rows]
+
+            return {
+                "violation_count": violation_count,
+                "recent_violations": recent,
+            }
+        finally:
+            await close_db(db)
+
+    @app.get("/api/reconciliation")
+    async def get_reconciliation(
+        limit: int = Query(20, ge=1, le=100),
+    ) -> Dict[str, Any]:
+        """Reconciliation discrepancy log: counts by type and most recent rows."""
+        db = await get_db()
+        try:
+            total_cursor = await db.execute("SELECT COUNT(*) FROM reconciliation_log")
+            total_row = await total_cursor.fetchone()
+            total_count = total_row[0] if total_row else 0
+
+            discrepancy_cursor = await db.execute(
+                "SELECT COUNT(*) FROM reconciliation_log WHERE status = 'discrepancy'"
+            )
+            discrepancy_row = await discrepancy_cursor.fetchone()
+            discrepancy_count = discrepancy_row[0] if discrepancy_row else 0
+
+            recent_cursor = await db.execute(
+                """SELECT id, platform, check_type, discrepancy, status, detail, checked_at
+                   FROM reconciliation_log
+                   ORDER BY checked_at DESC
+                   LIMIT ?""",
+                (limit,),
+            )
+            rows = await recent_cursor.fetchall()
+            recent = [dict(row) for row in rows]
+
+            return {
+                "total_count": total_count,
+                "discrepancy_count": discrepancy_count,
+                "recent_discrepancies": recent,
+            }
+        finally:
+            await close_db(db)
+
+    @app.get("/health", response_model=None)
+    async def health_check() -> Union[Dict[str, Any], Response]:
+        db = None
+        try:
+            db = await get_db()
+            await db.execute("SELECT 1")
+            return {"status": "ok"}
+        except Exception as e:
+            from fastapi.responses import JSONResponse
+
+            return JSONResponse({"status": "error", "detail": str(e)}, status_code=503)
+        finally:
+            if db is not None:
+                await close_db(db)
+
+    # -- Serve React frontend if static_dir provided --
+    if static_dir and Path(static_dir).is_dir():
+        app.mount(
+            "/",
+            StaticFiles(directory=static_dir, html=True),
+            name="frontend",
+        )
+
+    return app
+
+
+def create_dashboard_app(
+    db_path: str,
+    static_dir: Optional[str] = None,
+) -> FastAPI:
+    """
+    Public factory: create a fully configured dashboard app.
+
+    Parameters
+    ----------
+    db_path : str
+        Path to the SQLite database.
+    static_dir : str or None
+        Path to the React build directory (dashboard/dist/).
+        If provided, the SPA is served at "/".
+    """
+    configure(db_path)
+    return _build_app(static_dir=static_dir)
+
+
+_LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
+
+
+def _is_loopback_host(host: str) -> bool:
+    return host in _LOOPBACK_HOSTS
+
+
+def _enforce_host_auth_policy(host: str) -> str:
+    """Fail-closed auth guard for dashboard host binding.
+
+    If the caller asked to bind to a non-loopback interface but no
+    DASHBOARD_PASSWORD is set, refuse to expose the dashboard publicly and
+    force-bind to 127.0.0.1 instead. Previously the auth middleware was only
+    attached when DASHBOARD_PASSWORD was non-empty, so an unset password on
+    0.0.0.0 silently served every endpoint unauthenticated.
+    """
+    if not _is_loopback_host(host) and not os.getenv("DASHBOARD_PASSWORD", ""):
+        logger.warning(
+            "Refusing to bind dashboard to %s with no DASHBOARD_PASSWORD set -- "
+            "falling back to 127.0.0.1. Set DASHBOARD_PASSWORD in the "
+            "environment to expose publicly.",
+            host,
+        )
+        return "127.0.0.1"
+    return host
+
+
+async def start_dashboard_server(
+    app: FastAPI,
+    host: str = "127.0.0.1",
+    port: int = 8000,
+) -> None:
+    """
+    Start uvicorn as an async coroutine (non-blocking).
+    Designed to be launched as an asyncio.create_task() inside
+    trading_session.py.
+    """
+    host = _enforce_host_auth_policy(host)
+
+    config = uvicorn.Config(
+        app,
+        host=host,
+        port=port,
+        log_level="info",
+    )
+    server = uvicorn.Server(config)
+    await server.serve()
+
+
+# ---------------------------------------------------------------------------
+# Standalone mode
+# ---------------------------------------------------------------------------
+def main():
+    """Run the FastAPI server standalone."""
+    parser = argparse.ArgumentParser(description="Prediction Market Dashboard API")
+    parser.add_argument(
+        "--db",
+        type=str,
+        default="./data/prediction_market.db",
+        help="Path to SQLite database",
+    )
+    parser.add_argument("--host", type=str, default="127.0.0.1", help="Host to bind to")
+    parser.add_argument("--port", type=int, default=8000, help="Port to bind to")
+    args = parser.parse_args()
+
+    db_file = Path(args.db)
+    if not db_file.parent.exists():
+        db_file.parent.mkdir(parents=True, exist_ok=True)
+
+    # Auto-detect dashboard/dist/ relative to this script
+    script_dir = Path(__file__).resolve().parent
+    dist_dir = script_dir.parent / "dashboard" / "dist"
+    static_dir = str(dist_dir) if dist_dir.is_dir() else None
+
+    app = create_dashboard_app(db_path=args.db, static_dir=static_dir)
+
+    host = _enforce_host_auth_policy(args.host)
+
+    uvicorn.run(app, host=host, port=args.port, log_level="info")
+
+
+if __name__ == "__main__":
+    main()
