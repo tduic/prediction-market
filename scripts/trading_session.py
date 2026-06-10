@@ -487,7 +487,8 @@ async def main():
                     )
                     logger.info(
                         "STATUS: pairs=%d eligible=%d muted=%d pnl=$%.2f "
-                        "prices=%d | last_fire=%s ticks_since=%d | scheduled=%d",
+                        "prices=%d | last_fire=%s ticks_since=%d | scheduled=%d "
+                        "| stale_skipped=%d ws_age_ms=%s",
                         stats["pairs_monitored"],
                         stats["pairs_eligible_now"],
                         stats["recently_fired"],
@@ -496,6 +497,8 @@ async def main():
                         _last_fire,
                         stats["ticks_since_last_fire"],
                         scheduled.total_trades,
+                        stats["skipped_stale"],
+                        stats["ws_last_tick_age_ms_by_platform"],
                     )
                     now_ts = time.time()
                     if now_ts - _last_snapshot_at >= _snapshot_interval:
