@@ -472,14 +472,18 @@ class ArbitrageEngine:
 
         buy_platform = "polymarket" if p_price < k_price else "kalshi"
         sell_platform = "kalshi" if buy_platform == "polymarket" else "polymarket"
-        buy_id = match["poly_id"] if buy_platform == "polymarket" else match["kalshi_id"]
+        buy_id = (
+            match["poly_id"] if buy_platform == "polymarket" else match["kalshi_id"]
+        )
         sell_id = (
             match["kalshi_id"] if buy_platform == "polymarket" else match["poly_id"]
         )
         buy_price = p_price if buy_platform == "polymarket" else k_price
         sell_price = k_price if buy_platform == "polymarket" else p_price
 
-        bankroll = await get_portfolio_value(self.db, self._risk_config.starting_capital)
+        bankroll = await get_portfolio_value(
+            self.db, self._risk_config.starting_capital
+        )
         edge = spread
         kelly_f = compute_kelly_fraction(edge, 1.0, self._risk_config.kelly_fraction)
         max_pos = bankroll * self._risk_config.max_position_pct
@@ -488,14 +492,17 @@ class ArbitrageEngine:
             2,
         )
 
+        if size <= 0:
+            logger.debug("Zero position size for pair=%s, skipping", pair_id)
+            return None
+
         try:
             await self.db.execute(
-                """INSERT INTO market_pairs
-                   (id, poly_id, kalshi_id, similarity_score, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?)
-                   ON CONFLICT(poly_id, kalshi_id) DO UPDATE SET updated_at=excluded.updated_at""",
+                """INSERT OR IGNORE INTO market_pairs
+                   (id, market_id_a, market_id_b, pair_type, similarity_score, created_at, updated_at)
+                   VALUES (?, ?, ?, 'cross_platform', ?, ?, ?)""",
                 (
-                    f"pair_{uuid.uuid4().hex[:12]}",
+                    pair_id,
                     match["poly_id"],
                     match["kalshi_id"],
                     match.get("similarity", 0.85),
@@ -505,14 +512,15 @@ class ArbitrageEngine:
             )
             await self.db.execute(
                 """INSERT INTO violations
-                   (id, market_pair_id, violation_type, poly_price, kalshi_price,
-                    spread, severity, status, created_at, updated_at)
-                   SELECT ?, mp.id, 'spread_divergence', ?, ?, ?, 'high', 'pending', ?, ?
-                   FROM market_pairs mp WHERE mp.poly_id=? AND mp.kalshi_id=? LIMIT 1""",
+                   (id, pair_id, violation_type, price_a_at_detect, price_b_at_detect,
+                    raw_spread, net_spread, status, detected_at, updated_at)
+                   SELECT ?, mp.id, 'spread_divergence', ?, ?, ?, ?, 'pending', ?, ?
+                   FROM market_pairs mp WHERE mp.market_id_a=? AND mp.market_id_b=? LIMIT 1""",
                 (
                     violation_id,
                     p_price,
                     k_price,
+                    spread,
                     spread,
                     now,
                     now,
@@ -664,6 +672,18 @@ class ArbitrageEngine:
 
         actual_pnl = round((sell_fill_price - buy_fill_price) * size - total_fees, 4)
 
+        pnl_cap = size * self._risk_config.pnl_sanity_cap_ratio
+        if actual_pnl > pnl_cap:
+            logger.warning(
+                "PNL_SANITY_CAP blocked P1 arb actual_pnl=%.4f > cap=%.4f "
+                "(size=%.1f, spread=%.4f). Likely false-positive pair — skipping DB write.",
+                actual_pnl,
+                pnl_cap,
+                size,
+                spread,
+            )
+            return None
+
         pos_id = f"pos_{uuid.uuid4().hex[:12]}"
         opened_at = now
         closed_at = datetime.now(timezone.utc).isoformat()
@@ -671,18 +691,17 @@ class ArbitrageEngine:
         try:
             await self.db.execute(
                 """INSERT OR IGNORE INTO positions
-                   (id, signal_id, strategy, market_id, platform, side,
+                   (id, signal_id, strategy, market_id, side,
                     entry_price, entry_size, exit_price, exit_size,
                     fees_paid, realized_pnl, pnl_model,
                     status, opened_at, closed_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'realistic',
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'realistic',
                            'closed', ?, ?, ?)""",
                 (
                     pos_id,
                     signal_id,
                     strategy,
                     buy_id,
-                    buy_platform,
                     "BUY",
                     buy_fill_price,
                     size,
@@ -783,7 +802,6 @@ class ArbitrageEngine:
             "actual_pnl": actual_pnl,
             "fees": total_fees,
         }
-        return None
 
     async def flush(self):
         """Commit any pending DB writes.
