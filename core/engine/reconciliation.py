@@ -75,7 +75,8 @@ async def _check_orphaned_positions(db: aiosqlite.Connection) -> int:
     cursor = await db.execute("""
         SELECT p.id, p.signal_id, p.market_id,
                (SELECT o.status FROM orders o
-                 WHERE o.signal_id = p.signal_id AND o.market_id = p.market_id
+                 WHERE (o.signal_id = p.signal_id OR (o.signal_id IS NULL AND p.signal_id IS NULL))
+                   AND o.market_id = p.market_id
                  ORDER BY o.submitted_at DESC LIMIT 1) AS order_status
         FROM positions p
         WHERE p.status = 'open'
