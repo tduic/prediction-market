@@ -126,8 +126,14 @@ async def check_daily_loss_limit(
         net_pnl = float(row[0]) if row and row[0] is not None else 0.0
         daily_loss = max(0.0, -net_pnl)
     except Exception as e:
-        logger.error("Error checking daily loss: %s", e)
-        daily_loss = 0
+        logger.error("Error checking daily loss — failing safe: %s", e)
+        return RiskCheckResult(
+            passed=False,
+            check_type="daily_loss_limit",
+            check_value=-1,
+            threshold=max_loss,
+            detail=f"DB error during daily-loss check — blocked as safe default: {e}",
+        )
 
     passed = daily_loss < max_loss
 
