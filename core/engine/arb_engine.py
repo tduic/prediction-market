@@ -23,6 +23,11 @@ from execution.models import OrderLeg
 
 logger = logging.getLogger(__name__)
 
+# Minimum price movement that triggers a spread re-check in on_price_update.
+# Applies only to that path — periodic_scan and initial_sweep call
+# _try_fire_pair directly and are not gated by this threshold.
+_MIN_TICK_MOVE = 0.001
+
 
 class ArbitrageEngine:
     """Event-driven cross-platform arbitrage.
@@ -338,7 +343,7 @@ class ArbitrageEngine:
         self._last_tick_at[market_id] = time.time()
 
         # Skip if price didn't change meaningfully
-        if old_price is not None and abs(new_price - old_price) < 0.001:
+        if old_price is not None and abs(new_price - old_price) < _MIN_TICK_MOVE:
             return
 
         self._ticks_since_last_fire += 1
