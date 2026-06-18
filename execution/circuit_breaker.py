@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
@@ -86,6 +87,9 @@ class DailyLossCircuitBreaker:
         self._tripped_at: str | None = None
         self._consecutive_failures: int = 0
         self._utc_day: str = self._today()
+        # (daily_loss_value, cached_at_monotonic) — refreshed every 5 s so the
+        # hot-path should_halt() avoids a DB round-trip on every signal check.
+        self._daily_loss_cache: tuple[float, float] | None = None
 
     # ── Public API ────────────────────────────────────────────────────
 
@@ -141,7 +145,7 @@ class DailyLossCircuitBreaker:
             return True
 
         try:
-            daily_loss = await self._compute_daily_loss()
+            daily_loss = await self._get_daily_loss_cached()
         except Exception as e:
             logger.error(
                 "Failed to compute daily loss — halting as safe default: %s", e
@@ -215,6 +219,7 @@ class DailyLossCircuitBreaker:
         self._reason = None
         self._tripped_at = None
         self._consecutive_failures = 0
+        self._daily_loss_cache = None
         if was_tripped:
             await self._log_event(
                 "CIRCUIT_BREAKER_RESET",
@@ -265,6 +270,26 @@ class DailyLossCircuitBreaker:
     def _daily_loss_limit(self) -> float:
         return self.starting_capital * self.max_daily_loss_pct
 
+    _DAILY_LOSS_CACHE_TTL_S: float = 5.0
+
+    async def _get_daily_loss_cached(self) -> float:
+        """Return today's realized net loss, using a short in-memory cache.
+
+        Avoids a DB round-trip on every signal check. The 5-second TTL keeps
+        the breaker responsive: at worst a handful of extra signals pass through
+        near the threshold before the next cache refresh trips the breaker. The
+        sticky ``_tripped`` flag ensures that once the breaker fires it stays
+        fired regardless of cache state.
+        """
+        now_mono = time.monotonic()
+        if self._daily_loss_cache is not None:
+            cached_value, cached_at = self._daily_loss_cache
+            if (now_mono - cached_at) < self._DAILY_LOSS_CACHE_TTL_S:
+                return cached_value
+        value = await self._compute_daily_loss()
+        self._daily_loss_cache = (value, now_mono)
+        return value
+
     async def _compute_daily_loss(self) -> float:
         """
         Return today's realized net losses as a positive float.
@@ -314,6 +339,7 @@ class DailyLossCircuitBreaker:
             self._reason = None
             self._tripped_at = None
             self._consecutive_failures = 0
+            self._daily_loss_cache = None
             if was_tripped:
                 detail = (
                     f"UTC day rollover {previous_day} → {today}; "
