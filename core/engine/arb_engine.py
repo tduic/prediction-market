@@ -288,9 +288,26 @@ class ArbitrageEngine:
 
         # Execute under lock to prevent concurrent trades on the same pair.
         async with self._trade_lock:
-            # Re-check under lock — state may have changed while we waited.
+            # Full re-check under lock: prices may have moved while we waited
+            # (on_price_update writes self.prices without a lock and asyncio
+            # yields at the 'async with' above). Re-run the complete eligibility
+            # sequence so execution always uses the freshest available prices.
+            now = time.time()
+            p_price = self.prices.get(match["poly_id"])
+            k_price = self.prices.get(match["kalshi_id"])
+            if p_price is None or k_price is None:
+                return False
+            spread = abs(p_price - k_price)
             self._check_rearm(pair_id, spread)
             if not self._is_eligible(pair_id):
+                return False
+            if spread < self.min_spread:
+                return False
+            if not (
+                self._is_fresh(match["poly_id"], now)
+                and self._is_fresh(match["kalshi_id"], now)
+            ):
+                self._skipped_stale += 1
                 return False
             try:
                 trade = await self._execute_arb_trade(

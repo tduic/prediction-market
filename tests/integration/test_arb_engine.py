@@ -11,7 +11,7 @@ import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -483,7 +483,11 @@ class TestScheduledStrategyRunnerExecutionMode:
 
 
 class TestArbitrageEngineExecutionMode:
-    def test_live_execution_mode_uses_live_risk_config(self, matches):
+    @patch(
+        "execution.factory._make_execution_clients",
+        return_value=(MagicMock(), MagicMock()),
+    )
+    def test_live_execution_mode_uses_live_risk_config(self, _mock_clients, matches):
         engine = ArbitrageEngine(MagicMock(), matches, execution_mode="live")
         assert engine._risk_config.max_position_pct == pytest.approx(0.02)
         assert engine._risk_config.min_edge == pytest.approx(0.05)
@@ -492,7 +496,13 @@ class TestArbitrageEngineExecutionMode:
         engine = ArbitrageEngine(MagicMock(), matches, execution_mode="paper")
         assert engine._risk_config.max_position_pct == pytest.approx(0.05)
 
-    def test_explicit_risk_config_overrides_execution_mode(self, matches):
+    @patch(
+        "execution.factory._make_execution_clients",
+        return_value=(MagicMock(), MagicMock()),
+    )
+    def test_explicit_risk_config_overrides_execution_mode(
+        self, _mock_clients, matches
+    ):
         explicit = RiskControlConfig(max_position_pct=0.10)
         engine = ArbitrageEngine(
             MagicMock(), matches, execution_mode="live", risk_config=explicit
