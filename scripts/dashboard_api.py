@@ -686,11 +686,9 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
             daily_loss_available = True
             daily_loss = 0.0
             try:
-                _today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-                _tomorrow = (date.fromisoformat(_today) + timedelta(days=1)).isoformat()
                 cursor = await db.execute(
                     "SELECT COALESCE(SUM(actual_pnl - COALESCE(fees_total,0)),0) FROM trade_outcomes WHERE created_at >= ? AND created_at < ?",
-                    (_today, _tomorrow),
+                    (_cb_today, _cb_tomorrow),
                 )
                 pnl_row = await cursor.fetchone()
                 net_pnl = pnl_row[0] if pnl_row else 0.0
