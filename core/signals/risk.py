@@ -1,4 +1,4 @@
-"""
+""" 
 Risk checks for signal validation before execution.
 
 All monetary limits are computed as percentages of current portfolio value,
@@ -228,11 +228,11 @@ async def check_duplicate_signal(
     placeholders = ",".join("?" for _ in market_ids)
 
     try:
-        # orders.submitted_at is stored as a Unix epoch integer (int(time.time()))
-        # cast to TEXT. ISO format strings sort lexicographically lower than Unix
-        # epoch strings ("1..." < "2026-..."), so an ISO cutoff would never match.
-        # Use a Unix epoch integer cutoff and CAST to compare correctly, matching
-        # the same pattern used in reconciliation._check_stuck_pending_orders.
+        # orders.submitted_at is stored as str(int(time.time())) — always a
+        # 10-digit decimal string for timestamps in the 2020s. Lexicographic
+        # comparison on same-length decimal strings is identical to numeric
+        # comparison, so passing the cutoff as a string avoids CAST and lets
+        # SQLite use idx_orders_submitted_at for an index range scan.
         cutoff_unix = int(
             (
                 datetime.now(timezone.utc) - timedelta(seconds=duplicate_window_s)
@@ -241,8 +241,8 @@ async def check_duplicate_signal(
         cursor = await db.execute(
             f"SELECT COUNT(*) FROM orders "
             f"WHERE market_id IN ({placeholders}) "
-            f"AND CAST(submitted_at AS INTEGER) > ?",
-            [*market_ids, cutoff_unix],
+            f"AND submitted_at > ?",
+            [*market_ids, str(cutoff_unix)],
         )
         row = await cursor.fetchone()
         recent_count = row[0] if row else 0
