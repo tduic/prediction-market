@@ -11,7 +11,7 @@ import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -483,11 +483,7 @@ class TestScheduledStrategyRunnerExecutionMode:
 
 
 class TestArbitrageEngineExecutionMode:
-    @patch(
-        "execution.factory._make_execution_clients",
-        return_value=(MagicMock(), MagicMock()),
-    )
-    def test_live_execution_mode_uses_live_risk_config(self, _mock_clients, matches):
+    def test_live_execution_mode_uses_live_risk_config(self, matches):
         engine = ArbitrageEngine(MagicMock(), matches, execution_mode="live")
         assert engine._risk_config.max_position_pct == pytest.approx(0.02)
         assert engine._risk_config.min_edge == pytest.approx(0.05)
@@ -496,13 +492,7 @@ class TestArbitrageEngineExecutionMode:
         engine = ArbitrageEngine(MagicMock(), matches, execution_mode="paper")
         assert engine._risk_config.max_position_pct == pytest.approx(0.05)
 
-    @patch(
-        "execution.factory._make_execution_clients",
-        return_value=(MagicMock(), MagicMock()),
-    )
-    def test_explicit_risk_config_overrides_execution_mode(
-        self, _mock_clients, matches
-    ):
+    def test_explicit_risk_config_overrides_execution_mode(self, matches):
         explicit = RiskControlConfig(max_position_pct=0.10)
         engine = ArbitrageEngine(
             MagicMock(), matches, execution_mode="live", risk_config=explicit
@@ -1041,9 +1031,9 @@ async def test_arb_fire_with_sell_poly_leg_translates(db):
 
     await _simulate_price_update(engine, db, "kal_arb", 0.56)
 
-    assert len(engine.trades) == 1, (
-        f"Expected 1 trade to fire, got {len(engine.trades)}"
-    )
+    assert (
+        len(engine.trades) == 1
+    ), f"Expected 1 trade to fire, got {len(engine.trades)}"
 
     cursor = await db.execute(
         "SELECT side, book, requested_price FROM orders "
@@ -1053,9 +1043,9 @@ async def test_arb_fire_with_sell_poly_leg_translates(db):
     assert row is not None, "Expected an orders row for poly_arb after the arb fired"
     assert row[0] == "BUY", f"Expected side='BUY' (translated), got {row[0]!r}"
     assert row[1] == "NO", f"Expected book='NO' (translated), got {row[1]!r}"
-    assert row[2] == pytest.approx(0.30, abs=1e-4), (
-        f"Expected requested_price≈0.30, got {row[2]}"
-    )
+    assert row[2] == pytest.approx(
+        0.30, abs=1e-4
+    ), f"Expected requested_price≈0.30, got {row[2]}"
 
 
 @pytest.mark.asyncio

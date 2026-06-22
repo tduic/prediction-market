@@ -16,9 +16,9 @@ import math
 import os
 import secrets
 import statistics
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional
 
 import aiosqlite
 import uvicorn
@@ -54,8 +54,6 @@ class _BasicAuthMiddleware(BaseHTTPMiddleware):
         self._password = password
 
     async def dispatch(self, request: Request, call_next):
-        if request.url.path == "/health":
-            return await call_next(request)
         auth = request.headers.get("Authorization", "")
         if auth.startswith("Basic "):
             try:
@@ -86,7 +84,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
     """
     app = FastAPI(title="Prediction Market Dashboard API")
 
-    # HTTP Basic Auth -- enabled when DASHBOARD_PASSWORD env var is set.
+    # HTTP Basic Auth — enabled when DASHBOARD_PASSWORD env var is set.
     # Add before CORS so unauthenticated requests are rejected at the gate.
     _dash_password = os.getenv("DASHBOARD_PASSWORD", "")
     if _dash_password:
@@ -98,7 +96,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
     # CORS middleware.
     #
     # Note: allow_origins=["*"] and allow_credentials=True are mutually
-    # exclusive per the CORS spec -- Starlette silently drops the wildcard
+    # exclusive per the CORS spec — Starlette silently drops the wildcard
     # when credentials are enabled, which rejects every origin. The dashboard
     # doesn't use cookies or credentialed requests, so we keep the wildcard
     # and disable credentials.
@@ -110,13 +108,11 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
         allow_headers=["*"],
     )
 
-    # -- helpers --
+    # ── helpers ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
     async def get_db() -> aiosqlite.Connection:
         db = await aiosqlite.connect(_DB_PATH)
         db.row_factory = aiosqlite.Row
-        await db.execute("PRAGMA journal_mode=WAL")
-        await db.execute("PRAGMA busy_timeout=5000")
         return db
 
     async def close_db(db: aiosqlite.Connection) -> None:
@@ -138,7 +134,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
             if own_db:
                 await close_db(db)
 
-    # -- endpoints --
+    # ── endpoints ───────────────────────────────────────────────────────────────────────────────────────────────────────────
 
     @app.get("/api/overview")
     async def get_overview() -> Dict[str, Any]:
@@ -156,7 +152,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
                 open_positions = snapshot.get("open_positions_count", 0) or 0
                 snapshotted_at = snapshot.get("snapshotted_at")
             else:
-                # No snapshots yet -- compute live from trade_outcomes
+                # No snapshots yet — compute live from trade_outcomes
                 cursor = await db.execute(
                     "SELECT COALESCE(SUM(actual_pnl), 0), COALESCE(SUM(fees_total), 0) FROM trade_outcomes"
                 )
@@ -215,9 +211,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
             await close_db(db)
 
     @app.get("/api/strategies")
-    async def get_strategies(
-        days: float = Query(30, ge=0.04, le=365),
-    ) -> List[Dict[str, Any]]:
+    async def get_strategies(days: int = Query(30, ge=1)) -> List[Dict[str, Any]]:
         db = await get_db()
         try:
             cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
@@ -264,7 +258,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
                 if pnl_count > 1:
                     mean_pnl = row_dict.get("avg_pnl", 0) or 0
                     sum_sq = row_dict.get("sum_pnl_sq", 0) or 0
-                    # Sample variance (Bessel's correction, N-1) -- matches
+                    # Sample variance (Bessel's correction, N-1) — matches
                     # statistics.stdev() used in /api/risk for consistency.
                     # max(0.0) guards against tiny negatives from floating-point
                     # cancellation when all PnLs cluster near the same value.
@@ -339,7 +333,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
 
     @app.get("/api/strategies/pnl-series")
     async def get_strategies_pnl_series(
-        days: float = Query(7, ge=0.04, le=365),
+        days: int = Query(7, ge=1),
     ) -> List[Dict[str, Any]]:
         db = await get_db()
         try:
@@ -358,28 +352,23 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
                 (cutoff_date.isoformat(),),
             )
             rows = await cursor.fetchall()
-            result = []
-            for r in rows:
-                d = dict(r)
-                result.append(
-                    {
-                        "snapshotted_at": d.get("snapshotted_at"),
-                        "strategy": d.get("strategy"),
-                        "realized_pnl": round(d.get("realized_pnl", 0) or 0, 2),
-                        "unrealized_pnl": round(d.get("unrealized_pnl", 0) or 0, 2),
-                        "fees": round(d.get("fees", 0) or 0, 2),
-                        "trade_count": d.get("trade_count", 0) or 0,
-                        "win_count": d.get("win_count", 0) or 0,
-                    }
-                )
-            return result
+            return [
+                {
+                    "snapshotted_at": dict(r).get("snapshotted_at"),
+                    "strategy": dict(r).get("strategy"),
+                    "realized_pnl": round(dict(r).get("realized_pnl", 0) or 0, 2),
+                    "unrealized_pnl": round(dict(r).get("unrealized_pnl", 0) or 0, 2),
+                    "fees": round(dict(r).get("fees", 0) or 0, 2),
+                    "trade_count": dict(r).get("trade_count", 0) or 0,
+                    "win_count": dict(r).get("win_count", 0) or 0,
+                }
+                for r in rows
+            ]
         finally:
             await close_db(db)
 
     @app.get("/api/equity-curve")
-    async def get_equity_curve(
-        days: float = Query(30, ge=0.04, le=365),
-    ) -> List[Dict[str, Any]]:
+    async def get_equity_curve(days: int = Query(30, ge=1)) -> List[Dict[str, Any]]:
         db = await get_db()
         try:
             cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
@@ -411,7 +400,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
     @app.get("/api/trades")
     async def get_trades(
         strategy: Optional[str] = Query(None),
-        days: float = Query(30, ge=0.04, le=365),
+        days: int = Query(30, ge=1),
         limit: int = Query(200, ge=1, le=1000),
     ) -> List[Dict[str, Any]]:
         db = await get_db()
@@ -555,7 +544,6 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
                 "concentration_pct": round(concentration, 2),
                 "daily_var": round(daily_var, 2),
                 "daily_var_sample_size": len(daily_pnls),
-                "daily_var_reliable": len(daily_pnls) >= 20,
                 "sharpe_overall": round(overall_sharpe, 2),
             }
         finally:
@@ -609,7 +597,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
     @app.get("/api/signals")
     async def get_signals(
         strategy: Optional[str] = Query(None),
-        days: int = Query(7, ge=1, le=365),
+        days: int = Query(7, ge=1),
         limit: int = Query(200, ge=1, le=1000),
     ) -> List[Dict[str, Any]]:
         db = await get_db()
@@ -663,16 +651,8 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
     async def get_circuit_breaker() -> Dict[str, Any]:
         db = await get_db()
         try:
-            _cb_today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-            _cb_tomorrow = (
-                date.fromisoformat(_cb_today) + timedelta(days=1)
-            ).isoformat()
             cursor = await db.execute(
-                "SELECT event_type, detail, occurred_at FROM system_events "
-                "WHERE event_type IN ('CIRCUIT_BREAKER_TRIPPED','CIRCUIT_BREAKER_RESET') "
-                "AND occurred_at >= ? AND occurred_at < ? "
-                "ORDER BY id DESC LIMIT 1",
-                (_cb_today, _cb_tomorrow),
+                "SELECT event_type, detail, occurred_at FROM system_events WHERE event_type IN ('CIRCUIT_BREAKER_TRIPPED','CIRCUIT_BREAKER_RESET') AND DATE(occurred_at) = DATE('now') ORDER BY id DESC LIMIT 1"
             )
             event_row = await cursor.fetchone()
             if event_row and event_row["event_type"] == "CIRCUIT_BREAKER_TRIPPED":
@@ -686,9 +666,15 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
             daily_loss_available = True
             daily_loss = 0.0
             try:
+                from datetime import date as _date
+
+                _today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+                _tomorrow = (
+                    _date.fromisoformat(_today) + timedelta(days=1)
+                ).isoformat()
                 cursor = await db.execute(
                     "SELECT COALESCE(SUM(actual_pnl - COALESCE(fees_total,0)),0) FROM trade_outcomes WHERE created_at >= ? AND created_at < ?",
-                    (_cb_today, _cb_tomorrow),
+                    (_today, _tomorrow),
                 )
                 pnl_row = await cursor.fetchone()
                 net_pnl = pnl_row[0] if pnl_row else 0.0
@@ -836,8 +822,74 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
         finally:
             await close_db(db)
 
-    @app.get("/health", response_model=None)
-    async def health_check() -> Union[Dict[str, Any], Response]:
+    @app.get("/api/model-evaluations")
+    async def get_model_evaluations(
+        model_name: Optional[str] = Query(None),
+        limit: int = Query(20, ge=1, le=100),
+    ) -> List[Dict[str, Any]]:
+        """Recent model evaluation records for P3 calibration and other ML models."""
+        db = await get_db()
+        try:
+            if model_name:
+                cursor = await db.execute(
+                    """SELECT id, model_name, trained_at, dataset_size, test_size,
+                              accuracy, precision_score, recall, f1_score, brier_score, notes
+                       FROM model_evaluations
+                       WHERE model_name = ?
+                       ORDER BY trained_at DESC LIMIT ?""",
+                    (model_name, limit),
+                )
+            else:
+                cursor = await db.execute(
+                    """SELECT id, model_name, trained_at, dataset_size, test_size,
+                              accuracy, precision_score, recall, f1_score, brier_score, notes
+                       FROM model_evaluations
+                       ORDER BY trained_at DESC LIMIT ?""",
+                    (limit,),
+                )
+            rows = await cursor.fetchall()
+            return [
+                {
+                    "id": r["id"],
+                    "model_name": r["model_name"],
+                    "trained_at": r["trained_at"],
+                    "dataset_size": r["dataset_size"],
+                    "test_size": r["test_size"],
+                    "accuracy": (
+                        round(r["accuracy"] or 0, 4)
+                        if r["accuracy"] is not None
+                        else None
+                    ),
+                    "precision_score": (
+                        round(r["precision_score"] or 0, 4)
+                        if r["precision_score"] is not None
+                        else None
+                    ),
+                    "recall": (
+                        round(r["recall"] or 0, 4) if r["recall"] is not None else None
+                    ),
+                    "f1_score": (
+                        round(r["f1_score"] or 0, 4)
+                        if r["f1_score"] is not None
+                        else None
+                    ),
+                    "brier_score": (
+                        round(r["brier_score"] or 0, 4)
+                        if r["brier_score"] is not None
+                        else None
+                    ),
+                    "notes": r["notes"],
+                }
+                for r in rows
+            ]
+        except Exception as e:
+            logger.warning("model-evaluations query failed: %s", e)
+            return []
+        finally:
+            await close_db(db)
+
+    @app.get("/health")
+    async def health_check() -> Dict[str, Any]:
         db = None
         try:
             db = await get_db()
@@ -851,7 +903,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
             if db is not None:
                 await close_db(db)
 
-    # -- Serve React frontend if static_dir provided --
+    # ── Serve React frontend if static_dir provided ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
     if static_dir and Path(static_dir).is_dir():
         app.mount(
             "/",
@@ -898,8 +950,8 @@ def _enforce_host_auth_policy(host: str) -> str:
     0.0.0.0 silently served every endpoint unauthenticated.
     """
     if not _is_loopback_host(host) and not os.getenv("DASHBOARD_PASSWORD", ""):
-        logger.warning(
-            "Refusing to bind dashboard to %s with no DASHBOARD_PASSWORD set -- "
+        logger.error(
+            "Refusing to bind dashboard to %s with no DASHBOARD_PASSWORD set — "
             "falling back to 127.0.0.1. Set DASHBOARD_PASSWORD in the "
             "environment to expose publicly.",
             host,
