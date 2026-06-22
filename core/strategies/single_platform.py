@@ -1,4 +1,5 @@
-"""Single-platform trading strategies.
+"""
+Single-platform trading strategies.
 
 Provides detect_single_platform_opportunities, mark_and_close_positions,
 and related helper functions for P2-P5 strategies that operate on individual
@@ -124,7 +125,7 @@ async def mark_and_close_positions(
     now = now_dt.isoformat()
 
     cursor = await db.execute(
-        "SELECT id, signal_id, market_id, strategy, side, entry_price, entry_size, fees_paid "
+        "SELECT id, market_id, side, entry_price, entry_size, fees_paid "
         "FROM positions WHERE status='open' AND opened_at <= ?",
         (cutoff,),
     )
@@ -132,16 +133,7 @@ async def mark_and_close_positions(
 
     closed = 0
     for row in rows:
-        (
-            pos_id,
-            signal_id,
-            market_id,
-            strategy,
-            side,
-            entry_price,
-            entry_size,
-            fees_paid,
-        ) = row
+        pos_id, market_id, side, entry_price, entry_size, fees_paid = row
 
         # Use live cache price if available, fall back to DB
         if price_cache and market_id in price_cache:
@@ -175,27 +167,6 @@ async def mark_and_close_positions(
              WHERE id=?""",
             (current_price, entry_size, realized_pnl, current_price, now, now, pos_id),
         )
-        # Write a trade_outcomes row so P2-P5 results appear in dashboard analytics.
-        # id is deterministic on pos_id so INSERT OR IGNORE is idempotent on retries.
-        try:
-            await db.execute(
-                """INSERT OR IGNORE INTO trade_outcomes
-                   (id, signal_id, strategy, market_id_a,
-                    actual_pnl, fees_total, resolved_at, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    f"trade_{pos_id[4:]}",  # deterministic: strip "pos_" prefix
-                    signal_id,
-                    strategy,
-                    market_id,
-                    realized_pnl,
-                    fees_paid or 0,
-                    now,
-                    now,
-                ),
-            )
-        except Exception as e:
-            logger.debug("trade_outcomes insert failed for pos=%s: %s", pos_id, e)
         closed += 1
         logger.debug(
             "mark_and_close: closed pos=%s market=%s pnl=%.4f",
@@ -491,10 +462,7 @@ async def detect_single_platform_opportunities(
         price = m["yes_price"]
 
         # Phase 2.3: Kelly-based sizing (replaces hardcoded min(10, 100*edge)).
-        # Pass the actual bet price so Kelly uses the correct denominator
-        # (edge / (1 - bet_price) for YES, edge / bet_price for NO).
-        _bet_price = price if side == "BUY" else round(1.0 - price, 4)
-        _kelly_f = compute_kelly_fraction(edge, _bet_price, _risk_cfg.kelly_fraction)
+        _kelly_f = compute_kelly_fraction(edge, 1.0, _risk_cfg.kelly_fraction)
         _max_size = _bankroll * _risk_cfg.max_position_pct
         size = round(compute_position_size(_kelly_f, _bankroll, max_size=_max_size), 1)
         if size <= 0:
@@ -652,7 +620,6 @@ async def detect_single_platform_opportunities(
             if len(trades) % 50 == 0:
                 await db.commit()
 
-    if trades:
-        await db.commit()
-
+    # Final commit
+    await db.commit()
     return trades

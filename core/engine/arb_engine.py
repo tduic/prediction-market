@@ -23,11 +23,6 @@ from execution.models import OrderLeg
 
 logger = logging.getLogger(__name__)
 
-# Minimum price movement that triggers a spread re-check in on_price_update.
-# Applies only to that path — periodic_scan and initial_sweep call
-# _try_fire_pair directly and are not gated by this threshold.
-_MIN_TICK_MOVE = 0.001
-
 
 class ArbitrageEngine:
     """Event-driven cross-platform arbitrage.
@@ -112,13 +107,11 @@ class ArbitrageEngine:
                 self._last_tick_at[m["kalshi_id"]] = seed_ts
 
         # Execution clients (live or paper depending on EXECUTION_MODE)
-        effective_mode: str = (
-            execution_mode or os.getenv("EXECUTION_MODE", "paper") or "paper"
-        )
+        execution_mode = execution_mode or os.getenv("EXECUTION_MODE", "paper")
         from execution.factory import _make_execution_clients
 
         self._poly_client, self._kalshi_client = _make_execution_clients(
-            db, effective_mode
+            db, execution_mode
         )
 
         # Track pairs that need an initial sweep (prices seeded from match data)
@@ -288,26 +281,9 @@ class ArbitrageEngine:
 
         # Execute under lock to prevent concurrent trades on the same pair.
         async with self._trade_lock:
-            # Full re-check under lock: prices may have moved while we waited
-            # (on_price_update writes self.prices without a lock and asyncio
-            # yields at the 'async with' above). Re-run the complete eligibility
-            # sequence so execution always uses the freshest available prices.
-            now = time.time()
-            p_price = self.prices.get(match["poly_id"])
-            k_price = self.prices.get(match["kalshi_id"])
-            if p_price is None or k_price is None:
-                return False
-            spread = abs(p_price - k_price)
+            # Re-check under lock — state may have changed while we waited.
             self._check_rearm(pair_id, spread)
             if not self._is_eligible(pair_id):
-                return False
-            if spread < self.min_spread:
-                return False
-            if not (
-                self._is_fresh(match["poly_id"], now)
-                and self._is_fresh(match["kalshi_id"], now)
-            ):
-                self._skipped_stale += 1
                 return False
             try:
                 trade = await self._execute_arb_trade(
@@ -360,7 +336,7 @@ class ArbitrageEngine:
         self._last_tick_at[market_id] = time.time()
 
         # Skip if price didn't change meaningfully
-        if old_price is not None and abs(new_price - old_price) < _MIN_TICK_MOVE:
+        if old_price is not None and abs(new_price - old_price) < 0.001:
             return
 
         self._ticks_since_last_fire += 1
@@ -469,10 +445,7 @@ class ArbitrageEngine:
                     result.error_message,
                 )
 
-        if last_result is None:
-            raise RuntimeError(
-                f"_submit_with_retry: no result after {max_attempts} attempts"
-            )
+        assert last_result is not None  # max_attempts >= 1
         return last_result
 
     async def _execute_arb_trade(
@@ -492,62 +465,73 @@ class ArbitrageEngine:
         signal_id = f"sig_{uuid.uuid4().hex[:12]}"
         violation_id = f"viol_{uuid.uuid4().hex[:12]}"
 
-        buy_platform = "polymarket" if p_price < k_price else "kalshi"
-        sell_platform = "kalshi" if buy_platform == "polymarket" else "polymarket"
-        buy_id = (
-            match["poly_id"] if buy_platform == "polymarket" else match["kalshi_id"]
-        )
-        sell_id = (
-            match["kalshi_id"] if buy_platform == "polymarket" else match["poly_id"]
-        )
-        buy_price = p_price if buy_platform == "polymarket" else k_price
-        sell_price = k_price if buy_platform == "polymarket" else p_price
+        if p_price < k_price:
+            buy_platform, sell_platform = "polymarket", "kalshi"
+            buy_id, sell_id = match["poly_id"], match["kalshi_id"]
+            buy_price, sell_price = p_price, k_price
+            buy_client, sell_client = self._poly_client, self._kalshi_client
+        else:
+            buy_platform, sell_platform = "kalshi", "polymarket"
+            buy_id, sell_id = match["kalshi_id"], match["poly_id"]
+            buy_price, sell_price = k_price, p_price
+            buy_client, sell_client = self._kalshi_client, self._poly_client
 
+        # Phase 2.4: circuit breaker halt check.
+        if self._circuit_breaker is not None:
+            if await self._circuit_breaker.should_halt():
+                logger.warning(
+                    "CIRCUIT_BREAKER halted — skipping arb trade on pair=%s", pair_id
+                )
+                return None
+
+        edge = spread
+
+        # Phase 2.3: Kelly-based position sizing (replaces hardcoded min(10, 100*edge)).
+        # Use live portfolio value so Kelly scales with account growth/drawdown.
+        kelly_f = compute_kelly_fraction(edge, 1.0, self._risk_config.kelly_fraction)
         bankroll = await get_portfolio_value(
             self.db, self._risk_config.starting_capital
         )
-        edge = spread
-        kelly_f = compute_kelly_fraction(edge, 1.0, self._risk_config.kelly_fraction)
-        max_pos = bankroll * self._risk_config.max_position_pct
-        size = round(
-            compute_position_size(kelly_f, bankroll, max_pos),
-            2,
-        )
-
+        max_size = bankroll * self._risk_config.max_position_pct
+        size = round(compute_position_size(kelly_f, bankroll, max_size=max_size), 1)
         if size <= 0:
-            logger.debug("Zero position size for pair=%s, skipping", pair_id)
+            logger.debug(
+                "Kelly sizing produced zero size for edge=%.4f — skipping", edge
+            )
             return None
 
+        # Insert market_pair + violation BEFORE risk checks so:
+        #   (a) risk_check_log.violation_id FK is satisfied when we log
+        #       (PRAGMA foreign_keys=ON enforces this at INSERT time), and
+        #   (b) rejected trades still leave a violations row for analytics.
+        # An exception here (not a duplicate — INSERT OR IGNORE swallows those
+        # silently with rowcount=0) indicates a schema/FK/lock error, and we
+        # must abort before sending orders.
         try:
             await self.db.execute(
                 """INSERT OR IGNORE INTO market_pairs
-                   (id, market_id_a, market_id_b, pair_type, similarity_score, created_at, updated_at)
-                   VALUES (?, ?, ?, 'cross_platform', ?, ?, ?)""",
-                (
-                    pair_id,
-                    match["poly_id"],
-                    match["kalshi_id"],
-                    match.get("similarity", 0.85),
-                    now,
-                    now,
-                ),
+                   (id, market_id_a, market_id_b, pair_type, similarity_score,
+                    match_method, active, created_at, updated_at)
+                   VALUES (?, ?, ?, 'cross_platform', ?, 'inverted_index', 1, ?, ?)""",
+                (pair_id, buy_id, sell_id, match.get("similarity", 0.0), now, now),
             )
             await self.db.execute(
-                """INSERT INTO violations
+                """INSERT OR IGNORE INTO violations
                    (id, pair_id, violation_type, price_a_at_detect, price_b_at_detect,
-                    raw_spread, net_spread, status, detected_at, updated_at)
-                   SELECT ?, mp.id, 'spread_divergence', ?, ?, ?, ?, 'pending', ?, ?
-                   FROM market_pairs mp WHERE mp.market_id_a=? AND mp.market_id_b=? LIMIT 1""",
+                    raw_spread, net_spread, fee_estimate_a, fee_estimate_b,
+                    status, detected_at, updated_at)
+                   VALUES (?, ?, 'cross_platform', ?, ?, ?, ?, ?, ?, 'detected', ?, ?)""",
                 (
                     violation_id,
-                    p_price,
-                    k_price,
+                    pair_id,
+                    buy_price,
+                    sell_price,
                     spread,
-                    spread,
+                    spread - 0.02,
+                    buy_price * 0.02,
+                    sell_price * 0.02,
                     now,
                     now,
-                    match["poly_id"],
-                    match["kalshi_id"],
                 ),
             )
             await self.db.commit()
@@ -639,191 +623,151 @@ class ArbitrageEngine:
             limit_price=sell_price,
             order_type="LIMIT",
         )
-
-        buy_client = (
-            self._poly_client if buy_platform == "polymarket" else self._kalshi_client
-        )
-        sell_client = (
-            self._kalshi_client if buy_platform == "polymarket" else self._poly_client
-        )
-
         _trade_start_ms = int(time.time() * 1000)
-
-        try:
-            buy_result = await self._submit_with_retry(
-                buy_client, buy_leg, signal_id, strategy
-            )
-        except Exception:
-            logger.exception("Buy leg failed for pair=%s", pair_id)
-            if self._circuit_breaker:
-                await self._circuit_breaker.record_order_result(success=False)
-            return None
-
+        buy_result = await self._submit_with_retry(
+            buy_client, buy_leg, signal_id=signal_id, strategy=strategy
+        )
         _buy_fill_ms = int(time.time() * 1000)
-
-        if buy_result.status not in ("filled", "partially_filled"):
-            logger.warning(
-                "Buy leg unfilled for pair=%s: %s", pair_id, buy_result.status
-            )
-            if self._circuit_breaker:
-                await self._circuit_breaker.record_order_result(success=False)
-            return None
-
-        try:
-            sell_result = await self._submit_with_retry(
-                sell_client, sell_leg, signal_id, strategy
-            )
-        except Exception:
-            logger.exception("Sell leg failed for pair=%s", pair_id)
-            if self._circuit_breaker:
-                await self._circuit_breaker.record_order_result(success=False)
-            return None
-
-        if self._circuit_breaker:
-            both_filled = buy_result.status in (
-                "filled",
-                "partially_filled",
-            ) and sell_result.status in ("filled", "partially_filled")
-            await self._circuit_breaker.record_order_result(success=both_filled)
-
-        buy_fill_price = buy_result.filled_price or buy_price
-        sell_fill_price = sell_result.filled_price or sell_price
-        buy_fee = buy_result.fee_paid or 0
-        sell_fee = sell_result.fee_paid or 0
-        total_fees = buy_fee + sell_fee
-
-        actual_pnl = round((sell_fill_price - buy_fill_price) * size - total_fees, 4)
-
-        pnl_cap = size * self._risk_config.pnl_sanity_cap_ratio
-        if actual_pnl > pnl_cap:
-            logger.warning(
-                "PNL_SANITY_CAP blocked P1 arb actual_pnl=%.4f > cap=%.4f "
-                "(size=%.1f, spread=%.4f). Likely false-positive pair — skipping DB write.",
-                actual_pnl,
-                pnl_cap,
-                size,
-                spread,
-            )
-            return None
-
-        pos_id = f"pos_{uuid.uuid4().hex[:12]}"
-        opened_at = now
-        closed_at = datetime.now(timezone.utc).isoformat()
-
-        try:
-            await self.db.execute(
-                """INSERT OR IGNORE INTO positions
-                   (id, signal_id, strategy, market_id, side,
-                    entry_price, entry_size, exit_price, exit_size,
-                    fees_paid, realized_pnl, pnl_model,
-                    status, opened_at, closed_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'realistic',
-                           'closed', ?, ?, ?)""",
-                (
-                    pos_id,
-                    signal_id,
-                    strategy,
-                    buy_id,
-                    "BUY",
-                    buy_fill_price,
-                    size,
-                    sell_fill_price,
-                    size,
-                    total_fees / 2,
-                    actual_pnl / 2,
-                    opened_at,
-                    closed_at,
-                    closed_at,
-                ),
-            )
-        except Exception:
-            logger.exception(
-                "Failed to insert positions row for pair=%s signal_id=%s pos_id=%s",
-                pair_id,
-                signal_id,
-                pos_id,
-            )
-
-        try:
-            await self.db.execute(
-                """INSERT INTO trade_outcomes
-                   (id, signal_id, strategy, violation_id, market_id_a, market_id_b,
-                    predicted_edge, predicted_pnl, actual_pnl, fees_total,
-                    edge_captured_pct, signal_to_fill_ms, holding_period_ms,
-                    spread_at_signal, resolved_at, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    f"trade_{uuid.uuid4().hex[:12]}",
-                    signal_id,
-                    strategy,
-                    violation_id,
-                    buy_id,
-                    sell_id,
-                    edge,
-                    round(edge * size, 4),
-                    actual_pnl,
-                    total_fees,
-                    (
-                        round((actual_pnl / (edge * size)) * 100, 1)
-                        if edge * size > 0
-                        else 0
-                    ),
-                    int(time.time() * 1000) - _trade_start_ms,
-                    int(time.time() * 1000) - _buy_fill_ms,
-                    spread,
-                    now,
-                    now,
-                ),
-            )
-        except Exception:
-            logger.exception(
-                "Failed to insert trade_outcomes row for pair=%s signal_id=%s",
-                pair_id,
-                signal_id,
-            )
-
-        # Commit per trade: batching delayed persistence by up to 9 trades,
-        # so a process crash between flushes could drop filled positions
-        # that already moved real capital on the exchange. Reconciliation
-        # can't repair what it can't see. SQLite in WAL mode handles
-        # single-row commits cheaply, so the throughput cost is negligible.
-        try:
-            await self.db.commit()
-        except Exception:
-            logger.exception(
-                "Failed to commit positions/trade_outcomes for pair=%s signal_id=%s",
-                pair_id,
-                signal_id,
-            )
-
-        try:
-            await self.db.execute(
-                "UPDATE violations SET status='executed', updated_at=? WHERE id=?",
-                (now, violation_id),
-            )
-            await self.db.commit()
-        except Exception:
-            logger.debug(
-                "violations status update failed for violation_id=%s",
-                violation_id,
-                exc_info=True,
-            )
-
-        logger.info(
-            "  ARB FILLED: pnl=$%.4f fees=$%.4f | buy@%.4f sell@%.4f",
-            actual_pnl,
-            total_fees,
-            buy_result.filled_price,
-            sell_result.filled_price,
+        sell_result = await self._submit_with_retry(
+            sell_client, sell_leg, signal_id=signal_id, strategy=strategy
         )
 
-        return {
-            "strategy": strategy,
-            "pair_id": pair_id,
-            "spread": spread,
-            "actual_pnl": actual_pnl,
-            "fees": total_fees,
-        }
+        # Flag unbalanced fills so reconciliation/close-out can pick them up.
+        buy_filled = buy_result.filled_price is not None
+        sell_filled = sell_result.filled_price is not None
+        if buy_filled != sell_filled:
+            logger.error(
+                "UNBALANCED_ARB pair=%s buy_filled=%s sell_filled=%s — "
+                "one leg open without hedge. Reconciliation will flag this.",
+                pair_id,
+                buy_filled,
+                sell_filled,
+            )
+
+        if self._circuit_breaker is not None:
+            await self._circuit_breaker.record_order_result(
+                success=buy_filled and sell_filled
+            )
+
+        if buy_result.filled_price and sell_result.filled_price:
+            actual_spread = sell_result.filled_price - buy_result.filled_price
+            total_fees = (buy_result.fee_paid or 0) + (sell_result.fee_paid or 0)
+            actual_pnl = round(actual_spread * size - total_fees, 4)
+
+            _pnl_cap = size * self._risk_config.pnl_sanity_cap_ratio
+            if actual_pnl > _pnl_cap:
+                logger.warning(
+                    "PNL_SANITY_CAP blocked pair=%s actual_pnl=%.4f > cap=%.4f "
+                    "(size=%.1f spread=%.4f). Likely false-positive pair — skipping DB write.",
+                    pair_id,
+                    actual_pnl,
+                    _pnl_cap,
+                    size,
+                    spread,
+                )
+                return None
+
+            pos_id = f"pos_{uuid.uuid4().hex[:12]}"
+            try:
+                await self.db.execute(
+                    """INSERT INTO positions
+                       (id, signal_id, market_id, strategy, side, book, entry_price,
+                        entry_size, exit_price, exit_size, realized_pnl, fees_paid,
+                        pnl_model, status, opened_at, closed_at, updated_at)
+                       VALUES (?, ?, ?, ?, 'BUY', 'YES', ?, ?, ?, ?, ?, ?, 'realistic', 'closed', ?, ?, ?)""",
+                    # TODO[no-naked-shorts]: when the translated-NO path becomes live
+                    # for arbs, propagate the resolved book here instead of 'YES'.
+                    (
+                        pos_id,
+                        signal_id,
+                        buy_id,
+                        strategy,
+                        buy_result.filled_price,
+                        size,
+                        sell_result.filled_price,
+                        size,
+                        actual_pnl,
+                        total_fees,
+                        now,
+                        now,
+                        now,
+                    ),
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to insert positions row for pair=%s signal_id=%s pos_id=%s",
+                    pair_id,
+                    signal_id,
+                    pos_id,
+                )
+
+            try:
+                await self.db.execute(
+                    """INSERT INTO trade_outcomes
+                       (id, signal_id, strategy, violation_id, market_id_a, market_id_b,
+                        predicted_edge, predicted_pnl, actual_pnl, fees_total,
+                        edge_captured_pct, signal_to_fill_ms, holding_period_ms,
+                        resolved_at, created_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        f"trade_{uuid.uuid4().hex[:12]}",
+                        signal_id,
+                        strategy,
+                        violation_id,
+                        buy_id,
+                        sell_id,
+                        edge,
+                        round(edge * size, 4),
+                        actual_pnl,
+                        total_fees,
+                        (
+                            round((actual_pnl / (edge * size)) * 100, 1)
+                            if edge * size > 0
+                            else 0
+                        ),
+                        int(time.time() * 1000) - _trade_start_ms,
+                        int(time.time() * 1000) - _buy_fill_ms,
+                        now,
+                        now,
+                    ),
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to insert trade_outcomes row for pair=%s signal_id=%s",
+                    pair_id,
+                    signal_id,
+                )
+
+            # Commit per trade: batching delayed persistence by up to 9 trades,
+            # so a process crash between flushes could drop filled positions
+            # that already moved real capital on the exchange. Reconciliation
+            # can't repair what it can't see. SQLite in WAL mode handles
+            # single-row commits cheaply, so the throughput cost is negligible.
+            try:
+                await self.db.commit()
+            except Exception:
+                logger.exception(
+                    "Failed to commit positions/trade_outcomes for pair=%s signal_id=%s",
+                    pair_id,
+                    signal_id,
+                )
+
+            logger.info(
+                "  ARB FILLED: pnl=$%.4f fees=$%.4f | buy@%.4f sell@%.4f",
+                actual_pnl,
+                total_fees,
+                buy_result.filled_price,
+                sell_result.filled_price,
+            )
+
+            return {
+                "strategy": strategy,
+                "pair_id": pair_id,
+                "spread": spread,
+                "actual_pnl": actual_pnl,
+                "fees": total_fees,
+            }
+        return None
 
     async def flush(self):
         """Commit any pending DB writes.
