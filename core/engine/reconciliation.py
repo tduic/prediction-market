@@ -75,8 +75,7 @@ async def _check_orphaned_positions(db: aiosqlite.Connection) -> int:
     cursor = await db.execute("""
         SELECT p.id, p.signal_id, p.market_id,
                (SELECT o.status FROM orders o
-                 WHERE (o.signal_id = p.signal_id OR (o.signal_id IS NULL AND p.signal_id IS NULL))
-                   AND o.market_id = p.market_id
+                 WHERE o.signal_id = p.signal_id AND o.market_id = p.market_id
                  ORDER BY o.submitted_at DESC LIMIT 1) AS order_status
         FROM positions p
         WHERE p.status = 'open'
@@ -105,10 +104,8 @@ async def _check_orphaned_positions(db: aiosqlite.Connection) -> int:
 async def _check_stuck_pending_orders(db: aiosqlite.Connection) -> int:
     """Orders in 'pending' state past the stuck threshold.
 
-    `submitted_at` is stored as str(int(time.time())) — always a 10-digit
-    decimal string for timestamps in the 2020s. Lexicographic comparison on
-    same-length decimal strings equals numeric comparison, so passing the
-    cutoff as a string avoids CAST and lets SQLite use idx_orders_submitted_at.
+    `submitted_at` is stored as TEXT but arb_engine/base client write it
+    as str(int(time.time())) — so CAST to INTEGER works for comparison.
     """
     from core.config import get_config
 
@@ -119,9 +116,9 @@ async def _check_stuck_pending_orders(db: aiosqlite.Connection) -> int:
         SELECT id, platform, signal_id, market_id, submitted_at
         FROM orders
         WHERE status = 'pending'
-          AND submitted_at < ?
+          AND CAST(submitted_at AS INTEGER) < ?
         """,
-        (str(cutoff),),
+        (cutoff,),
     )
     rows = await cursor.fetchall()
     count = 0

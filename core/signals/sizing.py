@@ -13,38 +13,41 @@ def compute_kelly_fraction(
     """
     Compute Kelly fraction for position sizing.
 
-    For a binary prediction market bet at price ``odds`` (the price you pay
-    per share), the correct Kelly formula is:
+    Kelly Criterion formula: f* = (bp - q) / b
+    where:
+        b = odds (win payout / stake)
+        p = probability of winning
+        _q = probability of losing (1 - p)
+        f* = fraction of bankroll to bet
 
-        f* = edge / (1 - odds)     [for a long / YES bet]
-
-    where ``edge = fair_value - market_price``.
-
-    When ``odds >= 1.0`` (e.g. pure arb callers that don't have a single
-    market reference price), the function falls back to the heuristic
-    ``edge / (1 - edge)`` to preserve backward compatibility.
+    We use fractional Kelly (quarter-Kelly) for safety.
 
     Args:
-        edge: Edge as probability difference (fair_value - market_price).
-            Positive = go long, negative = go short.
-        odds: Bet price (0–1). Pass the YES price for a BUY, the NO price
-            (1 - yes_price) for a SELL. Pass 1.0 to use the legacy arb
-            heuristic when no single market price is available.
-        kelly_fraction: Fractional Kelly multiplier (default 0.25 = quarter-Kelly).
+        edge: Edge as probability (fair_value - market_price)
+            Positive = go long, negative = go short
+        odds: Market price (0-1) interpreted as b+1 odds
+        kelly_fraction: Fractional Kelly multiplier (default 0.25 = quarter-Kelly)
+            Must be between 0 and 1
 
     Returns:
-        Kelly fraction in [-0.5, 0.5].
+        Kelly fraction (0-0.5 hard cap for safety)
     """
-    edge = float(edge)
-    _use_market_price = float(odds) < 1.0
+    # Ensure odds are valid
     odds = float(min(max(odds, 0.01), 0.99))
+    edge = float(edge)
 
+    # Interpret market price as probability
+    # odds = p for binary outcome
+    p = odds  # Probability if betting YES
+    _q = 1 - p  # Probability if betting NO
+
+    # If edge > 0, we want to go long (betting YES)
+    # If edge < 0, we want to go short (betting NO)
     if edge > 0:
-        if _use_market_price:
-            denominator = 1.0 - odds
-        else:
-            denominator = 1.0 - edge
-        kelly_raw = edge / denominator if denominator > 0 else 0.5
+        # Long position
+        # Kelly: f* = (p - q) / 1 = 2p - 1
+        # Approximation when edge is probability difference
+        kelly_raw = edge / (1.0 - edge) if edge < 1 else 0.5
     else:
         # Short position (flipped probabilities)
         kelly_raw = edge / (1.0 + edge) if edge > -1 else -0.5

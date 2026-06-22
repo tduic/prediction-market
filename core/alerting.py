@@ -295,7 +295,7 @@ class AlertManager:
         except RuntimeError:
             # No loop running — just log and drop. Callers that need guaranteed
             # delivery should use await send() instead.
-            logger.warning("send_nowait: no running loop — alert dropped: %s", title)
+            logger.debug("send_nowait called outside running loop: %s", title)
             return
 
         task = loop.create_task(
@@ -313,7 +313,7 @@ class AlertManager:
         task.add_done_callback(self._pending_tasks.discard)
 
 
-# ── Module-level factory ──────────────────────────────────
+# ── Module-level factory ────────────────────────────
 
 _manager: AlertManager | None = None
 

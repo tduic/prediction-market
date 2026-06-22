@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState } from 'react'
 import { useApi } from './hooks/useApi'
 import {
   CircuitBreakerStatus,
@@ -61,18 +61,14 @@ function App() {
   }
 
   // Get unique strategies for trade log filter
-  const strategies = useMemo(
-    () =>
-      Array.from(
-        new Set(
-          [
-            ...(metricsResult.data?.map((m) => m.strategy) || []),
-            ...(tradesResult.data?.map((t) => t.strategy) || []),
-          ].filter(Boolean),
-        ),
-      ).sort(),
-    [metricsResult.data, tradesResult.data],
-  )
+  const strategies = Array.from(
+    new Set(
+      [
+        ...(metricsResult.data?.map((m) => m.strategy) || []),
+        ...(tradesResult.data?.map((t) => t.strategy) || []),
+      ].filter(Boolean),
+    ),
+  ).sort()
 
   // Check if any endpoint is loading
   const isLoading =
