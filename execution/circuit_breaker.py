@@ -91,7 +91,7 @@ class DailyLossCircuitBreaker:
         # hot-path should_halt() avoids a DB round-trip on every signal check.
         self._daily_loss_cache: tuple[float, float] | None = None
 
-    # ── Public API ────────────────────────────────────────────────────
+    # ── Public API ────────────────────────────────────────────────────────────────────────────────────
 
     async def load_state(self) -> None:
         """
@@ -261,7 +261,7 @@ class DailyLossCircuitBreaker:
             daily_loss_available=daily_loss_available,
         )
 
-    # ── Internal helpers ──────────────────────────────────────────────
+    # ── Internal helpers ────────────────────────────────────────────────────────────────────────────
 
     @staticmethod
     def _today() -> str:
