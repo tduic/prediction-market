@@ -125,7 +125,7 @@ async def mark_and_close_positions(
     now = now_dt.isoformat()
 
     cursor = await db.execute(
-        "SELECT id, market_id, side, entry_price, entry_size, fees_paid "
+        "SELECT id, signal_id, strategy, market_id, side, entry_price, entry_size, fees_paid "
         "FROM positions WHERE status='open' AND opened_at <= ?",
         (cutoff,),
     )
@@ -133,7 +133,16 @@ async def mark_and_close_positions(
 
     closed = 0
     for row in rows:
-        pos_id, market_id, side, entry_price, entry_size, fees_paid = row
+        (
+            pos_id,
+            signal_id,
+            strategy,
+            market_id,
+            side,
+            entry_price,
+            entry_size,
+            fees_paid,
+        ) = row
 
         # Use live cache price if available, fall back to DB
         if price_cache and market_id in price_cache:
@@ -167,6 +176,49 @@ async def mark_and_close_positions(
              WHERE id=?""",
             (current_price, entry_size, realized_pnl, current_price, now, now, pos_id),
         )
+
+        # Record trade outcome so P2-P5 are visible in dashboard analytics
+        if signal_id:
+            edge = abs(current_price - entry_price)
+            predicted_pnl = round(edge * entry_size, 4) if entry_size else 0.0
+            try:
+                await db.execute(
+                    """INSERT OR IGNORE INTO trade_outcomes
+                       (id, signal_id, strategy, violation_id, market_id_a, market_id_b,
+                        predicted_edge, predicted_pnl, actual_pnl, fees_total,
+                        edge_captured_pct, signal_to_fill_ms, holding_period_ms,
+                        spread_at_signal, resolved_at, created_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        f"trade_{uuid.uuid4().hex[:12]}",
+                        signal_id,
+                        strategy or "single_platform",
+                        None,
+                        market_id,
+                        None,
+                        edge,
+                        predicted_pnl,
+                        realized_pnl,
+                        fees_paid or 0.0,
+                        (
+                            round((realized_pnl / predicted_pnl) * 100, 1)
+                            if predicted_pnl
+                            else 0.0
+                        ),
+                        0,
+                        0,
+                        None,
+                        now,
+                        now,
+                    ),
+                )
+            except Exception:
+                logger.exception(
+                    "mark_and_close: failed to insert trade_outcomes for pos=%s signal=%s",
+                    pos_id,
+                    signal_id,
+                )
+
         closed += 1
         logger.debug(
             "mark_and_close: closed pos=%s market=%s pnl=%.4f",
