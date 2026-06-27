@@ -258,6 +258,10 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
                 if pnl_count > 1:
                     mean_pnl = row_dict.get("avg_pnl", 0) or 0
                     sum_sq = row_dict.get("sum_pnl_sq", 0) or 0
+                    # Sample variance (Bessel's correction, N-1) — matches
+                    # statistics.stdev() used in /api/risk for consistency.
+                    # max(0.0) guards against tiny negatives from floating-point
+                    # cancellation when all PnLs cluster near the same value.
                     variance = max(
                         0.0, (sum_sq - pnl_count * mean_pnl**2) / (pnl_count - 1)
                     )
@@ -294,6 +298,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
                 )
 
             # Include strategies that fired signals but have no trade_outcomes yet.
+            # Without this, risk-rejected strategies are invisible on the dashboard.
             seen_strategies = {s["strategy"] for s in strategies}
             signal_only_cursor = await db.execute(
                 "SELECT DISTINCT strategy FROM signals WHERE fired_at >= ?",
@@ -347,21 +352,18 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
                 (cutoff_date.isoformat(),),
             )
             rows = await cursor.fetchall()
-            result = []
-            for r in rows:
-                d = dict(r)
-                result.append(
-                    {
-                        "snapshotted_at": d.get("snapshotted_at"),
-                        "strategy": d.get("strategy"),
-                        "realized_pnl": round(d.get("realized_pnl", 0) or 0, 2),
-                        "unrealized_pnl": round(d.get("unrealized_pnl", 0) or 0, 2),
-                        "fees": round(d.get("fees", 0) or 0, 2),
-                        "trade_count": d.get("trade_count", 0) or 0,
-                        "win_count": d.get("win_count", 0) or 0,
-                    }
-                )
-            return result
+            return [
+                {
+                    "snapshotted_at": dict(r).get("snapshotted_at"),
+                    "strategy": dict(r).get("strategy"),
+                    "realized_pnl": round(dict(r).get("realized_pnl", 0) or 0, 2),
+                    "unrealized_pnl": round(dict(r).get("unrealized_pnl", 0) or 0, 2),
+                    "fees": round(dict(r).get("fees", 0) or 0, 2),
+                    "trade_count": dict(r).get("trade_count", 0) or 0,
+                    "win_count": dict(r).get("win_count", 0) or 0,
+                }
+                for r in rows
+            ]
         finally:
             await close_db(db)
 
@@ -380,21 +382,18 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
                 (cutoff_date.isoformat(),),
             )
             rows = await cursor.fetchall()
-            result = []
-            for r in rows:
-                d = dict(r)
-                result.append(
-                    {
-                        "snapshotted_at": d.get("snapshotted_at"),
-                        "total_capital": round(d.get("total_capital", 0) or 0, 2),
-                        "unrealized_pnl": round(d.get("unrealized_pnl", 0) or 0, 2),
-                        "realized_pnl_total": round(
-                            d.get("realized_pnl_total", 0) or 0, 2
-                        ),
-                        "fees_total": round(d.get("fees_total", 0) or 0, 2),
-                    }
-                )
-            return result
+            return [
+                {
+                    "snapshotted_at": dict(r).get("snapshotted_at"),
+                    "total_capital": round(dict(r).get("total_capital", 0) or 0, 2),
+                    "unrealized_pnl": round(dict(r).get("unrealized_pnl", 0) or 0, 2),
+                    "realized_pnl_total": round(
+                        dict(r).get("realized_pnl_total", 0) or 0, 2
+                    ),
+                    "fees_total": round(dict(r).get("fees_total", 0) or 0, 2),
+                }
+                for r in rows
+            ]
         finally:
             await close_db(db)
 
@@ -460,6 +459,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
             if snapshot:
                 total_capital = snapshot.get("total_capital", 0) or PAPER_CAPITAL
             else:
+                # Compute from trade_outcomes if no snapshots yet
                 cursor = await db.execute(
                     "SELECT COALESCE(SUM(actual_pnl), 0), COALESCE(SUM(fees_total), 0) FROM trade_outcomes"
                 )
@@ -520,6 +520,8 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
             if len(daily_pnls) > 1:
                 daily_pnls_sorted = sorted(daily_pnls)
                 percentile_5_idx = max(0, int(len(daily_pnls_sorted) * 0.05))
+                # VaR = magnitude of loss at 5th percentile.  A positive P&L at
+                # the 5th percentile means no loss-tail risk, so VaR = 0.
                 daily_var = max(0.0, -daily_pnls_sorted[percentile_5_idx])
 
             cursor = await db.execute(
@@ -542,7 +544,6 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
                 "concentration_pct": round(concentration, 2),
                 "daily_var": round(daily_var, 2),
                 "daily_var_sample_size": len(daily_pnls),
-                "daily_var_low_sample": len(daily_pnls) < 20,
                 "sharpe_overall": round(overall_sharpe, 2),
             }
         finally:
@@ -818,72 +819,6 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
                 "discrepancy_count": discrepancy_count,
                 "recent_discrepancies": recent,
             }
-        finally:
-            await close_db(db)
-
-    @app.get("/api/model-evaluations")
-    async def get_model_evaluations(
-        model_name: Optional[str] = Query(None),
-        limit: int = Query(20, ge=1, le=100),
-    ) -> List[Dict[str, Any]]:
-        """Recent model evaluation records for P3 calibration and other ML models."""
-        db = await get_db()
-        try:
-            if model_name:
-                cursor = await db.execute(
-                    """SELECT id, model_name, trained_at, dataset_size, test_size,
-                              accuracy, precision_score, recall, f1_score, brier_score, notes
-                       FROM model_evaluations
-                       WHERE model_name = ?
-                       ORDER BY trained_at DESC LIMIT ?""",
-                    (model_name, limit),
-                )
-            else:
-                cursor = await db.execute(
-                    """SELECT id, model_name, trained_at, dataset_size, test_size,
-                              accuracy, precision_score, recall, f1_score, brier_score, notes
-                       FROM model_evaluations
-                       ORDER BY trained_at DESC LIMIT ?""",
-                    (limit,),
-                )
-            rows = await cursor.fetchall()
-            return [
-                {
-                    "id": r["id"],
-                    "model_name": r["model_name"],
-                    "trained_at": r["trained_at"],
-                    "dataset_size": r["dataset_size"],
-                    "test_size": r["test_size"],
-                    "accuracy": (
-                        round(r["accuracy"] or 0, 4)
-                        if r["accuracy"] is not None
-                        else None
-                    ),
-                    "precision_score": (
-                        round(r["precision_score"] or 0, 4)
-                        if r["precision_score"] is not None
-                        else None
-                    ),
-                    "recall": (
-                        round(r["recall"] or 0, 4) if r["recall"] is not None else None
-                    ),
-                    "f1_score": (
-                        round(r["f1_score"] or 0, 4)
-                        if r["f1_score"] is not None
-                        else None
-                    ),
-                    "brier_score": (
-                        round(r["brier_score"] or 0, 4)
-                        if r["brier_score"] is not None
-                        else None
-                    ),
-                    "notes": r["notes"],
-                }
-                for r in rows
-            ]
-        except Exception as e:
-            logger.warning("model-evaluations query failed: %s", e)
-            return []
         finally:
             await close_db(db)
 

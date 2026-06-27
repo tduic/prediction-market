@@ -8,7 +8,6 @@ All methods are async and work directly with aiosqlite.Connection.
 """
 
 import logging
-import math
 import statistics
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -109,22 +108,22 @@ class StrategyScorecard:
             total_pnl = sum(pnl_values)
             avg_pnl = total_pnl / total_trades if total_trades > 0 else 0.0
 
-            total_fees = sum(t["fees_total"] for t in trades)
+            total_fees = sum((t["fees_total"] or 0.0) for t in trades)
 
-            # Sharpe ratio from daily P&L
+            # Sharpe ratio from per-trade P&L
             sharpe = self._compute_sharpe_ratio(pnl_values)
 
             # Max drawdown
             max_dd = self._compute_max_drawdown(pnl_values)
 
             avg_edge_captured = (
-                sum(t["edge_captured_pct"] for t in trades) / total_trades
+                sum((t["edge_captured_pct"] or 0.0) for t in trades) / total_trades
                 if total_trades > 0
                 else 0.0
             )
 
             avg_latency = (
-                sum(t["signal_to_fill_ms"] for t in trades) / total_trades
+                sum((t["signal_to_fill_ms"] or 0) for t in trades) / total_trades
                 if total_trades > 0
                 else 0.0
             )
@@ -263,18 +262,15 @@ class StrategyScorecard:
 
     # Private helper methods
 
-    def _compute_sharpe_ratio(
-        self, pnl_values: list[float], risk_free_rate: float = 0.01
-    ) -> float:
+    def _compute_sharpe_ratio(self, pnl_values: list[float]) -> float:
         """
-        Compute annualized Sharpe ratio from daily P&L values.
+        Compute per-trade Sharpe ratio (mean / stdev of trade P&L).
 
         Args:
-            pnl_values: List of daily P&L values
-            risk_free_rate: Annual risk-free rate (default 1%)
+            pnl_values: List of per-trade P&L values
 
         Returns:
-            Annualized Sharpe ratio
+            Per-trade Sharpe ratio (not annualized)
         """
         if not pnl_values or len(pnl_values) < 2:
             return 0.0
@@ -286,11 +282,7 @@ class StrategyScorecard:
             if std_pnl == 0:
                 return 0.0
 
-            # Annualize: assume 252 trading days per year
-            daily_sharpe = (mean_pnl - (risk_free_rate / 252)) / std_pnl
-            annual_sharpe = daily_sharpe * math.sqrt(252)
-
-            return annual_sharpe
+            return mean_pnl / std_pnl
         except Exception as e:
             self.logger.warning(f"Failed to compute Sharpe ratio: {str(e)}")
             return 0.0
