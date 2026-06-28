@@ -126,8 +126,14 @@ async def check_daily_loss_limit(
         net_pnl = float(row[0]) if row and row[0] is not None else 0.0
         daily_loss = max(0.0, -net_pnl)
     except Exception as e:
-        logger.error("Error checking daily loss: %s", e)
-        daily_loss = 0
+        logger.error("Error checking daily loss — failing check for safety: %s", e)
+        return RiskCheckResult(
+            passed=False,
+            check_type="daily_loss_limit",
+            check_value=0,
+            threshold=max_loss,
+            detail=f"DB error during daily loss query — check failed for safety: {e}",
+        )
 
     passed = daily_loss < max_loss
 
@@ -241,8 +247,14 @@ async def check_duplicate_signal(
         row = await cursor.fetchone()
         recent_count = row[0] if row else 0
     except Exception as e:
-        logger.warning("Error checking duplicates: %s", e)
-        recent_count = 0
+        logger.warning("Error checking duplicates — failing check for safety: %s", e)
+        return RiskCheckResult(
+            passed=False,
+            check_type="duplicate",
+            check_value=0,
+            threshold=0,
+            detail=f"DB error during duplicate check — check failed for safety: {e}",
+        )
 
     passed = recent_count == 0
 

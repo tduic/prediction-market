@@ -138,9 +138,7 @@ class DiscordWebhookTransport:
 
         fields = []
         if alert.context:
-            for k, v in list(alert.context.items())[
-                :10
-            ]:  # Discord cap: 25, we cap at 10
+            for k, v in list(alert.context.items())[:25]:  # Discord embed field cap: 25
                 fields.append(
                     {
                         "name": str(k)[:256],
@@ -313,7 +311,7 @@ class AlertManager:
         task.add_done_callback(self._pending_tasks.discard)
 
 
-# ── Module-level factory ────────────────────────────
+# ── Module-level factory ────────────────────────────────────
 
 _manager: AlertManager | None = None
 

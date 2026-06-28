@@ -268,8 +268,8 @@ async def test_discord_context_truncation():
     big_context = {f"key_{i}": f"val_{i}" for i in range(50)}
     alert = Alert(title="t", message="m", context=big_context)
     payload = transport._format(alert)
-    # Capped at 10 fields
-    assert len(payload["embeds"][0]["fields"]) == 10
+    # Capped at Discord's embed field limit of 25
+    assert len(payload["embeds"][0]["fields"]) == 25
 
 
 @pytest.mark.asyncio

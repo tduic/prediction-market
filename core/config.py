@@ -5,11 +5,14 @@ Loads all settings from environment variables with sensible defaults.
 This is the single source of truth for all configuration.
 """
 
+import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from core.secrets import get_secret
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -299,7 +302,15 @@ class Config:
 
 def load_config() -> Config:
     """Load configuration from environment variables."""
-    return Config()
+    config = Config()
+    logger.info(
+        "Config loaded: execution_mode=%s, starting_capital=%.2f, db_path=%s, log_level=%s",
+        config.execution.execution_mode,
+        config.risk_controls.starting_capital,
+        config.database.db_path,
+        config.observability.log_level,
+    )
+    return config
 
 
 # Global config instance
