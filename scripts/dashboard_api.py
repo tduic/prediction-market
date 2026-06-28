@@ -108,7 +108,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
         allow_headers=["*"],
     )
 
-    # ── helpers ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+    # ── helpers ──────────────────────────────────────────────────────────────────────────────────────
 
     async def get_db() -> aiosqlite.Connection:
         db = await aiosqlite.connect(_DB_PATH)
@@ -134,7 +134,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
             if own_db:
                 await close_db(db)
 
-    # ── endpoints ───────────────────────────────────────────────────────────────────────────────────────────────────────────
+    # ── endpoints ───────────────────────────────────────────────────────────────────────────
 
     @app.get("/api/overview")
     async def get_overview() -> Dict[str, Any]:
@@ -211,7 +211,9 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
             await close_db(db)
 
     @app.get("/api/strategies")
-    async def get_strategies(days: int = Query(30, ge=1)) -> List[Dict[str, Any]]:
+    async def get_strategies(
+        days: int = Query(30, ge=1, le=365),
+    ) -> List[Dict[str, Any]]:
         db = await get_db()
         try:
             cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
@@ -333,7 +335,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
 
     @app.get("/api/strategies/pnl-series")
     async def get_strategies_pnl_series(
-        days: int = Query(7, ge=1),
+        days: int = Query(7, ge=1, le=365),
     ) -> List[Dict[str, Any]]:
         db = await get_db()
         try:
@@ -354,21 +356,24 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
             rows = await cursor.fetchall()
             return [
                 {
-                    "snapshotted_at": dict(r).get("snapshotted_at"),
-                    "strategy": dict(r).get("strategy"),
-                    "realized_pnl": round(dict(r).get("realized_pnl", 0) or 0, 2),
-                    "unrealized_pnl": round(dict(r).get("unrealized_pnl", 0) or 0, 2),
-                    "fees": round(dict(r).get("fees", 0) or 0, 2),
-                    "trade_count": dict(r).get("trade_count", 0) or 0,
-                    "win_count": dict(r).get("win_count", 0) or 0,
+                    "snapshotted_at": d.get("snapshotted_at"),
+                    "strategy": d.get("strategy"),
+                    "realized_pnl": round(d.get("realized_pnl", 0) or 0, 2),
+                    "unrealized_pnl": round(d.get("unrealized_pnl", 0) or 0, 2),
+                    "fees": round(d.get("fees", 0) or 0, 2),
+                    "trade_count": d.get("trade_count", 0) or 0,
+                    "win_count": d.get("win_count", 0) or 0,
                 }
                 for r in rows
+                for d in [dict(r)]
             ]
         finally:
             await close_db(db)
 
     @app.get("/api/equity-curve")
-    async def get_equity_curve(days: int = Query(30, ge=1)) -> List[Dict[str, Any]]:
+    async def get_equity_curve(
+        days: int = Query(30, ge=1, le=365),
+    ) -> List[Dict[str, Any]]:
         db = await get_db()
         try:
             cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
@@ -384,15 +389,14 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
             rows = await cursor.fetchall()
             return [
                 {
-                    "snapshotted_at": dict(r).get("snapshotted_at"),
-                    "total_capital": round(dict(r).get("total_capital", 0) or 0, 2),
-                    "unrealized_pnl": round(dict(r).get("unrealized_pnl", 0) or 0, 2),
-                    "realized_pnl_total": round(
-                        dict(r).get("realized_pnl_total", 0) or 0, 2
-                    ),
-                    "fees_total": round(dict(r).get("fees_total", 0) or 0, 2),
+                    "snapshotted_at": d.get("snapshotted_at"),
+                    "total_capital": round(d.get("total_capital", 0) or 0, 2),
+                    "unrealized_pnl": round(d.get("unrealized_pnl", 0) or 0, 2),
+                    "realized_pnl_total": round(d.get("realized_pnl_total", 0) or 0, 2),
+                    "fees_total": round(d.get("fees_total", 0) or 0, 2),
                 }
                 for r in rows
+                for d in [dict(r)]
             ]
         finally:
             await close_db(db)
@@ -837,7 +841,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
             if db is not None:
                 await close_db(db)
 
-    # ── Serve React frontend if static_dir provided ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+    # ── Serve React frontend if static_dir provided ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
     if static_dir and Path(static_dir).is_dir():
         app.mount(
             "/",
