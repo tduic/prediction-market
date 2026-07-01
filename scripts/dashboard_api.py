@@ -691,6 +691,11 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
             cfg = get_config().risk_controls
             daily_loss_limit_pct = cfg.max_daily_loss_pct
             daily_loss_limit = cfg.starting_capital * daily_loss_limit_pct
+            daily_loss_pct_used = (
+                round(daily_loss / daily_loss_limit * 100, 1)
+                if daily_loss_limit > 0
+                else 0.0
+            )
             return {
                 "tripped": tripped,
                 "reason": reason,
@@ -699,6 +704,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
                 "daily_loss_available": daily_loss_available,
                 "daily_loss_limit": daily_loss_limit,
                 "daily_loss_limit_pct": daily_loss_limit_pct,
+                "daily_loss_pct_used": daily_loss_pct_used,
             }
         finally:
             await close_db(db)
@@ -818,11 +824,56 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
             rows = await recent_cursor.fetchall()
             recent = [dict(row) for row in rows]
 
+            last_cursor = await db.execute(
+                "SELECT MAX(checked_at) FROM reconciliation_log"
+            )
+            last_row = await last_cursor.fetchone()
+            last_checked_at = last_row[0] if last_row and last_row[0] else None
+
+            discrepancy_rate = (
+                round(discrepancy_count / total_count, 4) if total_count > 0 else 0.0
+            )
+
             return {
                 "total_count": total_count,
                 "discrepancy_count": discrepancy_count,
+                "discrepancy_rate": discrepancy_rate,
+                "last_checked_at": last_checked_at,
                 "recent_discrepancies": recent,
             }
+        finally:
+            await close_db(db)
+
+    @app.get("/api/system-events")
+    async def get_system_events(
+        days: int = Query(7, ge=1, le=90),
+        limit: int = Query(50, ge=1, le=500),
+        severity: Optional[str] = Query(None),
+        component: Optional[str] = Query(None),
+    ) -> List[Dict[str, Any]]:
+        """System event log: circuit breaker trips, reconciliation alerts, etc."""
+        db = await get_db()
+        try:
+            cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+            params: list = [cutoff]
+            where_clauses = ["occurred_at >= ?"]
+            if severity:
+                where_clauses.append("severity = ?")
+                params.append(severity)
+            if component:
+                where_clauses.append("component = ?")
+                params.append(component)
+            params.append(limit)
+            cursor = await db.execute(
+                f"""SELECT id, event_type, severity, component, detail, occurred_at
+                    FROM system_events
+                    WHERE {" AND ".join(where_clauses)}
+                    ORDER BY occurred_at DESC
+                    LIMIT ?""",
+                params,
+            )
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
         finally:
             await close_db(db)
 

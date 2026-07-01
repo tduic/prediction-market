@@ -44,9 +44,9 @@ def compute_kelly_fraction(
     # If edge > 0, we want to go long (betting YES)
     # If edge < 0, we want to go short (betting NO)
     if edge > 0:
-        # Long position
-        # Kelly: f* = (p - q) / 1 = 2p - 1
-        # Approximation when edge is probability difference
+        # Long position: Kelly fraction = edge / (1 - edge)
+        # For a binary bet with edge = fair_p - market_p, this is the
+        # normalized Kelly bet size (equivalent to p/q odds form when p≈market_p).
         kelly_raw = edge / (1.0 - edge) if edge < 1 else 0.5
     else:
         # Short position (flipped probabilities)
