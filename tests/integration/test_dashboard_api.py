@@ -399,6 +399,23 @@ class TestInvariantsEndpoint:
         assert data["recent_violations"] == []
 
 
+# ── /api/overview daily_loss_pct_used ────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+class TestOverviewDailyLossField:
+    async def test_daily_loss_pct_used_present(self, app_and_client):
+        _, client, _ = app_and_client
+        resp = await client.get("/api/overview")
+        assert resp.status_code == 200
+        assert "daily_loss_pct_used" in resp.json()
+
+    async def test_daily_loss_pct_used_zero_on_empty_db(self, app_and_client):
+        _, client, _ = app_and_client
+        resp = await client.get("/api/overview")
+        assert resp.json()["daily_loss_pct_used"] == 0.0
+
+
 # ── Fail-closed host auth policy ─────────────────────────────────────────────
 
 
