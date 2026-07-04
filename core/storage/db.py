@@ -69,6 +69,9 @@ class Database:
 
         await self._run_migrations()
 
+        await self._conn.execute("PRAGMA optimize")
+        await self._conn.commit()
+
         self._initialized = True
         logger.info(f"Database initialized at {self.db_path}")
 

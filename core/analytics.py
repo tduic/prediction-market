@@ -68,7 +68,7 @@ class StrategyScorecard:
                     id, actual_pnl, fees_total, edge_captured_pct,
                     signal_to_fill_ms, created_at
                 FROM trade_outcomes
-                WHERE created_at > ?
+                WHERE created_at >= ?
             """
             params = [lookback]
 
