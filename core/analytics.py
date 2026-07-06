@@ -309,8 +309,9 @@ class StrategyScorecard:
             if cumulative > peak:
                 peak = cumulative
 
-            drawdown = (peak - cumulative) / abs(peak) if peak != 0 else 0
-            if drawdown > max_dd:
-                max_dd = drawdown
+            if peak > 0:
+                drawdown = (peak - cumulative) / peak
+                if drawdown > max_dd:
+                    max_dd = drawdown
 
         return max_dd * 100  # Return as percentage
