@@ -19,7 +19,7 @@ from httpx import ASGITransport, AsyncClient  # noqa: E402
 
 from scripts.dashboard_api import create_dashboard_app  # noqa: E402
 
-# ── Helpers ───────────────────────────────────────────────────────────────────────────────────
+# ── Helpers ────────────────────────────────────────────────────────────────────────────────────
 
 
 async def _seed_trade_outcome(db, strategy="P1_cross_market_arb", pnl=5.0, fees=0.10):
@@ -90,7 +90,7 @@ async def app_and_client(db, tmp_path):
         yield app, client, db_path
 
 
-# ── /health ─────────────────────────────────────────────────────────────────────────────
+# ── /health ──────────────────────────────────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -102,7 +102,7 @@ class TestHealthEndpoint:
         assert resp.json()["status"] == "ok"
 
 
-# ── /api/overview ───────────────────────────────────────────────────────────────────────────
+# ── /api/overview ──────────────────────────────────────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -161,7 +161,7 @@ class TestOverviewEndpoint:
         assert data["total_capital"] == 10200.0
 
 
-# ── /api/strategies ───────────────────────────────────────────────────────────────────────────
+# ── /api/strategies ───────────────────────────────────────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -212,7 +212,7 @@ class TestStrategiesEndpoint:
         assert len(resp_1.json()) >= 1
 
 
-# ── /api/trades ───────────────────────────────────────────────────────────────────────────────
+# ── /api/trades ─────────────────────────────────────────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -257,7 +257,7 @@ class TestTradesEndpoint:
         assert all(r["strategy"] == "P3_calibration_bias" for r in rows)
 
 
-# ── /api/risk ────────────────────────────────────────────────────────────────────────────────
+# ── /api/risk ───────────────────────────────────────────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -284,7 +284,7 @@ class TestRiskEndpoint:
         assert data["sharpe_overall"] == 0
 
 
-# ── /api/fees ───────────────────────────────────────────────────────────────────────────────
+# ── /api/fees ───────────────────────────────────────────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -305,7 +305,7 @@ class TestFeesEndpoint:
         assert data["total_fees"] == 0.0
 
 
-# ── /api/equity-curve ──────────────────────────────────────────────────────────────────────────
+# ── /api/equity-curve ──────────────────────────────────────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -322,7 +322,7 @@ class TestEquityCurveEndpoint:
         assert resp.json() == []
 
 
-# ── /api/circuit-breaker ──────────────────────────────────────────────────────────────────────────
+# ── /api/circuit-breaker ──────────────────────────────────────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -347,7 +347,7 @@ class TestCircuitBreakerEndpoint:
         assert resp.json()["daily_loss"] == 0.0
 
 
-# ── /api/pnl-split ─────────────────────────────────────────────────────────────────────────────
+# ── /api/pnl-split ────────────────────────────────────────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -374,7 +374,7 @@ class TestPnlSplitEndpoint:
             assert isinstance(data[model]["total_fees"], (int, float))
 
 
-# ── /api/invariants ───────────────────────────────────────────────────────────────────────────
+# ── /api/invariants ───────────────────────────────────────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -416,7 +416,7 @@ class TestOverviewDailyLossField:
         assert resp.json()["daily_loss_pct_used"] == 0.0
 
 
-# ── Fail-closed host auth policy ──────────────────────────────────────────────────────────────────────
+# ── Fail-closed host auth policy ──────────────────────────────────────────────────────────────────────────────
 
 
 class TestHostAuthPolicy:
@@ -457,7 +457,7 @@ class TestHostAuthPolicy:
         assert _enforce_host_auth_policy("10.0.0.5") == "10.0.0.5"
 
 
-# ── /api/system-health ────────────────────────────────────────────────────────────────────────────
+# ── /api/system-health ────────────────────────────────────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
