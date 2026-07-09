@@ -205,7 +205,7 @@ class AlertManager:
     def _dedup_key(self, alert: Alert) -> str:
         # Hash of title+severity+component — body can vary (e.g. timestamps)
         # without re-alerting, but a new component/title gets through.
-        return hashlib.sha1(
+        return hashlib.sha256(
             f"{alert.component}|{alert.severity.value}|{alert.title}".encode()
         ).hexdigest()
 
@@ -311,7 +311,7 @@ class AlertManager:
         task.add_done_callback(self._pending_tasks.discard)
 
 
-# ── Module-level factory ────────────────────────────────────
+# ── Module-level factory ──────────────────────────────
 
 _manager: AlertManager | None = None
 

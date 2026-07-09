@@ -105,12 +105,15 @@ async def _check_stuck_pending_orders(db: aiosqlite.Connection) -> int:
     """Orders in 'pending' state past the stuck threshold.
 
     `submitted_at` is stored as TEXT but arb_engine/base client write it
-    as str(int(time.time())) — so CAST to INTEGER works for comparison.
+    as str(int(time.time())) — a 10-digit decimal string. Text comparison
+    of equal-length decimal strings is lexicographically equivalent to
+    numeric comparison, so we compare directly to allow SQLite to use the
+    idx_orders_submitted_at index instead of computing CAST on every row.
     """
     from core.config import get_config
 
     threshold_s = get_config().risk_controls.reconcile_stuck_pending_threshold_s
-    cutoff = int(time.time()) - threshold_s
+    cutoff_str = str(int(time.time()) - threshold_s)
     cursor = await db.execute(
         """
         SELECT id, platform, signal_id, market_id, submitted_at
@@ -118,9 +121,9 @@ async def _check_stuck_pending_orders(db: aiosqlite.Connection) -> int:
         WHERE status = 'pending'
           AND submitted_at IS NOT NULL
           AND submitted_at != ''
-          AND CAST(submitted_at AS INTEGER) < ?
+          AND submitted_at < ?
         """,
-        (cutoff,),
+        (cutoff_str,),
     )
     rows = await cursor.fetchall()
     count = 0
