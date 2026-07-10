@@ -299,6 +299,16 @@ class Config:
                 f"ARB_COOLDOWN_S must be >= 0, got {self.risk_controls.arb_cooldown_s}"
             )
 
+        if (
+            self.risk_controls.max_position_pct
+            > self.risk_controls.max_portfolio_exposure_pct
+        ):
+            raise ValueError(
+                f"MAX_POSITION_PCT ({self.risk_controls.max_position_pct:.0%}) must be "
+                f"<= MAX_PORTFOLIO_EXPOSURE_PCT ({self.risk_controls.max_portfolio_exposure_pct:.0%}); "
+                "otherwise no trade can pass the portfolio exposure check"
+            )
+
 
 def load_config() -> Config:
     """Load configuration from environment variables."""

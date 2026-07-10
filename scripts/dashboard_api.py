@@ -984,6 +984,22 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
                     result["last_snapshot_age_s"] = None
             except Exception:
                 pass
+            try:
+                sig_cursor = await db.execute(
+                    "SELECT fired_at FROM signals ORDER BY fired_at DESC LIMIT 1"
+                )
+                sig_row = await sig_cursor.fetchone()
+                if sig_row and sig_row[0]:
+                    last_sig = datetime.fromisoformat(sig_row[0])
+                    if last_sig.tzinfo is None:
+                        last_sig = last_sig.replace(tzinfo=timezone.utc)
+                    result["last_signal_age_s"] = int(
+                        (datetime.now(timezone.utc) - last_sig).total_seconds()
+                    )
+                else:
+                    result["last_signal_age_s"] = None
+            except Exception:
+                pass
             return result
         except Exception as e:
             from fastapi.responses import JSONResponse

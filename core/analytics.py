@@ -141,16 +141,20 @@ class StrategyScorecard:
             }
 
             self.logger.info(
-                f"Strategy summary: strategy={strategy or 'all'}, "
-                f"trades={total_trades}, win_rate={win_rate:.1f}%, "
-                f"total_pnl={total_pnl:.4f}, sharpe={sharpe:.4f}"
+                "Strategy summary: strategy=%s trades=%d win_rate=%.1f%% "
+                "total_pnl=%.4f sharpe=%.4f",
+                strategy or "all",
+                total_trades,
+                win_rate,
+                total_pnl,
+                sharpe,
             )
 
             return result
 
         except Exception as e:
             self.logger.error(
-                f"Failed to get strategy summary: strategy={strategy}, error={str(e)}"
+                "Failed to get strategy summary: strategy=%s error=%s", strategy, e
             )
             raise
 
@@ -222,15 +226,18 @@ class StrategyScorecard:
                     }
                 )
 
+            avg_daily = cumulative / len(series) if series else 0.0
             self.logger.info(
-                f"Daily P&L series: {len(series)} days, "
-                f"total_pnl={cumulative:.4f}, avg_daily={cumulative / len(series):.4f if series else 0}"
+                "Daily P&L series: %d days total_pnl=%.4f avg_daily=%.4f",
+                len(series),
+                cumulative,
+                avg_daily,
             )
 
             return series
 
         except Exception as e:
-            self.logger.error(f"Failed to get daily P&L series: {str(e)}")
+            self.logger.error("Failed to get daily P&L series: %s", e)
             raise
 
     async def compare_strategies(self, days: int = 7) -> dict[str, dict[str, Any]]:
@@ -252,10 +259,12 @@ class StrategyScorecard:
                 if summary["total_trades"] > 0:  # Only include active strategies
                     comparison[strat] = summary
             except Exception as e:
-                self.logger.warning(f"Failed to get summary for {strat}: {str(e)}")
+                self.logger.warning("Failed to get summary for %s: %s", strat, e)
 
         self.logger.info(
-            f"Strategy comparison: {len(comparison)} active strategies over {days} days"
+            "Strategy comparison: %d active strategies over %d days",
+            len(comparison),
+            days,
         )
 
         return comparison
@@ -284,7 +293,7 @@ class StrategyScorecard:
 
             return mean_pnl / std_pnl
         except Exception as e:
-            self.logger.warning(f"Failed to compute Sharpe ratio: {str(e)}")
+            self.logger.warning("Failed to compute Sharpe ratio: %s", e)
             return 0.0
 
     def _compute_max_drawdown(self, pnl_values: list[float]) -> float:
