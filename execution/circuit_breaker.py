@@ -239,7 +239,14 @@ class DailyLossCircuitBreaker:
                 logger.error("Failed to send reset alert: %s", e)
 
     async def get_state(self) -> BreakerState:
-        """Return a snapshot of current state (for dashboards / status API)."""
+        """Return a snapshot of current state (for dashboards / status API).
+
+        Performs a UTC day-rollover check first so callers that never go through
+        should_halt() (e.g., health-check endpoints) see auto-reset state after
+        midnight. Note: rollover may write a CIRCUIT_BREAKER_RESET event to the
+        DB — callers must hold a read-write connection.
+        """
+        await self._maybe_rollover()
         daily_loss_available = True
         try:
             daily_loss = await self._compute_daily_loss()
