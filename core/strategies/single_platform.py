@@ -199,7 +199,8 @@ async def detect_single_platform_opportunities(
     - P5_mean_reversion: Price moved sharply, bet on reversion
     """
     from core.config import RiskControlConfig
-    from core.signals.risk import get_portfolio_value
+    from core.engine.fire_state import _RiskLeg, _RiskSignal
+    from core.signals.risk import get_portfolio_value, run_all_checks
     from core.signals.sizing import compute_kelly_fraction, compute_position_size
     from execution.factory import _make_single_execution_client
     from execution.models import OrderLeg
@@ -517,6 +518,42 @@ async def detect_single_platform_opportunities(
             )
         except Exception as e:
             logger.debug("Violation insert error: %s", e)
+
+        # Commit market_pair + violation so risk_check_log FK is satisfied,
+        # and rejected trades still leave an analytics trail (mirrors arb_engine).
+        try:
+            await db.commit()
+        except Exception as _commit_err:
+            logger.warning(
+                "Pre-risk-check commit failed for %s: %s", m["id"], _commit_err
+            )
+            continue
+
+        # Run risk checks before submitting any order (mirrors P1 arb flow).
+        # min_edge is not a blocker here: P3/P4 use distance-based entry
+        # conditions with naturally smaller edges than P1 arb spreads; blocking
+        # on min_edge would silently disable those strategies entirely.
+        _risk_signal = _RiskSignal(
+            legs=[_RiskLeg(market_id=m["id"], limit_price=price, size=size, side=side)],
+            edge=edge,
+            strategy=strategy,
+            violation_id=violation_id,
+        )
+        _all_passed, _check_results = await run_all_checks(
+            _risk_signal, _risk_cfg, db, portfolio_value=_bankroll
+        )
+        _blocking_failed = [
+            r for r in _check_results if not r.passed and r.check_type != "min_edge"
+        ]
+        if _blocking_failed:
+            _failed_types = [r.check_type for r in _blocking_failed]
+            logger.info(
+                "RISK_REJECTED strategy=%s market=%s failed_checks=%s",
+                strategy,
+                m["id"],
+                _failed_types,
+            )
+            continue
 
         # Write signal
         try:
