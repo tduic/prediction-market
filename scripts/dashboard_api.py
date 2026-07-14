@@ -549,8 +549,12 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
                 r["daily_pnl"] for r in daily_rows if r["daily_pnl"] is not None
             ]
 
+            # Minimum 20 daily observations required for a meaningful 5th-percentile
+            # estimate. Below this threshold int(n * 0.05) == 0 for all n, which
+            # returns the sample minimum rather than any percentile.
+            _MIN_VAR_SAMPLE = 20
             daily_var = 0.0
-            if len(daily_pnls) > 1:
+            if len(daily_pnls) >= _MIN_VAR_SAMPLE:
                 daily_pnls_sorted = sorted(daily_pnls)
                 percentile_5_idx = max(0, int(len(daily_pnls_sorted) * 0.05))
                 # VaR = magnitude of loss at 5th percentile.  A positive P&L at
@@ -947,6 +951,24 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
             except Exception:
                 result["last_snapshot_age_s"] = None
                 issues.append("snapshot_age_query_failed")
+
+            # Signal liveness (last 24h)
+            try:
+                _cutoff_24h_sig = (
+                    datetime.now(timezone.utc) - timedelta(hours=24)
+                ).isoformat()
+                sig_live_cursor = await db.execute(
+                    "SELECT COUNT(*) FROM signals WHERE fired_at >= ?",
+                    (_cutoff_24h_sig,),
+                )
+                sig_live_row = await sig_live_cursor.fetchone()
+                signals_24h_count = sig_live_row[0] if sig_live_row else 0
+                result["signals_24h"] = signals_24h_count
+                if signals_24h_count == 0:
+                    issues.append("no_signals_24h")
+            except Exception:
+                result["signals_24h"] = None
+                issues.append("signals_liveness_query_failed")
 
             # Overall status
             if any("tripped" in i or "critical" in i for i in issues):
