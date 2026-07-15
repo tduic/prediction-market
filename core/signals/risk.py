@@ -228,23 +228,21 @@ async def check_duplicate_signal(
     placeholders = ",".join("?" for _ in market_ids)
 
     try:
-        # orders.submitted_at is stored as str(int(time.time())) — a 10-digit
-        # decimal string. Equal-length decimal strings sort lexicographically
-        # identically to numerically, so a plain text range comparison is both
-        # correct and indexable (CAST prevents index use on idx_orders_submitted_at).
-        # This matches the pattern established in reconciliation._check_stuck_pending_orders.
-        cutoff_str = str(
-            int(
-                (
-                    datetime.now(timezone.utc) - timedelta(seconds=duplicate_window_s)
-                ).timestamp()
-            )
+        # orders.submitted_at is stored as a Unix epoch integer (int(time.time()))
+        # cast to TEXT. ISO format strings sort lexicographically lower than Unix
+        # epoch strings ("1..." < "2026-..."), so an ISO cutoff would never match.
+        # Use a Unix epoch integer cutoff and CAST to compare correctly, matching
+        # the same pattern used in reconciliation._check_stuck_pending_orders.
+        cutoff_unix = int(
+            (
+                datetime.now(timezone.utc) - timedelta(seconds=duplicate_window_s)
+            ).timestamp()
         )
         cursor = await db.execute(
             f"SELECT COUNT(*) FROM orders "
             f"WHERE market_id IN ({placeholders}) "
-            f"AND submitted_at > ?",
-            [*market_ids, cutoff_str],
+            f"AND CAST(submitted_at AS INTEGER) > ?",
+            [*market_ids, cutoff_unix],
         )
         row = await cursor.fetchone()
         recent_count = row[0] if row else 0
@@ -279,7 +277,7 @@ async def check_min_edge(
     Prevents trading on noise — the edge must clear fees + slippage.
     """
     edge = getattr(signal, "edge", None) or 0
-    passed = abs(edge) >= min_edge
+    passed = edge >= min_edge
 
     return RiskCheckResult(
         passed=passed,
