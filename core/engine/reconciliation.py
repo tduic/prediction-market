@@ -62,6 +62,16 @@ async def reconcile_internal_state(db: aiosqlite.Connection) -> dict[str, int]:
             logger.error("Failed to send reconciliation alert: %s", _alert_err)
     else:
         logger.info("RECONCILIATION clean: no discrepancies")
+        await _log_discrepancy(
+            db,
+            platform="internal",
+            check_type="reconciliation_ok",
+            local_value=0.0,
+            exchange_value=0.0,
+            discrepancy=0.0,
+            status="ok",
+            detail=f"all checks clean: {summary}",
+        )
 
     return summary
 
