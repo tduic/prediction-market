@@ -331,7 +331,7 @@ async def detect_single_platform_opportunities(
             continue
         expected = 1.0 / len(group)
         best = max(group, key=lambda m: m["yes_price"] - expected)
-        edge = round((total_yes - 1.0) / len(group), 4)
+        edge = round(best["yes_price"] - expected, 4)
         opportunities.append(
             {
                 "market": best,
@@ -555,6 +555,16 @@ async def detect_single_platform_opportunities(
             )
             continue
 
+        # Check circuit breaker before writing signal or submitting any order.
+        # Mirrors arb_engine: signals only appear in DB for trade attempts that
+        # actually proceed to order submission, preventing orphaned 'fired' signals.
+        if circuit_breaker is not None and await circuit_breaker.should_halt():
+            logger.warning(
+                "CIRCUIT_BREAKER halted -- skipping single-platform trade for %s",
+                strategy,
+            )
+            break
+
         # Write signal
         try:
             kelly = _kelly_f
@@ -579,14 +589,6 @@ async def detect_single_platform_opportunities(
             )
         except Exception as e:
             logger.debug("Signal insert error: %s", e)
-
-        # Check circuit breaker before submitting any order.
-        if circuit_breaker is not None and await circuit_breaker.should_halt():
-            logger.warning(
-                "CIRCUIT_BREAKER halted -- skipping single-platform trade for %s",
-                strategy,
-            )
-            break
 
         # Get (or create) execution client for this market's platform
         platform = m["platform"]

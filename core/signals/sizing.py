@@ -36,11 +36,6 @@ def compute_kelly_fraction(
     odds = float(min(max(odds, 0.01), 0.99))
     edge = float(edge)
 
-    # Interpret market price as probability
-    # odds = p for binary outcome
-    p = odds  # Probability if betting YES
-    _q = 1 - p  # Probability if betting NO
-
     # If edge > 0, we want to go long (betting YES)
     # If edge < 0, we want to go short (betting NO)
     if edge > 0:
