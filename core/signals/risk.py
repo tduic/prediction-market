@@ -92,16 +92,20 @@ async def check_position_limit(
 
 async def check_daily_loss_limit(
     signal: Any,
-    portfolio_value: float,
+    starting_capital: float,
     max_daily_loss_pct: float,
     db: aiosqlite.Connection | None = None,
 ) -> RiskCheckResult:
     """
     Check if today's realized losses are within the daily loss limit.
 
-    Default: 2% → on a $10,000 portfolio, max daily loss = $200.
+    Default: 2% → on a $10,000 starting capital, max daily loss = $200.
+
+    Uses starting_capital (not current portfolio value) to match the circuit
+    breaker's threshold and the dashboard display, so operators see a consistent
+    limit across all system components.
     """
-    max_loss = portfolio_value * max_daily_loss_pct
+    max_loss = starting_capital * max_daily_loss_pct
 
     if not db:
         return RiskCheckResult(
@@ -144,7 +148,7 @@ async def check_daily_loss_limit(
         threshold=max_loss,
         detail=(
             f"Today's net loss (incl. fees) ${daily_loss:.2f} vs limit ${max_loss:.2f} "
-            f"({max_daily_loss_pct:.0%} of ${portfolio_value:.2f})"
+            f"({max_daily_loss_pct:.0%} of ${starting_capital:.2f} starting capital)"
         ),
     )
 
@@ -321,7 +325,7 @@ async def run_all_checks(
     raw = await asyncio.gather(
         check_position_limit(signal, portfolio_value, risk_config.max_position_pct, db),
         check_daily_loss_limit(
-            signal, portfolio_value, risk_config.max_daily_loss_pct, db
+            signal, risk_config.starting_capital, risk_config.max_daily_loss_pct, db
         ),
         check_portfolio_exposure(
             signal, portfolio_value, risk_config.max_portfolio_exposure_pct, db
