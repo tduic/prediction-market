@@ -1,4 +1,4 @@
-"""
+""" 
 FastAPI server for the prediction market dashboard.
 Queries the SQLite trading database and serves JSON to the React frontend.
 
@@ -43,6 +43,26 @@ def configure(db_path: str) -> None:
     """Set the database path for all endpoints. Call before starting server."""
     global _DB_PATH
     _DB_PATH = db_path
+
+
+async def _compute_daily_loss_today(db: aiosqlite.Connection) -> float:
+    """Return today's net realized loss (positive float) from trade_outcomes.
+
+    Uses a UTC-date range comparison so the query planner can use the
+    index on created_at.  Returns 0.0 when today is profitable.
+    """
+    from datetime import date as _date
+
+    _today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    _tomorrow = (_date.fromisoformat(_today) + timedelta(days=1)).isoformat()
+    cursor = await db.execute(
+        "SELECT COALESCE(SUM(actual_pnl - COALESCE(fees_total, 0)), 0) "
+        "FROM trade_outcomes WHERE created_at >= ? AND created_at < ?",
+        (_today, _tomorrow),
+    )
+    row = await cursor.fetchone()
+    net_pnl = float(row[0]) if row and row[0] is not None else 0.0
+    return max(0.0, -net_pnl)
 
 
 class _BasicAuthMiddleware(BaseHTTPMiddleware):
@@ -200,22 +220,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
 
             daily_loss_pct_used = 0.0
             try:
-                from datetime import date as _date
-
-                _today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-                _tomorrow = (
-                    _date.fromisoformat(_today) + timedelta(days=1)
-                ).isoformat()
-                _dl_cursor = await db.execute(
-                    "SELECT COALESCE(SUM(actual_pnl - COALESCE(fees_total, 0)), 0) "
-                    "FROM trade_outcomes WHERE created_at >= ? AND created_at < ?",
-                    (_today, _tomorrow),
-                )
-                _dl_row = await _dl_cursor.fetchone()
-                _net_pnl_today = (
-                    float(_dl_row[0]) if _dl_row and _dl_row[0] is not None else 0.0
-                )
-                _daily_loss = max(0.0, -_net_pnl_today)
+                _daily_loss = await _compute_daily_loss_today(db)
                 _cfg = get_config().risk_controls
                 _daily_loss_limit = _cfg.starting_capital * _cfg.max_daily_loss_pct
                 daily_loss_pct_used = round(
@@ -701,19 +706,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
             daily_loss_available = True
             daily_loss = 0.0
             try:
-                from datetime import date as _date
-
-                _today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-                _tomorrow = (
-                    _date.fromisoformat(_today) + timedelta(days=1)
-                ).isoformat()
-                cursor = await db.execute(
-                    "SELECT COALESCE(SUM(actual_pnl - COALESCE(fees_total,0)),0) FROM trade_outcomes WHERE created_at >= ? AND created_at < ?",
-                    (_today, _tomorrow),
-                )
-                pnl_row = await cursor.fetchone()
-                net_pnl = pnl_row[0] if pnl_row else 0.0
-                daily_loss = max(0.0, -net_pnl)
+                daily_loss = await _compute_daily_loss_today(db)
             except Exception as e:
                 logger.warning(
                     "circuit-breaker endpoint: daily_loss query failed: %s", e
