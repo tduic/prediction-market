@@ -232,21 +232,24 @@ async def check_duplicate_signal(
     placeholders = ",".join("?" for _ in market_ids)
 
     try:
-        # orders.submitted_at is stored as a Unix epoch integer (int(time.time()))
-        # cast to TEXT. ISO format strings sort lexicographically lower than Unix
-        # epoch strings ("1..." < "2026-..."), so an ISO cutoff would never match.
-        # Use a Unix epoch integer cutoff and CAST to compare correctly, matching
-        # the same pattern used in reconciliation._check_stuck_pending_orders.
-        cutoff_unix = int(
-            (
-                datetime.now(timezone.utc) - timedelta(seconds=duplicate_window_s)
-            ).timestamp()
+        # orders.submitted_at is stored as str(int(time.time())) — a 10-digit
+        # decimal string. Text comparison of equal-length decimal strings is
+        # lexicographically equivalent to numeric comparison, so we compare
+        # directly to allow SQLite to use idx_orders_submitted_at instead of
+        # computing CAST on every row (same pattern as
+        # reconciliation._check_stuck_pending_orders).
+        cutoff_str = str(
+            int(
+                (
+                    datetime.now(timezone.utc) - timedelta(seconds=duplicate_window_s)
+                ).timestamp()
+            )
         )
         cursor = await db.execute(
             f"SELECT COUNT(*) FROM orders "
             f"WHERE market_id IN ({placeholders}) "
-            f"AND CAST(submitted_at AS INTEGER) > ?",
-            [*market_ids, cutoff_unix],
+            f"AND submitted_at > ?",
+            [*market_ids, cutoff_str],
         )
         row = await cursor.fetchone()
         recent_count = row[0] if row else 0
