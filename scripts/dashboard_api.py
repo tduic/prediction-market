@@ -1,4 +1,4 @@
-""" 
+"""
 FastAPI server for the prediction market dashboard.
 Queries the SQLite trading database and serves JSON to the React frontend.
 
@@ -999,6 +999,30 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
                     result["last_signal_age_s"] = None
             except Exception:
                 pass
+            try:
+                _cutoff_24h = (
+                    datetime.now(timezone.utc) - timedelta(hours=24)
+                ).isoformat()
+                sig_count_cursor = await db.execute(
+                    "SELECT COUNT(*) FROM signals WHERE fired_at >= ?",
+                    (_cutoff_24h,),
+                )
+                sig_count_row = await sig_count_cursor.fetchone()
+                result["signals_24h"] = sig_count_row[0] if sig_count_row else 0
+            except Exception:
+                result["signals_24h"] = None
+            try:
+                cb_cursor = await db.execute(
+                    "SELECT event_type FROM system_events "
+                    "WHERE event_type IN ('CIRCUIT_BREAKER_TRIPPED','CIRCUIT_BREAKER_RESET') "
+                    "AND DATE(occurred_at) = DATE('now') ORDER BY id DESC LIMIT 1"
+                )
+                cb_row = await cb_cursor.fetchone()
+                result["circuit_breaker_tripped"] = (
+                    cb_row is not None and cb_row[0] == "CIRCUIT_BREAKER_TRIPPED"
+                )
+            except Exception:
+                result["circuit_breaker_tripped"] = None
             return result
         except Exception as e:
             from fastapi.responses import JSONResponse

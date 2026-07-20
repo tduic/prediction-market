@@ -249,7 +249,7 @@ class DailyLossCircuitBreaker:
         await self._maybe_rollover()
         daily_loss_available = True
         try:
-            daily_loss = await self._compute_daily_loss()
+            daily_loss = await self._get_daily_loss_cached()
         except Exception as e:
             logger.warning(
                 "get_state: failed to compute daily loss — reporting unavailable: %s", e
