@@ -298,6 +298,10 @@ class Config:
             raise ValueError(
                 f"ARB_COOLDOWN_S must be >= 0, got {self.risk_controls.arb_cooldown_s}"
             )
+        if self.risk_controls.reconcile_every < 1:
+            raise ValueError(
+                f"RECONCILE_EVERY must be >= 1, got {self.risk_controls.reconcile_every}"
+            )
 
         if (
             self.risk_controls.max_position_pct

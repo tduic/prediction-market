@@ -947,6 +947,28 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
                 result["last_snapshot_age_s"] = None
                 issues.append("snapshot_age_query_failed")
 
+            # Signal liveness
+            try:
+                sig_cursor = await db.execute(
+                    "SELECT fired_at FROM signals ORDER BY fired_at DESC LIMIT 1"
+                )
+                sig_row = await sig_cursor.fetchone()
+                if sig_row and sig_row[0]:
+                    last_sig = datetime.fromisoformat(sig_row[0])
+                    if last_sig.tzinfo is None:
+                        last_sig = last_sig.replace(tzinfo=timezone.utc)
+                    sig_age_s = int(
+                        (datetime.now(timezone.utc) - last_sig).total_seconds()
+                    )
+                    result["last_signal_age_s"] = sig_age_s
+                    if sig_age_s > 3600:
+                        issues.append(f"signal_stale:{sig_age_s}s")
+                else:
+                    result["last_signal_age_s"] = None
+            except Exception:
+                result["last_signal_age_s"] = None
+                issues.append("signal_age_query_failed")
+
             # Overall status
             if any("tripped" in i or "critical" in i for i in issues):
                 result["status"] = "critical"
