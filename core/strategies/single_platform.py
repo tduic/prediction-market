@@ -571,14 +571,16 @@ async def detect_single_platform_opportunities(
             await db.execute(
                 """INSERT OR IGNORE INTO signals
                    (id, violation_id, strategy, signal_type, market_id_a,
+                    target_price_a,
                     model_edge, kelly_fraction, position_size_a,
                     total_capital_at_risk, status, fired_at, updated_at)
-                   VALUES (?, ?, ?, 'single', ?, ?, ?, ?, ?, 'fired', ?, ?)""",
+                   VALUES (?, ?, ?, 'single', ?, ?, ?, ?, ?, ?, 'fired', ?, ?)""",
                 (
                     signal_id,
                     violation_id,
                     strategy,
                     m["id"],
+                    price,
                     edge,
                     kelly,
                     size,

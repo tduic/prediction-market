@@ -83,11 +83,20 @@ async def _check_orphaned_positions(db: aiosqlite.Connection) -> int:
     'open' for the same signal_id + market_id, that's state drift.
     """
     cursor = await db.execute("""
-        SELECT p.id, p.signal_id, p.market_id,
-               (SELECT o.status FROM orders o
-                 WHERE o.signal_id = p.signal_id AND o.market_id = p.market_id
-                 ORDER BY o.submitted_at DESC LIMIT 1) AS order_status
+        WITH latest_order AS (
+            SELECT signal_id, market_id, status,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY signal_id, market_id
+                       ORDER BY submitted_at DESC
+                   ) AS rn
+            FROM orders
+        )
+        SELECT p.id, p.signal_id, p.market_id, lo.status AS order_status
         FROM positions p
+        LEFT JOIN latest_order lo
+               ON lo.signal_id = p.signal_id
+              AND lo.market_id = p.market_id
+              AND lo.rn = 1
         WHERE p.status = 'open'
         """)
     rows = await cursor.fetchall()

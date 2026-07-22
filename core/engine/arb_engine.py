@@ -581,15 +581,18 @@ class ArbitrageEngine:
             await self.db.execute(
                 """INSERT OR IGNORE INTO signals
                    (id, violation_id, strategy, signal_type, market_id_a, market_id_b,
+                    target_price_a, target_price_b,
                     model_edge, kelly_fraction, position_size_a, position_size_b,
                     total_capital_at_risk, status, fired_at, updated_at)
-                   VALUES (?, ?, ?, 'arb_pair', ?, ?, ?, ?, ?, ?, ?, 'fired', ?, ?)""",
+                   VALUES (?, ?, ?, 'arb_pair', ?, ?, ?, ?, ?, ?, ?, ?, ?, 'fired', ?, ?)""",
                 (
                     signal_id,
                     violation_id,
                     strategy,
                     buy_id,
                     sell_id,
+                    buy_price,
+                    sell_price,
                     edge,
                     kelly_f,
                     size,
