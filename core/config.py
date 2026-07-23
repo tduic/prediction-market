@@ -302,6 +302,11 @@ class Config:
             raise ValueError(
                 f"RECONCILE_EVERY must be >= 1, got {self.risk_controls.reconcile_every}"
             )
+        if self.risk_controls.duplicate_signal_window_s <= 0:
+            raise ValueError(
+                f"DUPLICATE_SIGNAL_WINDOW_S must be > 0, "
+                f"got {self.risk_controls.duplicate_signal_window_s}"
+            )
 
         if (
             self.risk_controls.max_position_pct
