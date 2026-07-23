@@ -281,8 +281,17 @@ class ArbitrageEngine:
 
         # Execute under lock to prevent concurrent trades on the same pair.
         async with self._trade_lock:
-            # Re-check under lock — state may have changed while we waited.
+            # Re-read prices under lock: an on_price_update() awaited while we
+            # waited for the lock could have moved prices, so snapshot them
+            # fresh here to avoid trading on a spread that has already closed.
+            p_price = self.prices.get(match["poly_id"])
+            k_price = self.prices.get(match["kalshi_id"])
+            if p_price is None or k_price is None:
+                return False
+            spread = abs(p_price - k_price)
             self._check_rearm(pair_id, spread)
+            if spread < self.min_spread:
+                return False
             if not self._is_eligible(pair_id):
                 return False
             try:
