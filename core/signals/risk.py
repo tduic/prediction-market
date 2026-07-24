@@ -346,7 +346,7 @@ async def run_all_checks(
                     check_type="error",
                     check_value=0,
                     threshold=0,
-                    detail=f"Check error: {str(item)}",
+                    detail=f"Check error: {item!s}",
                 )
             )
         else:
@@ -385,12 +385,12 @@ async def _log_risk_checks(
     now = datetime.now(timezone.utc).isoformat()
 
     try:
-        for r in results:
-            await db.execute(
-                """INSERT INTO risk_check_log
-                   (signal_id, violation_id, check_type, passed, check_value,
-                    threshold, detail, evaluated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+        await db.executemany(
+            """INSERT INTO risk_check_log
+               (signal_id, violation_id, check_type, passed, check_value,
+                threshold, detail, evaluated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            [
                 (
                     signal_id,
                     violation_id,
@@ -400,8 +400,10 @@ async def _log_risk_checks(
                     r.threshold,
                     r.detail,
                     now,
-                ),
-            )
+                )
+                for r in results
+            ],
+        )
         await db.commit()
     except Exception as e:
         logger.warning("Failed to log risk checks: %s", e)

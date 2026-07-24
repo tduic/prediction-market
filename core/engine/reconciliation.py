@@ -98,28 +98,28 @@ async def _check_orphaned_positions(db: aiosqlite.Connection) -> int:
               AND lo.market_id = p.market_id
               AND lo.rn = 1
         WHERE p.status = 'open'
+          AND (lo.status IS NULL OR lo.status IN ('failed', 'cancelled'))
         """)
     rows = await cursor.fetchall()
     count = 0
     for pos_id, signal_id, market_id, order_status in rows:
-        if order_status is None or order_status in ("failed", "cancelled"):
-            order_status_label = (
-                "<no_matching_order>" if order_status is None else order_status
-            )
-            await _log_discrepancy(
-                db,
-                platform="internal",
-                check_type="orphaned_position",
-                local_value=1.0,
-                exchange_value=0.0,
-                discrepancy=1.0,
-                status="discrepancy",
-                detail=(
-                    f"position_id={pos_id} signal_id={signal_id} "
-                    f"market_id={market_id} order_status={order_status_label}"
-                ),
-            )
-            count += 1
+        order_status_label = (
+            "<no_matching_order>" if order_status is None else order_status
+        )
+        await _log_discrepancy(
+            db,
+            platform="internal",
+            check_type="orphaned_position",
+            local_value=1.0,
+            exchange_value=0.0,
+            discrepancy=1.0,
+            status="discrepancy",
+            detail=(
+                f"position_id={pos_id} signal_id={signal_id} "
+                f"market_id={market_id} order_status={order_status_label}"
+            ),
+        )
+        count += 1
     return count
 
 
