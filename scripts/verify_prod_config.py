@@ -59,13 +59,13 @@ if _env_file.exists():
                 _k, _, _v = _line.partition("=")
                 os.environ.setdefault(_k.strip(), _v.strip())
 
-from core.alerting import (  # noqa: E402
+from core.alerting import (
     DiscordWebhookTransport,
     NullTransport,
     Severity,
     get_alert_manager,
 )
-from core.secrets import (  # noqa: E402
+from core.secrets import (
     GCPSecretManagerBackend,
     get_backend,
     get_secret,

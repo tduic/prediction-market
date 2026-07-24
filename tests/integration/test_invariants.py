@@ -20,7 +20,7 @@ import pytest
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from core.invariants import (  # noqa: E402
+from core.invariants import (
     InvariantResult,
     InvariantViolation,
     check_all_invariants,

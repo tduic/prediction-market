@@ -22,7 +22,7 @@ import time
 from pathlib import Path
 
 print("[startup] Loading environment...", flush=True)
-from dotenv import load_dotenv  # noqa: E402
+from dotenv import load_dotenv
 
 load_dotenv()
 
@@ -31,18 +31,18 @@ PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 print("[startup] Importing dependencies...", flush=True)
-import aiosqlite  # noqa: E402
+import aiosqlite
 
 # Import directly from submodules to avoid core/__init__.py which eagerly
 # loads EventBus, Database, etc. and can hang on first compilation.
 print("[startup] Loading config...", flush=True)
-from core.config import get_config  # noqa: E402
+from core.config import get_config
 
 print("[startup] Loading storage...", flush=True)
-from core.storage.db import Database  # noqa: E402
+from core.storage.db import Database
 
 print("[startup] Loading logging config...", flush=True)
-from core.logging_config import configure_from_env  # noqa: E402
+from core.logging_config import configure_from_env
 
 print("[startup] All imports complete.", flush=True)
 
@@ -383,9 +383,9 @@ async def main():
         except Exception as e:
             logger.warning("Initial snapshot failed (will retry later): %s", e)
 
-        from core.alerting import get_alert_manager  # noqa: E402
-        from core.live_gate import get_effective_risk_config  # noqa: E402
-        from execution.circuit_breaker import DailyLossCircuitBreaker  # noqa: E402
+        from core.alerting import get_alert_manager
+        from core.live_gate import get_effective_risk_config
+        from execution.circuit_breaker import DailyLossCircuitBreaker
 
         execution_mode = cfg.execution.execution_mode
         risk_config = get_effective_risk_config(execution_mode)

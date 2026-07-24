@@ -65,7 +65,7 @@ class BookResolver:
             return None
 
         # _valid_price returned True, so limit_price is non-None here.
-        assert limit_price is not None  # noqa: S101  (validated above)
+        assert limit_price is not None
         price: float = float(limit_price)
 
         if side is Side.BUY:

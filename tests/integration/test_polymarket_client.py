@@ -15,8 +15,8 @@ import pytest
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from execution.clients.polymarket import PolymarketExecutionClient  # noqa: E402
-from execution.models import OrderLeg  # noqa: E402
+from execution.clients.polymarket import PolymarketExecutionClient
+from execution.models import OrderLeg
 
 
 @pytest.mark.asyncio
@@ -119,8 +119,7 @@ class TestWriteOrderWithResolvedOrder:
         """When write_order gets a ResolvedOrder, the orders row
         reflects what hit the exchange (resolved values), not the
         original strategy intent."""
-        from execution.clients.base import BaseExecutionClient
-        from execution.clients.base import OrderResult
+        from execution.clients.base import BaseExecutionClient, OrderResult
         from execution.clients.polymarket_book import ResolvedOrder
         from execution.enums import Book, Side
         from execution.models import OrderLeg
@@ -262,8 +261,9 @@ class TestSubmitOrderTranslation:
         )
         await db.commit()
 
-        import execution.clients.polymarket as _pm_mod
         from dataclasses import dataclass as _dc
+
+        import execution.clients.polymarket as _pm_mod
 
         @_dc
         class _FakeOrderArgs:
@@ -356,8 +356,9 @@ class TestSubmitOrderTranslation:
         )
         await db.commit()
 
-        import execution.clients.polymarket as _pm_mod
         from dataclasses import dataclass as _dc
+
+        import execution.clients.polymarket as _pm_mod
 
         @_dc
         class _FakeOrderArgs:

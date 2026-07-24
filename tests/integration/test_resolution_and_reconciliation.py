@@ -18,8 +18,8 @@ import pytest
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from core.engine.reconciliation import reconcile_internal_state  # noqa: E402
-from core.engine.resolution import close_resolved_positions  # noqa: E402
+from core.engine.reconciliation import reconcile_internal_state
+from core.engine.resolution import close_resolved_positions
 
 
 def _iso_now() -> str:

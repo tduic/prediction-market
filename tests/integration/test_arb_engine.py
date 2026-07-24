@@ -18,8 +18,8 @@ import pytest
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from core.config import RiskControlConfig  # noqa: E402
-from core.engine import ArbitrageEngine, ScheduledStrategyRunner  # noqa: E402
+from core.config import RiskControlConfig
+from core.engine import ArbitrageEngine, ScheduledStrategyRunner
 
 
 def _make_match(poly_id, kalshi_id, poly_price, kalshi_price, similarity=0.85):

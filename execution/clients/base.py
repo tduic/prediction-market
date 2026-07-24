@@ -70,7 +70,6 @@ class BaseExecutionClient:
 
     async def close(self) -> None:
         """Clean up resources. Override if needed."""
-        pass
 
     # ── Shared DB writes ─────────────────────────────────────────────────
 

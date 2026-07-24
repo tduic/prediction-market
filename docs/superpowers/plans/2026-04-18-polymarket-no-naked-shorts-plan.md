@@ -210,9 +210,10 @@ class TestMigration012OrderBookColumns:
                    VALUES ('o1', 'sig_chk', 'polymarket', 'm1', 'buy', 'limit',
                            10, 'pending', 'now', 'now', 'MAYBE')""",
             )
-        assert "CHECK constraint" in str(exc_info.value) or "constraint" in str(
-            exc_info.value
-        ).lower()
+        assert (
+            "CHECK constraint" in str(exc_info.value)
+            or "constraint" in str(exc_info.value).lower()
+        )
 
     async def test_positions_market_book_status_index_exists(self, db):
         cursor = await db.execute(
@@ -477,10 +478,9 @@ In `core/ingestor/store.py`, find the block around line 300–326 that prepares 
 Then update the row tuple append (currently line 324–326) to include `last_price_no`:
 
 ```python
-        poly_market_rows.append(
-            (mid, condition_id, title[:200], yes_token_id, no_token_id,
-             last_price_no, now, now)
-        )
+poly_market_rows.append(
+    (mid, condition_id, title[:200], yes_token_id, no_token_id, last_price_no, now, now)
+)
 ```
 
 - [ ] **Step 4: Update the Polymarket INSERT in `store.py`**
@@ -531,8 +531,11 @@ def test_order_leg_accepts_side_enum():
     from execution.models import OrderLeg
 
     leg = OrderLeg(
-        market_id="m1", platform="polymarket",
-        side=Side.BUY, size=10, limit_price=0.5,
+        market_id="m1",
+        platform="polymarket",
+        side=Side.BUY,
+        size=10,
+        limit_price=0.5,
     )
     assert leg.side is Side.BUY
 
@@ -541,8 +544,11 @@ def test_order_leg_coerces_string_side_to_enum():
     from execution.models import OrderLeg
 
     leg = OrderLeg(
-        market_id="m1", platform="polymarket",
-        side="SELL", size=10, limit_price=0.5,
+        market_id="m1",
+        platform="polymarket",
+        side="SELL",
+        size=10,
+        limit_price=0.5,
     )
     assert leg.side is Side.SELL
 ```
@@ -713,7 +719,11 @@ class TestBookResolver:
         r = await BookResolver(db).resolve("poly_0xA", Side.BUY, 10, 0.6)
         assert r is not None
         assert (r.token_id, r.side, r.limit_price, r.book, r.translated) == (
-            "111", Side.BUY, 0.6, Book.YES, False,
+            "111",
+            Side.BUY,
+            0.6,
+            Book.YES,
+            False,
         )
 
     async def test_sell_with_no_inventory_translates_to_buy_no(self, db):
@@ -997,7 +1007,9 @@ class BookResolver:
 
     @staticmethod
     def _translation_enabled() -> bool:
-        return os.getenv("POLYMARKET_ALLOW_SHORT_TRANSLATION", "true").lower() != "false"
+        return (
+            os.getenv("POLYMARKET_ALLOW_SHORT_TRANSLATION", "true").lower() != "false"
+        )
 
     async def _tokens(self, market_id: str) -> tuple[str | None, str | None] | None:
         cur = await self.db.execute(
@@ -1092,15 +1104,24 @@ class TestWriteOrderWithResolvedOrder:
 
         client = _Client(db, platform_label="polymarket")
         leg = OrderLeg(
-            market_id="poly_m", platform="polymarket",
-            side=Side.SELL, size=10, limit_price=0.62,
+            market_id="poly_m",
+            platform="polymarket",
+            side=Side.SELL,
+            size=10,
+            limit_price=0.62,
         )
         resolved = ResolvedOrder(
-            token_id="222", side=Side.BUY, limit_price=0.38,
-            size=10, book=Book.NO, translated=True,
+            token_id="222",
+            side=Side.BUY,
+            limit_price=0.38,
+            size=10,
+            book=Book.NO,
+            translated=True,
         )
         result = OrderResult(
-            order_id="ord_x", platform="polymarket", status="pending",
+            order_id="ord_x",
+            platform="polymarket",
+            status="pending",
             submission_latency_ms=0,
         )
         await client.write_order(leg, result, signal_id="sig_w", resolved=resolved)
@@ -1111,9 +1132,9 @@ class TestWriteOrderWithResolvedOrder:
         )
         row = await cursor.fetchone()
         assert row is not None
-        assert row[0] == "BUY"     # resolved side, not original SELL
-        assert row[1] == "NO"      # resolved book
-        assert row[2] == 0.38      # translated price
+        assert row[0] == "BUY"  # resolved side, not original SELL
+        assert row[1] == "NO"  # resolved book
+        assert row[2] == 0.38  # translated price
 
     async def test_write_order_without_resolved_uses_leg_values(self, db):
         """Kalshi (and any other caller without a resolver) keeps today's
@@ -1144,11 +1165,16 @@ class TestWriteOrderWithResolvedOrder:
 
         client = _Client(db, platform_label="kalshi")
         leg = OrderLeg(
-            market_id="kal_m", platform="kalshi",
-            side=Side.BUY, size=10, limit_price=0.35,
+            market_id="kal_m",
+            platform="kalshi",
+            side=Side.BUY,
+            size=10,
+            limit_price=0.35,
         )
         result = OrderResult(
-            order_id="ord_k", platform="kalshi", status="pending",
+            order_id="ord_k",
+            platform="kalshi",
+            status="pending",
             submission_latency_ms=0,
         )
         await client.write_order(leg, result, signal_id="sig_k")
@@ -1240,7 +1266,9 @@ async def write_order(
                 result.order_id,
                 leg.market_id,
                 side_str,
-                leg.order_type.lower() if isinstance(leg.order_type, str) else leg.order_type,
+                leg.order_type.lower()
+                if isinstance(leg.order_type, str)
+                else leg.order_type,
                 requested_price,
                 leg.size,
                 result.filled_price,
@@ -1336,9 +1364,7 @@ class TestPositionBookWriting:
         )
         await db.commit()
 
-        cursor = await db.execute(
-            "SELECT book FROM positions WHERE id = 'p_sp'"
-        )
+        cursor = await db.execute("SELECT book FROM positions WHERE id = 'p_sp'")
         row = await cursor.fetchone()
         assert row is not None
         assert row[0] == "YES"
@@ -1428,9 +1454,7 @@ Append to `tests/integration/test_polymarket_client.py`:
 ```python
 @pytest.mark.asyncio
 class TestSubmitOrderTranslation:
-    async def test_translates_sell_to_buy_no_when_no_inventory(
-        self, db, monkeypatch
-    ):
+    async def test_translates_sell_to_buy_no_when_no_inventory(self, db, monkeypatch):
         """End-to-end: arb-engine-style SELL on Polymarket with no
         inventory on file hits CLOB as BUY on the NO token."""
         from execution.clients.polymarket import PolymarketExecutionClient
@@ -1477,8 +1501,11 @@ class TestSubmitOrderTranslation:
         client._initialized = True  # skip _ensure_client
 
         leg = OrderLeg(
-            market_id="poly_t1", platform="polymarket",
-            side=Side.SELL, size=10, limit_price=0.62,
+            market_id="poly_t1",
+            platform="polymarket",
+            side=Side.SELL,
+            size=10,
+            limit_price=0.62,
             order_type="LIMIT",
         )
         result = await client.submit_order(leg, signal_id="sig_t1")
@@ -1545,8 +1572,11 @@ class TestSubmitOrderTranslation:
         client._initialized = True
 
         leg = OrderLeg(
-            market_id="poly_t2", platform="polymarket",
-            side=Side.SELL, size=10, limit_price=0.55,
+            market_id="poly_t2",
+            platform="polymarket",
+            side=Side.SELL,
+            size=10,
+            limit_price=0.55,
         )
         result = await client.submit_order(leg, signal_id="sig_t2")
 
@@ -1637,12 +1667,19 @@ e. Later in `submit_order`, update both `write_order` call sites to pass `resolv
 
 ```python
 await self.write_order(
-    leg, pending_result, signal_id=signal_id, strategy=strategy,
+    leg,
+    pending_result,
+    signal_id=signal_id,
+    strategy=strategy,
     resolved=resolved,
 )
 ...
 await self.write_order(
-    leg, result, signal_id=signal_id, strategy=strategy, resolved=resolved,
+    leg,
+    result,
+    signal_id=signal_id,
+    strategy=strategy,
+    resolved=resolved,
 )
 ```
 
@@ -1731,8 +1768,11 @@ class TestPaperPolymarketTranslation:
 
         client = PaperExecutionClient(db, platform_label="polymarket")
         leg = OrderLeg(
-            market_id="poly_p", platform="polymarket",
-            side=Side.SELL, size=10, limit_price=0.60,
+            market_id="poly_p",
+            platform="polymarket",
+            side=Side.SELL,
+            size=10,
+            limit_price=0.60,
             order_type="LIMIT",
         )
         result = await client.submit_order(leg, signal_id="sig_p")
@@ -1757,8 +1797,11 @@ class TestPaperPolymarketTranslation:
 
         client = PaperExecutionClient(db, platform_label="polymarket")
         leg = OrderLeg(
-            market_id="poly_p", platform="polymarket",
-            side=Side.SELL, size=10, limit_price=0.62,
+            market_id="poly_p",
+            platform="polymarket",
+            side=Side.SELL,
+            size=10,
+            limit_price=0.62,
             order_type="LIMIT",
         )
         result = await client.submit_order(leg, signal_id="sig_p")
@@ -1794,9 +1837,7 @@ self._book_resolver = (
 c. Modify `_get_db_price` to accept a `Book` parameter:
 
 ```python
-async def _get_db_price(
-    self, market_id: str, book: Book = Book.YES
-) -> float | None:
+async def _get_db_price(self, market_id: str, book: Book = Book.YES) -> float | None:
     """Read the most recently polled price from the DB (fallback)."""
     if book is Book.NO:
         # NO-book reference for translated SELL legs.
@@ -1825,94 +1866,99 @@ async def _get_db_price(
 d. In `submit_order`, route Polymarket legs through the resolver. Locate the top of `submit_order` (around line 154) and, after the `order_id` is generated, add:
 
 ```python
-        resolved: ResolvedOrder | None = None
-        if self._book_resolver is not None:
-            resolved = await self._book_resolver.resolve(
-                leg.market_id, leg.side, leg.size, leg.limit_price
-            )
-            if resolved is None:
-                submission_latency_ms = latency_ms
-                error_msg = (
-                    f"BookResolver rejected order for {leg.market_id} "
-                    f"(side={leg.side.value}, size={leg.size}, "
-                    f"price={leg.limit_price})"
-                )
-                logger.error(error_msg)
-                result = OrderResult(
-                    order_id=order_id,
-                    platform=self.platform_label,
-                    status="failed",
-                    submission_latency_ms=submission_latency_ms,
-                    error_message=error_msg,
-                )
-                await self.write_order(
-                    leg, result, signal_id=signal_id, strategy=strategy
-                )
-                return result
+resolved: ResolvedOrder | None = None
+if self._book_resolver is not None:
+    resolved = await self._book_resolver.resolve(
+        leg.market_id, leg.side, leg.size, leg.limit_price
+    )
+    if resolved is None:
+        submission_latency_ms = latency_ms
+        error_msg = (
+            f"BookResolver rejected order for {leg.market_id} "
+            f"(side={leg.side.value}, size={leg.size}, "
+            f"price={leg.limit_price})"
+        )
+        logger.error(error_msg)
+        result = OrderResult(
+            order_id=order_id,
+            platform=self.platform_label,
+            status="failed",
+            submission_latency_ms=submission_latency_ms,
+            error_message=error_msg,
+        )
+        await self.write_order(leg, result, signal_id=signal_id, strategy=strategy)
+        return result
 ```
 
 e. In `submit_order`, route the price lookup through the resolved book and use `resolved.limit_price` for the marketable check. Find the block at lines 170–215 and restructure:
 
 ```python
-        effective_side = resolved.side if resolved else leg.side
-        effective_limit = resolved.limit_price if resolved else leg.limit_price
-        effective_book = resolved.book if resolved else Book.YES
+effective_side = resolved.side if resolved else leg.side
+effective_limit = resolved.limit_price if resolved else leg.limit_price
+effective_book = resolved.book if resolved else Book.YES
 
-        market_price = await self._get_db_price(leg.market_id, effective_book)
-        # If still None, try the existing live fetch (YES-only, safe fallback)
-        # ... keep existing fallback logic, gated on effective_book is YES
+market_price = await self._get_db_price(leg.market_id, effective_book)
+# If still None, try the existing live fetch (YES-only, safe fallback)
+# ... keep existing fallback logic, gated on effective_book is YES
 
-        if market_price is None:
-            if effective_limit:
-                market_price = effective_limit
-            else:
-                result = OrderResult(
-                    order_id=order_id,
-                    platform=self.platform_label,
-                    status="failed",
-                    submission_latency_ms=submission_latency_ms,
-                    error_message="No market price available",
-                )
-                await self.write_order(
-                    leg, result, signal_id=signal_id, strategy=strategy,
-                    resolved=resolved,
-                )
-                return result
+if market_price is None:
+    if effective_limit:
+        market_price = effective_limit
+    else:
+        result = OrderResult(
+            order_id=order_id,
+            platform=self.platform_label,
+            status="failed",
+            submission_latency_ms=submission_latency_ms,
+            error_message="No market price available",
+        )
+        await self.write_order(
+            leg,
+            result,
+            signal_id=signal_id,
+            strategy=strategy,
+            resolved=resolved,
+        )
+        return result
 
-        # Marketable-at-limit check uses effective values.
-        if leg.order_type.upper() == "LIMIT" and effective_limit is not None:
-            if effective_side is Side.BUY and market_price > effective_limit:
-                result = OrderResult(
-                    order_id=order_id,
-                    platform=self.platform_label,
-                    status="failed",
-                    submission_latency_ms=submission_latency_ms,
-                    error_message=(
-                        f"Market price {market_price:.4f} above limit "
-                        f"{effective_limit:.4f}"
-                    ),
-                )
-                await self.write_order(
-                    leg, result, signal_id=signal_id, strategy=strategy,
-                    resolved=resolved,
-                )
-                return result
-            if effective_side is Side.SELL and market_price < effective_limit:
-                result = OrderResult(
-                    order_id=order_id,
-                    platform=self.platform_label,
-                    status="failed",
-                    submission_latency_ms=submission_latency_ms,
-                    error_message=(
-                        f"Market price {market_price:.4f} below limit "
-                        f"{effective_limit:.4f}"
-                    ),
-                )
-                await self.write_order(
-                    leg, result, signal_id=signal_id, strategy=strategy,
-                    resolved=resolved,
-                )
-                return result
+# Marketable-at-limit check uses effective values.
+if leg.order_type.upper() == "LIMIT" and effective_limit is not None:
+    if effective_side is Side.BUY and market_price > effective_limit:
+        result = OrderResult(
+            order_id=order_id,
+            platform=self.platform_label,
+            status="failed",
+            submission_latency_ms=submission_latency_ms,
+            error_message=(
+                f"Market price {market_price:.4f} above limit {effective_limit:.4f}"
+            ),
+        )
+        await self.write_order(
+            leg,
+            result,
+            signal_id=signal_id,
+            strategy=strategy,
+            resolved=resolved,
+        )
+        return result
+    if effective_side is Side.SELL and market_price < effective_limit:
+        result = OrderResult(
+            order_id=order_id,
+            platform=self.platform_label,
+            status="failed",
+            submission_latency_ms=submission_latency_ms,
+            error_message=(
+                f"Market price {market_price:.4f} below limit {effective_limit:.4f}"
+            ),
+        )
+        await self.write_order(
+            leg,
+            result,
+            signal_id=signal_id,
+            strategy=strategy,
+            resolved=resolved,
+        )
+        return result
 ```
 
 f. At the final `write_order` call where the fill is recorded, also pass `resolved=resolved`.

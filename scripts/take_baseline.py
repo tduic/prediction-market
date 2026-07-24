@@ -21,9 +21,9 @@ load_dotenv()  # fallback for local dev
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from core.config import get_config  # noqa: E402
-from core.logging_config import configure_from_env  # noqa: E402
-from core.snapshots.phase0 import take_phase0_baseline_snapshot  # noqa: E402
+from core.config import get_config
+from core.logging_config import configure_from_env
+from core.snapshots.phase0 import take_phase0_baseline_snapshot
 
 configure_from_env()
 logger = logging.getLogger(__name__)

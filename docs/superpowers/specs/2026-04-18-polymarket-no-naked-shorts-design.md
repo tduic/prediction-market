@@ -39,9 +39,11 @@ All decisions live in a single resolver shared by live and paper clients. Strate
 ```python
 from enum import Enum
 
+
 class Side(str, Enum):
     BUY = "BUY"
     SELL = "SELL"
+
 
 class Book(str, Enum):
     YES = "YES"
@@ -59,12 +61,13 @@ Inheriting from `str` preserves DB string compatibility (`positions.side='BUY'`,
 ```python
 @dataclass(frozen=True)
 class ResolvedOrder:
-    token_id: str          # 77-digit CLOB id to send
+    token_id: str  # 77-digit CLOB id to send
     side: Side
     limit_price: float
     size: float
     book: Book
-    translated: bool       # True ⇔ original SELL became BUY-NO
+    translated: bool  # True ⇔ original SELL became BUY-NO
+
 
 class BookResolver:
     def __init__(self, db: aiosqlite.Connection) -> None: ...

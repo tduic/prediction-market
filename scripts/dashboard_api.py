@@ -18,7 +18,7 @@ import secrets
 import statistics
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import aiosqlite
 import uvicorn
@@ -94,7 +94,7 @@ class _BasicAuthMiddleware(BaseHTTPMiddleware):
         )
 
 
-def _build_app(static_dir: Optional[str] = None) -> FastAPI:
+def _build_app(static_dir: str | None = None) -> FastAPI:
     """
     Build the FastAPI application.
 
@@ -143,8 +143,8 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
         await db.close()
 
     async def get_latest_snapshot(
-        db: Optional[aiosqlite.Connection] = None,
-    ) -> Optional[Dict[str, Any]]:
+        db: aiosqlite.Connection | None = None,
+    ) -> dict[str, Any] | None:
         own_db = db is None
         if db is None:
             db = await get_db()
@@ -161,7 +161,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
     # ── endpoints ───────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
     @app.get("/api/overview")
-    async def get_overview() -> Dict[str, Any]:
+    async def get_overview() -> dict[str, Any]:
         PAPER_CAPITAL = get_config().risk_controls.starting_capital
         db = await get_db()
         try:
@@ -249,7 +249,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
     @app.get("/api/strategies")
     async def get_strategies(
         days: int = Query(30, ge=1, le=365),
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         db = await get_db()
         try:
             cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
@@ -372,7 +372,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
     @app.get("/api/strategies/pnl-series")
     async def get_strategies_pnl_series(
         days: int = Query(7, ge=1, le=365),
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         db = await get_db()
         try:
             cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
@@ -409,7 +409,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
     @app.get("/api/equity-curve")
     async def get_equity_curve(
         days: int = Query(30, ge=1, le=365),
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         db = await get_db()
         try:
             cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
@@ -439,10 +439,10 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
 
     @app.get("/api/trades")
     async def get_trades(
-        strategy: Optional[str] = Query(None),
+        strategy: str | None = Query(None),
         days: int = Query(30, ge=1, le=365),
         limit: int = Query(200, ge=1, le=1000),
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         db = await get_db()
         try:
             cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
@@ -491,7 +491,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
             await close_db(db)
 
     @app.get("/api/risk")
-    async def get_risk() -> Dict[str, Any]:
+    async def get_risk() -> dict[str, Any]:
         PAPER_CAPITAL = get_config().risk_controls.starting_capital
         db = await get_db()
         try:
@@ -590,7 +590,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
             await close_db(db)
 
     @app.get("/api/fees")
-    async def get_fees() -> Dict[str, Any]:
+    async def get_fees() -> dict[str, Any]:
         db = await get_db()
         try:
             cursor = await db.execute("""
@@ -636,10 +636,10 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
 
     @app.get("/api/signals")
     async def get_signals(
-        strategy: Optional[str] = Query(None),
+        strategy: str | None = Query(None),
         days: int = Query(7, ge=1, le=365),
         limit: int = Query(200, ge=1, le=1000),
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         db = await get_db()
         try:
             cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
@@ -688,7 +688,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
             await close_db(db)
 
     @app.get("/api/circuit-breaker")
-    async def get_circuit_breaker() -> Dict[str, Any]:
+    async def get_circuit_breaker() -> dict[str, Any]:
         db = await get_db()
         try:
             cursor = await db.execute(
@@ -733,9 +733,9 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
 
     @app.get("/api/positions")
     async def get_positions(
-        status: Optional[str] = Query(None),
+        status: str | None = Query(None),
         limit: int = Query(200, ge=1, le=1000),
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         db = await get_db()
         try:
             if status:
@@ -754,7 +754,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
             await close_db(db)
 
     @app.get("/api/pnl-split")
-    async def get_pnl_split() -> Dict[str, Any]:
+    async def get_pnl_split() -> dict[str, Any]:
         """Realistic vs synthetic PnL totals across all closed positions.
 
         realistic: positions closed by mark_and_close_positions at real price.
@@ -772,7 +772,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
                      AND realized_pnl IS NOT NULL
                    GROUP BY pnl_model""")
             rows = await cursor.fetchall()
-            result: Dict[str, Any] = {
+            result: dict[str, Any] = {
                 "realistic": {"trade_count": 0, "total_pnl": 0.0, "total_fees": 0.0},
                 "synthetic": {"trade_count": 0, "total_pnl": 0.0, "total_fees": 0.0},
             }
@@ -794,7 +794,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
             await close_db(db)
 
     @app.get("/api/invariants")
-    async def get_invariants(limit: int = Query(20, ge=1, le=100)) -> Dict[str, Any]:
+    async def get_invariants(limit: int = Query(20, ge=1, le=100)) -> dict[str, Any]:
         """Invariant violation log: total count and most recent failures."""
         db = await get_db()
         try:
@@ -822,7 +822,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
     @app.get("/api/reconciliation")
     async def get_reconciliation(
         limit: int = Query(20, ge=1, le=100),
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Reconciliation discrepancy log: counts by type and most recent rows."""
         db = await get_db()
         try:
@@ -855,7 +855,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
             await close_db(db)
 
     @app.get("/api/system-health")
-    async def get_system_health() -> Dict[str, Any]:
+    async def get_system_health() -> dict[str, Any]:
         """Single rollup endpoint: circuit breaker + reconciliation + invariants + snapshot age.
 
         Each sub-query is isolated so one failure doesn't suppress others.
@@ -863,7 +863,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
         """
         db = await get_db()
         issues: list[str] = []
-        result: Dict[str, Any] = {}
+        result: dict[str, Any] = {}
 
         try:
             # Circuit breaker
@@ -982,12 +982,12 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
             await close_db(db)
 
     @app.get("/health")
-    async def health_check() -> Dict[str, Any]:
+    async def health_check() -> dict[str, Any]:
         db = None
         try:
             db = await get_db()
             await db.execute("SELECT 1")
-            result: Dict[str, Any] = {"status": "ok"}
+            result: dict[str, Any] = {"status": "ok"}
             try:
                 cursor = await db.execute(
                     "SELECT snapshotted_at FROM pnl_snapshots"
@@ -1067,7 +1067,7 @@ def _build_app(static_dir: Optional[str] = None) -> FastAPI:
 
 def create_dashboard_app(
     db_path: str,
-    static_dir: Optional[str] = None,
+    static_dir: str | None = None,
 ) -> FastAPI:
     """
     Public factory: create a fully configured dashboard app.

@@ -22,7 +22,7 @@ def __getattr__(name: str):
 
 __all__ = [
     "Config",
+    "Database",
     "get_config",
     "load_config",
-    "Database",
 ]

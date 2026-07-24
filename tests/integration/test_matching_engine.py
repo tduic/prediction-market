@@ -27,7 +27,7 @@ import pytest
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from core.matching.engine import (  # noqa: E402
+from core.matching.engine import (
     _find_matches_sync,
     compute_match_score,
     extract_numbers,

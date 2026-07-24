@@ -15,8 +15,8 @@ import pytest
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from execution.clients.polymarket_book import BookResolver  # noqa: E402
-from execution.enums import Book, Side  # noqa: E402
+from execution.clients.polymarket_book import BookResolver
+from execution.enums import Book, Side
 
 
 async def _seed_market(

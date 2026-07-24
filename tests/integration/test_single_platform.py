@@ -29,9 +29,9 @@ import pytest
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from core.config import RiskControlConfig  # noqa: E402
-from core.engine import ScheduledStrategyRunner  # noqa: E402
-from core.strategies.single_platform import (  # noqa: E402
+from core.config import RiskControlConfig
+from core.engine import ScheduledStrategyRunner
+from core.strategies.single_platform import (
     _cross_strategy_dedup,
     _get_strategy_rolling_pnl,
     _normalize_signal_strengths,
@@ -39,8 +39,8 @@ from core.strategies.single_platform import (  # noqa: E402
     detect_single_platform_opportunities,
     mark_and_close_positions,
 )
-from execution.clients.paper import PaperExecutionClient  # noqa: E402
-from execution.models import OrderLeg  # noqa: E402
+from execution.clients.paper import PaperExecutionClient
+from execution.models import OrderLeg
 
 
 def _risk_config(**overrides):

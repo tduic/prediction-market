@@ -6,7 +6,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from execution.enums import Book, Side  # noqa: E402
+from execution.enums import Book, Side
 
 
 def test_side_values_are_uppercase_strings():

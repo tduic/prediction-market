@@ -14,8 +14,8 @@ import pytest
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from execution.clients.paper import PaperExecutionClient  # noqa: E402
-from execution.models import OrderLeg  # noqa: E402
+from execution.clients.paper import PaperExecutionClient
+from execution.models import OrderLeg
 
 
 async def _seed_market_with_price(db, market_id, platform, price):

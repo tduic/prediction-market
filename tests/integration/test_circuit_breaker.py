@@ -17,9 +17,9 @@ from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))  # noqa: E402
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from execution.circuit_breaker import DailyLossCircuitBreaker  # noqa: E402
+from execution.circuit_breaker import DailyLossCircuitBreaker
 
 
 async def _seed_loss(db, amount: float, days_ago: int = 0) -> None:

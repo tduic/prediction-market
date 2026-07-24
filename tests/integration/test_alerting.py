@@ -18,9 +18,9 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))  # noqa: E402
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from core.alerting import (  # noqa: E402
+from core.alerting import (
     Alert,
     AlertManager,
     DiscordWebhookTransport,
