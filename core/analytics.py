@@ -192,9 +192,9 @@ class StrategyScorecard:
         try:
             cursor = await self.db.execute(
                 """
-                SELECT DATE(resolved_at) as date, actual_pnl
+                SELECT DATE(created_at) as date, actual_pnl
                 FROM trade_outcomes
-                WHERE resolved_at > ?
+                WHERE created_at > ?
                 ORDER BY date ASC
                 """,
                 (lookback,),
@@ -315,10 +315,12 @@ class StrategyScorecard:
 
         for pnl in pnl_values:
             cumulative += pnl
-            peak = max(peak, cumulative)
+            if cumulative > peak:
+                peak = cumulative
 
             if peak > 0:
                 drawdown = (peak - cumulative) / peak
-                max_dd = max(max_dd, drawdown)
+                if drawdown > max_dd:
+                    max_dd = drawdown
 
         return max_dd * 100  # Return as percentage
