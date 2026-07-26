@@ -486,3 +486,143 @@ class TestSystemHealthEndpoint:
         assert data["circuit_breaker"]["tripped"] is False
         assert data["reconciliation_discrepancies_24h"] == 0
         assert data["invariant_violations_24h"] == 0
+
+
+# ── /api/signals ─────────────────────────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+class TestSignalsEndpoint:
+    async def test_signals_endpoint_exists(self, app_and_client):
+        _, client, _ = app_and_client
+        resp = await client.get("/api/signals")
+        assert resp.status_code == 200
+
+    async def test_signals_returns_list(self, app_and_client):
+        _, client, _ = app_and_client
+        resp = await client.get("/api/signals")
+        assert isinstance(resp.json(), list)
+
+    async def test_signals_empty_on_empty_db(self, app_and_client):
+        _, client, _ = app_and_client
+        resp = await client.get("/api/signals")
+        assert resp.json() == []
+
+    async def test_signals_row_shape(self, app_and_client):
+        _, client, db_path = app_and_client
+        import aiosqlite
+
+        async with aiosqlite.connect(db_path) as file_db:
+            file_db.row_factory = aiosqlite.Row
+            await _seed_trade_outcome(file_db, strategy="P1_cross_market_arb", pnl=5.0)
+
+        resp = await client.get("/api/signals")
+        rows = resp.json()
+        assert len(rows) >= 1
+        row = rows[0]
+        for key in (
+            "id",
+            "strategy",
+            "signal_type",
+            "model_edge",
+            "status",
+            "fired_at",
+        ):
+            assert key in row, f"Missing key: {key}"
+
+    async def test_signals_strategy_filter(self, app_and_client):
+        _, client, db_path = app_and_client
+        import aiosqlite
+
+        async with aiosqlite.connect(db_path) as file_db:
+            file_db.row_factory = aiosqlite.Row
+            await _seed_trade_outcome(file_db, strategy="P1_cross_market_arb", pnl=1.0)
+            await _seed_trade_outcome(file_db, strategy="P2_structured_event", pnl=2.0)
+
+        resp = await client.get("/api/signals?strategy=P1_cross_market_arb")
+        rows = resp.json()
+        assert all(r["strategy"] == "P1_cross_market_arb" for r in rows)
+
+    async def test_signals_days_param(self, app_and_client):
+        _, client, db_path = app_and_client
+        import aiosqlite
+
+        async with aiosqlite.connect(db_path) as file_db:
+            file_db.row_factory = aiosqlite.Row
+            await _seed_trade_outcome(file_db, strategy="P1_cross_market_arb", pnl=3.0)
+
+        resp = await client.get("/api/signals?days=1")
+        assert resp.status_code == 200
+        assert isinstance(resp.json(), list)
+
+
+# ── /api/positions ───────────────────────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+class TestPositionsEndpoint:
+    async def test_positions_endpoint_exists(self, app_and_client):
+        _, client, _ = app_and_client
+        resp = await client.get("/api/positions")
+        assert resp.status_code == 200
+
+    async def test_positions_returns_list(self, app_and_client):
+        _, client, _ = app_and_client
+        resp = await client.get("/api/positions")
+        assert isinstance(resp.json(), list)
+
+    async def test_positions_empty_on_empty_db(self, app_and_client):
+        _, client, _ = app_and_client
+        resp = await client.get("/api/positions")
+        assert resp.json() == []
+
+    async def test_positions_status_filter_open(self, app_and_client):
+        _, client, _ = app_and_client
+        resp = await client.get("/api/positions?status=open")
+        assert resp.status_code == 200
+        assert isinstance(resp.json(), list)
+
+    async def test_positions_status_filter_closed(self, app_and_client):
+        _, client, _ = app_and_client
+        resp = await client.get("/api/positions?status=closed")
+        assert resp.status_code == 200
+        assert isinstance(resp.json(), list)
+
+    async def test_positions_limit_param(self, app_and_client):
+        _, client, _ = app_and_client
+        resp = await client.get("/api/positions?limit=10")
+        assert resp.status_code == 200
+
+
+# ── /api/reconciliation ──────────────────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+class TestReconciliationEndpoint:
+    async def test_reconciliation_endpoint_exists(self, app_and_client):
+        _, client, _ = app_and_client
+        resp = await client.get("/api/reconciliation")
+        assert resp.status_code == 200
+
+    async def test_reconciliation_returns_expected_keys(self, app_and_client):
+        _, client, _ = app_and_client
+        resp = await client.get("/api/reconciliation")
+        data = resp.json()
+        assert "total_count" in data
+        assert "discrepancy_count" in data
+        assert "recent_discrepancies" in data
+
+    async def test_reconciliation_empty_on_clean_db(self, app_and_client):
+        _, client, _ = app_and_client
+        resp = await client.get("/api/reconciliation")
+        data = resp.json()
+        assert data["total_count"] == 0
+        assert data["discrepancy_count"] == 0
+        assert data["recent_discrepancies"] == []
+
+    async def test_reconciliation_limit_param(self, app_and_client):
+        _, client, _ = app_and_client
+        resp = await client.get("/api/reconciliation?limit=5")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "total_count" in data
