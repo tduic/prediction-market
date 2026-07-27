@@ -7,33 +7,26 @@ logger = logging.getLogger(__name__)
 
 def compute_kelly_fraction(
     edge: float,
-    odds: float,
     kelly_fraction: float = 0.25,
 ) -> float:
     """
     Compute Kelly fraction for position sizing.
 
-    Kelly Criterion formula: f* = (bp - q) / b
-    where:
-        b = odds (win payout / stake)
-        p = probability of winning
-        _q = probability of losing (1 - p)
-        f* = fraction of bankroll to bet
+    Uses a simplified edge-based Kelly formula:
+        long:  f* = edge / (1 - edge)
+        short: f* = edge / (1 + edge)
 
     We use fractional Kelly (quarter-Kelly) for safety.
 
     Args:
         edge: Edge as probability (fair_value - market_price)
             Positive = go long, negative = go short
-        odds: Market price (0-1) interpreted as b+1 odds
         kelly_fraction: Fractional Kelly multiplier (default 0.25 = quarter-Kelly)
             Must be between 0 and 1
 
     Returns:
         Kelly fraction (0-0.5 hard cap for safety)
     """
-    # Ensure odds are valid
-    odds = float(min(max(odds, 0.01), 0.99))
     edge = float(edge)
 
     # If edge > 0, we want to go long (betting YES)

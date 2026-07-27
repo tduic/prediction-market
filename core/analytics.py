@@ -315,12 +315,10 @@ class StrategyScorecard:
 
         for pnl in pnl_values:
             cumulative += pnl
-            if cumulative > peak:
-                peak = cumulative
+            peak = max(peak, cumulative)
 
             if peak > 0:
                 drawdown = (peak - cumulative) / peak
-                if drawdown > max_dd:
-                    max_dd = drawdown
+                max_dd = max(max_dd, drawdown)
 
         return max_dd * 100  # Return as percentage

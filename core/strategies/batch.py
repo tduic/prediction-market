@@ -68,7 +68,7 @@ async def detect_violations_and_trade(
             edge = spread
             _rc = get_config().risk_controls
             bankroll = await get_portfolio_value(db, _rc.starting_capital)
-            _kelly_f = compute_kelly_fraction(edge, 1.0, _rc.kelly_fraction)
+            _kelly_f = compute_kelly_fraction(edge, _rc.kelly_fraction)
             size = round(
                 compute_position_size(
                     _kelly_f,

@@ -25,7 +25,7 @@ _MONTH_PAT = (
 )
 _STRIP_SUFFIX = re.compile(
     rf"\s+(?:{_MONTH_PAT}|20\d{{2}}|q[1-4]|h[1-2]|"
-    r"\$?[\d,]+\.?\d*[km%]?(?:\s*[-–to]+\s*\$?[\d,]+\.?\d*[km%]?)?)\ *$",
+    r"\$?[\d,]+\.?\d*[km%]?(?:\s*[-–to]+\s*\$?[\d,]+\.?\d*[km%]?)?)\  *$",
     re.IGNORECASE,
 )
 
@@ -125,7 +125,8 @@ async def mark_and_close_positions(
     now = now_dt.isoformat()
 
     cursor = await db.execute(
-        "SELECT id, market_id, side, entry_price, entry_size, fees_paid "
+        "SELECT id, market_id, side, entry_price, entry_size, fees_paid, "
+        "signal_id, strategy, opened_at "
         "FROM positions WHERE status='open' AND opened_at <= ?",
         (cutoff,),
     )
@@ -133,7 +134,17 @@ async def mark_and_close_positions(
 
     closed = 0
     for row in rows:
-        pos_id, market_id, side, entry_price, entry_size, fees_paid = row
+        (
+            pos_id,
+            market_id,
+            side,
+            entry_price,
+            entry_size,
+            fees_paid,
+            signal_id,
+            strategy,
+            opened_at,
+        ) = row
 
         # Use live cache price if available, fall back to DB
         if price_cache and market_id in price_cache:
@@ -160,13 +171,15 @@ async def mark_and_close_positions(
                 (entry_price - current_price) * entry_size - (fees_paid or 0), 4
             )
 
-        await db.execute(
+        update_cursor = await db.execute(
             """UPDATE positions
                SET status='closed', exit_price=?, exit_size=?,
                    realized_pnl=?, current_price=?, closed_at=?, updated_at=?
-             WHERE id=?""",
+             WHERE id=? AND status='open'""",
             (current_price, entry_size, realized_pnl, current_price, now, now, pos_id),
         )
+        if update_cursor.rowcount == 0:
+            continue
         closed += 1
         logger.debug(
             "mark_and_close: closed pos=%s market=%s pnl=%.4f",
@@ -174,6 +187,46 @@ async def mark_and_close_positions(
             market_id,
             realized_pnl,
         )
+
+        # Write trade_outcomes so P2-P5 strategy performance is visible in the
+        # dashboard /api/strategies endpoint (which aggregates trade_outcomes).
+        # P1 arb writes immediately at fill time; single-platform strategies
+        # close later via mark-to-market, so we record here at close time.
+        if signal_id and strategy:
+            holding_period_ms = None
+            if opened_at:
+                try:
+                    opened_dt = datetime.fromisoformat(opened_at)
+                    if opened_dt.tzinfo is None:
+                        opened_dt = opened_dt.replace(tzinfo=timezone.utc)
+                    holding_period_ms = int((now_dt - opened_dt).total_seconds() * 1000)
+                except Exception:
+                    pass
+            try:
+                await db.execute(
+                    """INSERT OR IGNORE INTO trade_outcomes
+                       (id, signal_id, strategy, market_id_a,
+                        actual_pnl, fees_total, holding_period_ms,
+                        resolved_at, created_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        f"trade_{uuid.uuid4().hex[:12]}",
+                        signal_id,
+                        strategy,
+                        market_id,
+                        realized_pnl,
+                        fees_paid or 0,
+                        holding_period_ms,
+                        now,
+                        now,
+                    ),
+                )
+            except Exception as _e:
+                logger.debug(
+                    "mark_and_close: trade_outcomes insert failed pos=%s: %s",
+                    pos_id,
+                    _e,
+                )
 
     if closed:
         await db.commit()
@@ -463,7 +516,7 @@ async def detect_single_platform_opportunities(
         price = m["yes_price"]
 
         # Phase 2.3: Kelly-based sizing (replaces hardcoded min(10, 100*edge)).
-        _kelly_f = compute_kelly_fraction(edge, 1.0, _risk_cfg.kelly_fraction)
+        _kelly_f = compute_kelly_fraction(edge, _risk_cfg.kelly_fraction)
         _max_size = _bankroll * _risk_cfg.max_position_pct
         size = round(compute_position_size(_kelly_f, _bankroll, max_size=_max_size), 1)
         if size <= 0:

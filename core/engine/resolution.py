@@ -11,6 +11,7 @@ Call `close_resolved_positions(db)` periodically. It commits its own writes.
 """
 
 import logging
+import uuid
 from datetime import datetime, timezone
 
 import aiosqlite
@@ -28,7 +29,8 @@ async def close_resolved_positions(db: aiosqlite.Connection) -> dict[str, float]
 
     cursor = await db.execute("""
         SELECT p.id, p.market_id, p.side, p.entry_price, p.entry_size,
-               p.fees_paid, m.status, m.outcome, m.outcome_value
+               p.fees_paid, m.status, m.outcome, m.outcome_value,
+               p.signal_id, p.strategy, p.opened_at
         FROM positions p
         JOIN markets m ON m.id = p.market_id
         WHERE p.status = 'open'
@@ -55,6 +57,9 @@ async def close_resolved_positions(db: aiosqlite.Connection) -> dict[str, float]
             _status,
             outcome,
             outcome_value,
+            signal_id,
+            strategy,
+            opened_at,
         ) = row
 
         # Settlement price: prefer outcome_value (explicit payout),
@@ -81,7 +86,7 @@ async def close_resolved_positions(db: aiosqlite.Connection) -> dict[str, float]
             )
 
         try:
-            await db.execute(
+            update_cursor = await db.execute(
                 """
                 UPDATE positions
                    SET status = 'closed',
@@ -92,7 +97,7 @@ async def close_resolved_positions(db: aiosqlite.Connection) -> dict[str, float]
                        resolution_outcome = ?,
                        closed_at = ?,
                        updated_at = ?
-                 WHERE id = ?
+                 WHERE id = ? AND status = 'open'
                 """,
                 (
                     exit_price,
@@ -105,6 +110,8 @@ async def close_resolved_positions(db: aiosqlite.Connection) -> dict[str, float]
                     pos_id,
                 ),
             )
+            if update_cursor.rowcount == 0:
+                continue
             closed += 1
             total_pnl += realized_pnl
             logger.info(
@@ -115,6 +122,44 @@ async def close_resolved_positions(db: aiosqlite.Connection) -> dict[str, float]
                 exit_price,
                 realized_pnl,
             )
+            if signal_id and strategy:
+                holding_period_ms = None
+                if opened_at:
+                    try:
+                        now_dt = datetime.fromisoformat(now)
+                        opened_dt = datetime.fromisoformat(opened_at)
+                        if opened_dt.tzinfo is None:
+                            opened_dt = opened_dt.replace(tzinfo=timezone.utc)
+                        holding_period_ms = int(
+                            (now_dt - opened_dt).total_seconds() * 1000
+                        )
+                    except Exception:
+                        pass
+                try:
+                    await db.execute(
+                        """INSERT OR IGNORE INTO trade_outcomes
+                           (id, signal_id, strategy, market_id_a,
+                            actual_pnl, fees_total, holding_period_ms,
+                            resolved_at, created_at)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (
+                            f"trade_{uuid.uuid4().hex[:12]}",
+                            signal_id,
+                            strategy,
+                            market_id,
+                            realized_pnl,
+                            fees_paid or 0,
+                            holding_period_ms,
+                            now,
+                            now,
+                        ),
+                    )
+                except Exception as _e:
+                    logger.debug(
+                        "resolution: trade_outcomes insert failed pos=%s: %s",
+                        pos_id,
+                        _e,
+                    )
         except Exception as e:
             logger.error(
                 "resolution: failed to close pos=%s market=%s err=%s",

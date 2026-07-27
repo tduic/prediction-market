@@ -497,7 +497,7 @@ class ArbitrageEngine:
 
         # Phase 2.3: Kelly-based position sizing (replaces hardcoded min(10, 100*edge)).
         # Use live portfolio value so Kelly scales with account growth/drawdown.
-        kelly_f = compute_kelly_fraction(edge, 1.0, self._risk_config.kelly_fraction)
+        kelly_f = compute_kelly_fraction(edge, self._risk_config.kelly_fraction)
         bankroll = await get_portfolio_value(
             self.db, self._risk_config.starting_capital
         )
