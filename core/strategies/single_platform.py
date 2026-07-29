@@ -25,7 +25,7 @@ _MONTH_PAT = (
 )
 _STRIP_SUFFIX = re.compile(
     rf"\s+(?:{_MONTH_PAT}|20\d{{2}}|q[1-4]|h[1-2]|"
-    r"\$?[\d,]+\.?\d*[km%]?(?:\s*[-–to]+\s*\$?[\d,]+\.?\d*[km%]?)?)\s*$",
+    r"\$?[\d,]+\.?\d*[km%]?(?:\s*[-–to]+\s*\$?[\d,]+\.?\d*[km%]?)?)\ *$",
     re.IGNORECASE,
 )
 
@@ -664,7 +664,7 @@ async def detect_single_platform_opportunities(
             leg, signal_id=signal_id, strategy=strategy
         )
 
-        if result.filled_price:
+        if result.filled_price is not None:
             # Phase 4: open position, NO synthetic exit price.
             # mark_and_close_positions() will close it after holding_period_s
             # at the then-current market price, giving a realistic realized PnL.

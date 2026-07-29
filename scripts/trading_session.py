@@ -465,7 +465,7 @@ async def main():
                 stop_event,
                 cfg,
                 on_price,
-                interval=1800,
+                interval=cfg.ingestor.pair_refresh_interval_s,
             )
         )
 
