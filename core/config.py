@@ -73,6 +73,9 @@ class IngestorConfig:
     max_markets_per_poll: int = field(
         default_factory=lambda: int(os.getenv("MAX_MARKETS_PER_POLL", "500"))
     )
+    pair_refresh_interval_s: int = field(
+        default_factory=lambda: int(os.getenv("PAIR_REFRESH_INTERVAL_S", "1800"))
+    )
 
 
 @dataclass

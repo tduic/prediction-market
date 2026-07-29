@@ -662,7 +662,7 @@ class ArbitrageEngine:
                 success=buy_filled and sell_filled
             )
 
-        if buy_result.filled_price and sell_result.filled_price:
+        if buy_result.filled_price is not None and sell_result.filled_price is not None:
             actual_spread = sell_result.filled_price - buy_result.filled_price
             total_fees = (buy_result.fee_paid or 0) + (sell_result.fee_paid or 0)
             actual_pnl = round(actual_spread * size - total_fees, 4)
