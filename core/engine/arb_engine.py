@@ -294,6 +294,13 @@ class ArbitrageEngine:
                 return False
             if not self._is_eligible(pair_id):
                 return False
+            # Re-check freshness with current wall-clock time (not pre-lock `now`),
+            # since lock wait + retry delays can push elapsed time past max_price_age_s.
+            if not (
+                self._is_fresh(match["poly_id"]) and self._is_fresh(match["kalshi_id"])
+            ):
+                self._skipped_stale += 1
+                return False
             try:
                 trade = await self._execute_arb_trade(
                     match, p_price, k_price, spread, pair_id

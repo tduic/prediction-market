@@ -47,7 +47,7 @@ class TradingSignal(BaseModel):
     schema_version: str
     generated_at_utc: str  # ISO format timestamp
     expires_at_utc: str  # ISO format timestamp
-    legs: list[OrderLeg]
+    legs: list[OrderLeg] = Field(..., min_length=1)
     execution_mode: str = "simultaneous"  # "simultaneous" or "sequential"
     abort_on_partial: bool = False
     expiry_s: int = Field(default=300, gt=0)  # Seconds to keep position open

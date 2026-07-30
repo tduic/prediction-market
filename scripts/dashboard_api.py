@@ -566,7 +566,8 @@ def _build_app(static_dir: str | None = None) -> FastAPI:
 
             cursor = await db.execute(
                 "SELECT actual_pnl FROM trade_outcomes WHERE actual_pnl IS NOT NULL"
-                " ORDER BY created_at DESC LIMIT 500"
+                " AND created_at >= ? ORDER BY created_at DESC LIMIT 500",
+                (_cutoff_90d,),
             )
             pnl_rows = await cursor.fetchall()
             pnl_values = [r["actual_pnl"] for r in pnl_rows]
@@ -585,6 +586,7 @@ def _build_app(static_dir: str | None = None) -> FastAPI:
                 "daily_var": round(daily_var, 2),
                 "daily_var_sample_size": len(daily_pnls),
                 "sharpe_overall": round(overall_sharpe, 2),
+                "sharpe_sample_size": len(pnl_values),
             }
         finally:
             await close_db(db)
