@@ -794,21 +794,34 @@ class ArbitrageEngine:
         """Commit any pending DB writes.
 
         No-op under the current per-trade-commit model; retained so callers
-        (trading_session shutdown, tests) can keep their \"drain before exit\"
+        (trading_session shutdown, tests) can keep their "drain before exit"
         semantics without caring how persistence is scheduled internally.
         """
         await self.db.commit()
 
     def stats(self) -> dict:
         total_pnl = sum(t.get("actual_pnl", 0) for t in self.trades)
+        now = time.time()
         eligible = sum(
             1
             for m in self._pairs.values()
             if (p := self.prices.get(m["poly_id"])) is not None
             and (k := self.prices.get(m["kalshi_id"])) is not None
             and abs(p - k) >= self.min_spread
+            and self._is_fresh(m["poly_id"], now)
+            and self._is_fresh(m["kalshi_id"], now)
         )
-        now = time.time()
+        eligible_stale = sum(
+            1
+            for m in self._pairs.values()
+            if (p := self.prices.get(m["poly_id"])) is not None
+            and (k := self.prices.get(m["kalshi_id"])) is not None
+            and abs(p - k) >= self.min_spread
+            and not (
+                self._is_fresh(m["poly_id"], now)
+                and self._is_fresh(m["kalshi_id"], now)
+            )
+        )
         tick_age: dict[str, int] = {}
         for market_id, ts in self._last_tick_at.items():
             platform = self._market_platform.get(market_id, "unknown")
@@ -820,6 +833,7 @@ class ArbitrageEngine:
         return {
             "pairs_monitored": len(self._pairs),
             "pairs_eligible_now": eligible,
+            "pairs_eligible_stale": eligible_stale,
             "min_spread": self.min_spread,
             "recently_fired": muted_count,
             "last_arb_fired_at": self.last_arb_fired_at,
