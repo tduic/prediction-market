@@ -93,7 +93,7 @@ class EventBus:
             for handler in self.subscribers[event_type]:
                 handler(event)
 
-    def get_events(self, event_type: str = None) -> list[dict[str, Any]]:
+    def get_events(self, event_type: str | None = None) -> list[dict[str, Any]]:
         """Retrieve events, optionally filtered by type."""
         if event_type is None:
             return self.events

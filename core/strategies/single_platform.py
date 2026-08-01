@@ -25,7 +25,7 @@ _MONTH_PAT = (
 )
 _STRIP_SUFFIX = re.compile(
     rf"\s+(?:{_MONTH_PAT}|20\d{{2}}|q[1-4]|h[1-2]|"
-    r"\$?[\d,]+\.?\d*[km%]?(?:\s*[-–to]+\s*\$?[\d,]+\.?\d*[km%]?)?)\ *$",
+    r"\$?[\d,]+\.?\d*[km%]?(?:\s*[-–to]+\s*\$?[\d,]+\.?\d*[km%]?)?)\s*$",
     re.IGNORECASE,
 )
 
@@ -376,7 +376,7 @@ async def detect_single_platform_opportunities(
         if len(root) >= _p2_min_root_len:
             _p2_groups[(m["platform"], root)].append(m)
 
-    for (_plat, _root), group in _p2_groups.items():
+    for group in _p2_groups.values():
         if len(group) < 2 or len(group) > 10:
             continue
         total_yes = sum(m["yes_price"] for m in group)
