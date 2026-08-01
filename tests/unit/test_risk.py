@@ -26,7 +26,7 @@ class RiskSignal:
         size_usd: float,
         kelly_fraction: float,
         expected_edge: float,
-        created_at: datetime = None,
+        created_at: datetime | None = None,
     ):
         self.signal_id = signal_id
         self.violation_id = violation_id

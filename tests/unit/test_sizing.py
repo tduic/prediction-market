@@ -43,8 +43,8 @@ class PositionSizer:
     def fractional_kelly_size(
         self,
         edge: float,
-        capital: float = None,
-        kelly_fraction: float = None,
+        capital: float | None = None,
+        kelly_fraction: float | None = None,
     ) -> float:
         """
         Compute position size using fractional Kelly.
