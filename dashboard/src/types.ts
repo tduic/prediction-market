@@ -5,10 +5,12 @@ export interface OverviewData {
   open_positions: number
   unrealized_pnl: number
   realized_pnl_total: number
-  fees_total: number
   net_return_pct: number
-  total_fees?: number
-  total_trades?: number
+  total_fees: number
+  snapshotted_at: string | null
+  signals_24h: number
+  violations_24h: number
+  daily_loss_pct_used: number
 }
 
 export interface StrategyMetrics {
@@ -61,16 +63,15 @@ export interface Trade {
 export interface FeeBreakdownByPlatform {
   platform: string
   total_fees: number
-  order_count: number
 }
 
 export interface FeeBreakdownByStrategy {
   strategy: string
   total_fees: number
-  order_count: number
 }
 
 export interface FeeBreakdown {
+  total_fees: number
   by_platform: FeeBreakdownByPlatform[]
   by_strategy: FeeBreakdownByStrategy[]
 }
@@ -80,7 +81,9 @@ export interface RiskMetrics {
   max_drawdown_pct: number
   concentration_pct: number
   daily_var: number
+  daily_var_sample_size: number
   sharpe_overall: number
+  sharpe_sample_size: number
 }
 
 export interface CircuitBreakerStatus {
@@ -90,4 +93,6 @@ export interface CircuitBreakerStatus {
   daily_loss: number
   daily_loss_limit: number
   daily_loss_limit_pct: number
+  daily_loss_available: boolean
+  daily_loss_pct_used: number
 }

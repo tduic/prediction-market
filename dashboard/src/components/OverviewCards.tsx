@@ -79,15 +79,15 @@ export function OverviewCards({ data }: OverviewCardsProps) {
       <div className="bg-gray-900 rounded-xl p-6">
         <p className="text-gray-400 text-sm font-medium mb-2">Total Fees</p>
         <p className="text-2xl font-semibold text-gray-100">
-          {currencyFormatter.format(data.total_fees || data.fees_total || 0)}
+          {currencyFormatter.format(data.total_fees)}
         </p>
       </div>
 
-      {/* Total Trades */}
+      {/* Signals (24h) */}
       <div className="bg-gray-900 rounded-xl p-6">
-        <p className="text-gray-400 text-sm font-medium mb-2">Total Trades</p>
+        <p className="text-gray-400 text-sm font-medium mb-2">Signals (24h)</p>
         <p className="text-2xl font-semibold text-gray-100">
-          {data.total_trades || 0}
+          {data.signals_24h}
         </p>
       </div>
     </div>

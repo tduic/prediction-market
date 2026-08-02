@@ -17,7 +17,7 @@ cycles). It commits its own writes.
 
 import logging
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import aiosqlite
 
@@ -96,6 +96,12 @@ async def _check_orphaned_positions(db: aiosqlite.Connection) -> int:
             order_status_label = (
                 "<no_matching_order>" if order_status is None else order_status
             )
+            detail = (
+                f"position_id={pos_id} signal_id={signal_id} "
+                f"market_id={market_id} order_status={order_status_label}"
+            )
+            if await _is_recently_logged(db, "orphaned_position", detail):
+                continue
             await _log_discrepancy(
                 db,
                 platform="internal",
@@ -104,10 +110,7 @@ async def _check_orphaned_positions(db: aiosqlite.Connection) -> int:
                 exchange_value=0.0,
                 discrepancy=1.0,
                 status="discrepancy",
-                detail=(
-                    f"position_id={pos_id} signal_id={signal_id} "
-                    f"market_id={market_id} order_status={order_status_label}"
-                ),
+                detail=detail,
             )
             count += 1
     return count
@@ -144,6 +147,12 @@ async def _check_stuck_pending_orders(db: aiosqlite.Connection) -> int:
             age_s = int(time.time()) - int(submitted_at)
         except (TypeError, ValueError):
             age_s = -1
+        detail = (
+            f"order_id={order_id} signal_id={signal_id} "
+            f"market_id={market_id} age_s={age_s}"
+        )
+        if await _is_recently_logged(db, "stuck_pending_order", detail):
+            continue
         await _log_discrepancy(
             db,
             platform=platform or "unknown",
@@ -152,10 +161,7 @@ async def _check_stuck_pending_orders(db: aiosqlite.Connection) -> int:
             exchange_value=None,
             discrepancy=float(age_s),
             status="discrepancy",
-            detail=(
-                f"order_id={order_id} signal_id={signal_id} "
-                f"market_id={market_id} age_s={age_s}"
-            ),
+            detail=detail,
         )
         count += 1
     return count
@@ -192,6 +198,12 @@ async def _check_unbalanced_arb_pairs(db: aiosqlite.Connection) -> int:
         platform_detail = (
             f" filled_platform={filled_platforms}" if filled_platforms else ""
         )
+        detail = (
+            f"signal_id={signal_id} filled_legs={filled_count} "
+            f"total_legs={leg_count}{platform_detail} — one side open without hedge"
+        )
+        if await _is_recently_logged(db, "unbalanced_arb_pair", detail):
+            continue
         await _log_discrepancy(
             db,
             platform="cross_platform",
@@ -200,13 +212,32 @@ async def _check_unbalanced_arb_pairs(db: aiosqlite.Connection) -> int:
             exchange_value=float(leg_count),
             discrepancy=float(leg_count - filled_count),
             status="discrepancy",
-            detail=(
-                f"signal_id={signal_id} filled_legs={filled_count} "
-                f"total_legs={leg_count}{platform_detail} — one side open without hedge"
-            ),
+            detail=detail,
         )
         count += 1
     return count
+
+
+async def _is_recently_logged(
+    db: aiosqlite.Connection,
+    check_type: str,
+    detail: str,
+    window_s: int = 3600,
+) -> bool:
+    """Return True if a reconciliation_log row with the same check_type and
+    detail string was already inserted within the last *window_s* seconds.
+
+    This prevents the same orphaned/stuck/unbalanced discrepancy from being
+    logged on every reconciliation cycle when reconcile_every is small.
+    """
+    cutoff = (datetime.now(timezone.utc) - timedelta(seconds=window_s)).isoformat()
+    cursor = await db.execute(
+        "SELECT COUNT(*) FROM reconciliation_log "
+        "WHERE check_type = ? AND detail = ? AND checked_at >= ?",
+        (check_type, detail, cutoff),
+    )
+    row = await cursor.fetchone()
+    return bool(row and row[0] > 0)
 
 
 async def _log_discrepancy(
