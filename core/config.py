@@ -1,1 +1,347 @@
-"""\nConfiguration management for the prediction market trading system.\nLoads all settings from environment variables with sensible defaults.\n\nThis is the single source of truth for all configuration.\n"""\n\nimport logging\nimport os\nfrom dataclasses import dataclass, field\nfrom pathlib import Path\n\nfrom core.secrets import get_secret\n\nlogger = logging.getLogger(__name__)\n\n\n@dataclass\nclass PlatformCredentials:\n    \"\"\"Platform-specific API credentials.\"\"\"\n\n    polymarket_private_key: str = field(\n        default_factory=lambda: get_secret(\"POLYMARKET_PRIVATE_KEY\", \"\") or \"\"\n    )\n    polymarket_wallet_address: str = field(\n        default_factory=lambda: get_secret(\"POLYMARKET_WALLET_ADDRESS\", \"\") or \"\"\n    )\n    kalshi_api_key: str = field(\n        default_factory=lambda: get_secret(\"KALSHI_API_KEY\", \"\") or \"\"\n    )\n    kalshi_rsa_key_path: str = field(\n        default_factory=lambda: get_secret(\"KALSHI_RSA_KEY_PATH\", \"\") or \"\"\n    )\n    kalshi_environment: str = field(\n        default_factory=lambda: os.getenv(\"KALSHI_ENVIRONMENT\", \"prod\")\n    )\n    kalshi_api_base: str = field(\n        default_factory=lambda: os.getenv(\n            \"KALSHI_API_BASE\", \"https://api.elections.kalshi.com/trade-api/v2\"\n        )\n    )\n\n\n@dataclass\nclass DatabaseConfig:\n    \"\"\"Database connection settings.\"\"\"\n\n    db_path: str = field(\n        default_factory=lambda: os.getenv(\"DB_PATH\", \"prediction_market.db\")\n    )\n    migrations_dir: str = field(\n        default_factory=lambda: os.getenv(\"MIGRATIONS_DIR\", \"core/storage/migrations\")\n    )\n\n    def __post_init__(self):\n        \"\"\"Ensure database directory exists.\"\"\"\n        Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)\n\n\n@dataclass\nclass IngestorConfig:\n    \"\"\"Market data ingestor settings.\"\"\"\n\n    poll_interval_polymarket_s: int = field(\n        default_factory=lambda: int(os.getenv(\"POLL_INTERVAL_POLYMARKET_S\", \"30\"))\n    )\n    poll_interval_kalshi_s: int = field(\n        default_factory=lambda: int(os.getenv(\"POLL_INTERVAL_KALSHI_S\", \"30\"))\n    )\n    poll_interval_external_s: int = field(\n        default_factory=lambda: int(os.getenv(\"POLL_INTERVAL_EXTERNAL_S\", \"300\"))\n    )\n    max_markets_per_poll: int = field(\n        default_factory=lambda: int(os.getenv(\"MAX_MARKETS_PER_POLL\", \"500\"))\n    )\n    pair_refresh_interval_s: int = field(\n        default_factory=lambda: int(os.getenv(\"PAIR_REFRESH_INTERVAL_S\", \"1800\"))\n    )\n\n\n@dataclass\nclass RiskControlConfig:\n    \"\"\"Risk management settings.\n\n    All limits are expressed as percentages of portfolio value so they\n    scale automatically as the account grows or shrinks.\n\n    Portfolio value is computed as:\n        starting_capital + realized_pnl - total_fees\n    \"\"\"\n\n    starting_capital: float = field(\n        default_factory=lambda: float(os.getenv(\"STARTING_CAPITAL\", \"10000\"))\n    )\n    max_position_pct: float = field(\n        default_factory=lambda: float(os.getenv(\"MAX_POSITION_PCT\", \"0.05\"))\n    )\n    max_daily_loss_pct: float = field(\n        default_factory=lambda: float(os.getenv(\"MAX_DAILY_LOSS_PCT\", \"0.02\"))\n    )\n    max_portfolio_exposure_pct: float = field(\n        default_factory=lambda: float(os.getenv(\"MAX_PORTFOLIO_EXPOSURE_PCT\", \"0.20\"))\n    )\n    kelly_fraction: float = field(\n        default_factory=lambda: float(os.getenv(\"KELLY_FRACTION\", \"0.25\"))\n    )\n    duplicate_signal_window_s: int = field(\n        default_factory=lambda: int(os.getenv(\"DUPLICATE_SIGNAL_WINDOW_S\", \"300\"))\n    )\n    min_edge: float = field(\n        default_factory=lambda: float(os.getenv(\"MIN_EDGE_TO_TRADE\", \"0.02\"))\n    )\n    consecutive_failure_limit: int = field(\n        default_factory=lambda: int(os.getenv(\"CONSECUTIVE_FAILURE_LIMIT\", \"5\"))\n    )\n    arb_cooldown_s: float = field(\n        default_factory=lambda: float(os.getenv(\"ARB_COOLDOWN_S\", \"60\"))\n    )\n    arb_rearm_hysteresis: float = field(\n        default_factory=lambda: float(os.getenv(\"ARB_REARM_HYSTERESIS\", \"0.005\"))\n    )\n    # Maximum age (seconds) of the cached price on either side of a pair\n    # before the arb engine refuses to fire. A price that hasn't been\n    # confirmed by a websocket tick within this window is assumed to be\n    # stale — firing on it would set a limit that the real market has\n    # already drifted past, producing the \"Market price X below limit Y\"\n    # rejections we saw on Kalshi. Seed prices (from the matcher) get a\n    # fresh tick-time stamp at engine startup, so the guard only kicks\n    # in once the seed window has elapsed without a real WS confirm.\n    max_price_age_s: float = field(\n        default_factory=lambda: float(os.getenv(\"MAX_PRICE_AGE_S\", \"10\"))\n    )\n    slippage_bps: float = field(\n        default_factory=lambda: float(os.getenv(\"SLIPPAGE_BPS\", \"10\"))\n    )\n    strategy_holding_period_s: int = field(\n        default_factory=lambda: int(os.getenv(\"STRATEGY_HOLDING_PERIOD_S\", \"300\"))\n    )\n    strategy_replay_cooldown_s: int = field(\n        default_factory=lambda: int(os.getenv(\"STRATEGY_REPLAY_COOLDOWN_S\", \"300\"))\n    )\n    strategy_replay_min_move: float = field(\n        default_factory=lambda: float(os.getenv(\"STRATEGY_REPLAY_MIN_MOVE\", \"0.01\"))\n    )\n    strategy_p2_enabled: bool = field(\n        default_factory=lambda: (\n            os.getenv(\"STRATEGY_P2_ENABLED\", \"true\").lower() == \"true\"\n        )\n    )\n    strategy_p3_enabled: bool = field(\n        default_factory=lambda: (\n            os.getenv(\"STRATEGY_P3_ENABLED\", \"true\").lower() == \"true\"\n        )\n    )\n    strategy_p4_enabled: bool = field(\n        default_factory=lambda: (\n            os.getenv(\"STRATEGY_P4_ENABLED\", \"true\").lower() == \"true\"\n        )\n    )\n    strategy_p5_enabled: bool = field(\n        default_factory=lambda: (\n            os.getenv(\"STRATEGY_P5_ENABLED\", \"true\").lower() == \"true\"\n        )\n    )\n    strategy_killswitch_window_s: int = field(\n        default_factory=lambda: int(os.getenv(\"STRATEGY_KILLSWITCH_WINDOW_S\", \"604800\"))\n    )\n    strategy_killswitch_min_trades: int = field(\n        default_factory=lambda: int(os.getenv(\"STRATEGY_KILLSWITCH_MIN_TRADES\", \"5\"))\n    )\n    pnl_sanity_cap_ratio: float = field(\n        default_factory=lambda: float(os.getenv(\"PNL_SANITY_CAP_RATIO\", \"0.10\"))\n    )\n    reconcile_every: int = field(\n        default_factory=lambda: int(os.getenv(\"RECONCILE_EVERY\", \"5\"))\n    )\n    reconcile_stuck_pending_threshold_s: int = field(\n        default_factory=lambda: int(os.getenv(\"STUCK_PENDING_THRESHOLD_S\", \"300\"))\n    )\n    # Minimum character length of a stripped title root before a market is\n    # eligible for P2 series grouping. Lower values increase recall but risk\n    # false groupings on short generic titles. Minimum recommended: 15.\n    strategy_p2_min_root_len: int = field(\n        default_factory=lambda: int(os.getenv(\"STRATEGY_P2_MIN_ROOT_LEN\", \"25\"))\n    )\n\n\n@dataclass\nclass ExecutionConfig:\n    \"\"\"Order execution and settlement settings.\"\"\"\n\n    execution_mode: str = field(\n        default_factory=lambda: os.getenv(\"EXECUTION_MODE\", \"paper\")\n    )\n    max_order_retries: int = field(\n        default_factory=lambda: int(os.getenv(\"MAX_ORDER_RETRIES\", \"3\"))\n    )\n    retry_backoff_base_s: float = field(\n        default_factory=lambda: float(os.getenv(\"RETRY_BACKOFF_BASE_S\", \"1\"))\n    )\n    partial_fill_cancel_window_s: int = field(\n        default_factory=lambda: int(os.getenv(\"PARTIAL_FILL_CANCEL_WINDOW_S\", \"5\"))\n    )\n\n\n@dataclass\nclass ObservabilityConfig:\n    \"\"\"Logging and monitoring settings.\"\"\"\n\n    log_level: str = field(default_factory=lambda: os.getenv(\"LOG_LEVEL\", \"INFO\"))\n    log_format: str = field(default_factory=lambda: os.getenv(\"LOG_FORMAT\", \"text\"))\n    pnl_snapshot_interval_s: int = field(\n        default_factory=lambda: int(os.getenv(\"PNL_SNAPSHOT_INTERVAL_S\", \"900\"))\n    )\n\n\n@dataclass\nclass Config:\n    \"\"\"Main configuration class combining all sub-configurations.\"\"\"\n\n    platform_credentials: PlatformCredentials = field(\n        default_factory=PlatformCredentials\n    )\n    database: DatabaseConfig = field(default_factory=DatabaseConfig)\n    ingestor: IngestorConfig = field(default_factory=IngestorConfig)\n    risk_controls: RiskControlConfig = field(default_factory=RiskControlConfig)\n    execution: ExecutionConfig = field(default_factory=ExecutionConfig)\n    observability: ObservabilityConfig = field(default_factory=ObservabilityConfig)\n\n    def __post_init__(self):\n        \"\"\"Validate configuration after initialization.\"\"\"\n        self._validate()\n\n    def _validate(self):\n        \"\"\"Validate all configuration constraints.\"\"\"\n        # Execution mode validation\n        if self.execution.execution_mode not in (\"live\", \"paper\", \"shadow\"):\n            raise ValueError(\n                f\"EXECUTION_MODE must be 'live', 'paper', or 'shadow', \"\n                f\"got {self.execution.execution_mode}\"\n            )\n\n        # Credentials validation — only required for live mode\n        if self.execution.execution_mode == \"live\" and not all(\n            [\n                self.platform_credentials.polymarket_private_key,\n                self.platform_credentials.polymarket_wallet_address,\n                self.platform_credentials.kalshi_api_key,\n                self.platform_credentials.kalshi_rsa_key_path,\n            ]\n        ):\n            raise ValueError(\n                \"All platform credentials required when EXECUTION_MODE=live\"\n            )\n\n        # Kelly fraction validation\n        if not (0 < self.risk_controls.kelly_fraction <= 0.5):\n            raise ValueError(\n                f\"KELLY_FRACTION must be > 0 and <= 0.5, \"\n                f\"got {self.risk_controls.kelly_fraction}\"\n            )\n\n        # Position size validation\n        if not (0 < self.risk_controls.max_position_pct <= 1):\n            raise ValueError(\n                f\"MAX_POSITION_PCT must be > 0 and <= 1, \"\n                f\"got {self.risk_controls.max_position_pct}\"\n            )\n\n        # Daily loss validation\n        if not (0 < self.risk_controls.max_daily_loss_pct <= 1):\n            raise ValueError(\n                f\"MAX_DAILY_LOSS_PCT must be > 0 and <= 1, \"\n                f\"got {self.risk_controls.max_daily_loss_pct}\"\n            )\n\n        # Starting capital validation\n        if self.risk_controls.starting_capital <= 0:\n            raise ValueError(\n                f\"STARTING_CAPITAL must be > 0, \"\n                f\"got {self.risk_controls.starting_capital}\"\n            )\n\n        # PnL sanity cap validation\n        if not (0 < self.risk_controls.pnl_sanity_cap_ratio <= 1):\n            raise ValueError(\n                f\"PNL_SANITY_CAP_RATIO must be > 0 and <= 1, \"\n                f\"got {self.risk_controls.pnl_sanity_cap_ratio}\"\n            )\n        if self.risk_controls.max_price_age_s <= 0:\n            raise ValueError(\n                f\"MAX_PRICE_AGE_S must be > 0, got {self.risk_controls.max_price_age_s}\"\n            )\n        if self.risk_controls.strategy_holding_period_s <= 0:\n            raise ValueError(\n                f\"STRATEGY_HOLDING_PERIOD_S must be > 0, \"\n                f\"got {self.risk_controls.strategy_holding_period_s}\"\n            )\n        if self.risk_controls.arb_cooldown_s < 0:\n            raise ValueError(\n                f\"ARB_COOLDOWN_S must be >= 0, got {self.risk_controls.arb_cooldown_s}\"\n            )\n        if self.risk_controls.reconcile_every < 1:\n            raise ValueError(\n                f\"RECONCILE_EVERY must be >= 1, got {self.risk_controls.reconcile_every}\"\n            )\n        if self.risk_controls.duplicate_signal_window_s <= 0:\n            raise ValueError(\n                f\"DUPLICATE_SIGNAL_WINDOW_S must be > 0, \"\n                f\"got {self.risk_controls.duplicate_signal_window_s}\"\n            )\n\n        if (\n            self.risk_controls.max_position_pct\n            > self.risk_controls.max_portfolio_exposure_pct\n        ):\n            raise ValueError(\n                f\"MAX_POSITION_PCT ({self.risk_controls.max_position_pct:.0%}) must be \"\n                f\"<= MAX_PORTFOLIO_EXPOSURE_PCT ({self.risk_controls.max_portfolio_exposure_pct:.0%}); \"\n                \"otherwise no trade can pass the portfolio exposure check\"\n            )\n\n\ndef load_config() -> Config:\n    \"\"\"Load configuration from environment variables.\"\"\"\n    config = Config()\n    logger.info(\n        \"Config loaded: execution_mode=%s, starting_capital=%.2f, db_path=%s, log_level=%s\",\n        config.execution.execution_mode,\n        config.risk_controls.starting_capital,\n        config.database.db_path,\n        config.observability.log_level,\n    )\n    return config\n\n\n# Global config instance\n_config: Config | None = None\n\n\ndef get_config() -> Config:\n    \"\"\"Get or create the global configuration instance.\"\"\"\n    global _config\n    if _config is None:\n        _config = load_config()\n    return _config\n
+"""
+Configuration management for the prediction market trading system.
+Loads all settings from environment variables with sensible defaults.
+
+This is the single source of truth for all configuration.
+"""
+
+import logging
+import os
+from dataclasses import dataclass, field
+from pathlib import Path
+
+from core.secrets import get_secret
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class PlatformCredentials:
+    """Platform-specific API credentials."""
+
+    polymarket_private_key: str = field(
+        default_factory=lambda: get_secret("POLYMARKET_PRIVATE_KEY", "") or ""
+    )
+    polymarket_wallet_address: str = field(
+        default_factory=lambda: get_secret("POLYMARKET_WALLET_ADDRESS", "") or ""
+    )
+    kalshi_api_key: str = field(
+        default_factory=lambda: get_secret("KALSHI_API_KEY", "") or ""
+    )
+    kalshi_rsa_key_path: str = field(
+        default_factory=lambda: get_secret("KALSHI_RSA_KEY_PATH", "") or ""
+    )
+    kalshi_environment: str = field(
+        default_factory=lambda: os.getenv("KALSHI_ENVIRONMENT", "prod")
+    )
+    kalshi_api_base: str = field(
+        default_factory=lambda: os.getenv(
+            "KALSHI_API_BASE", "https://api.elections.kalshi.com/trade-api/v2"
+        )
+    )
+
+
+@dataclass
+class DatabaseConfig:
+    """Database connection settings."""
+
+    db_path: str = field(
+        default_factory=lambda: os.getenv("DB_PATH", "prediction_market.db")
+    )
+    migrations_dir: str = field(
+        default_factory=lambda: os.getenv("MIGRATIONS_DIR", "core/storage/migrations")
+    )
+
+    def __post_init__(self):
+        """Ensure database directory exists."""
+        Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
+
+
+@dataclass
+class IngestorConfig:
+    """Market data ingestor settings."""
+
+    poll_interval_polymarket_s: int = field(
+        default_factory=lambda: int(os.getenv("POLL_INTERVAL_POLYMARKET_S", "30"))
+    )
+    poll_interval_kalshi_s: int = field(
+        default_factory=lambda: int(os.getenv("POLL_INTERVAL_KALSHI_S", "30"))
+    )
+    poll_interval_external_s: int = field(
+        default_factory=lambda: int(os.getenv("POLL_INTERVAL_EXTERNAL_S", "300"))
+    )
+    max_markets_per_poll: int = field(
+        default_factory=lambda: int(os.getenv("MAX_MARKETS_PER_POLL", "500"))
+    )
+    pair_refresh_interval_s: int = field(
+        default_factory=lambda: int(os.getenv("PAIR_REFRESH_INTERVAL_S", "1800"))
+    )
+
+
+@dataclass
+class RiskControlConfig:
+    """Risk management settings.
+
+    All limits are expressed as percentages of portfolio value so they
+    scale automatically as the account grows or shrinks.
+
+    Portfolio value is computed as:
+        starting_capital + realized_pnl - total_fees
+    """
+
+    starting_capital: float = field(
+        default_factory=lambda: float(os.getenv("STARTING_CAPITAL", "10000"))
+    )
+    max_position_pct: float = field(
+        default_factory=lambda: float(os.getenv("MAX_POSITION_PCT", "0.05"))
+    )
+    max_daily_loss_pct: float = field(
+        default_factory=lambda: float(os.getenv("MAX_DAILY_LOSS_PCT", "0.02"))
+    )
+    max_portfolio_exposure_pct: float = field(
+        default_factory=lambda: float(os.getenv("MAX_PORTFOLIO_EXPOSURE_PCT", "0.20"))
+    )
+    kelly_fraction: float = field(
+        default_factory=lambda: float(os.getenv("KELLY_FRACTION", "0.25"))
+    )
+    duplicate_signal_window_s: int = field(
+        default_factory=lambda: int(os.getenv("DUPLICATE_SIGNAL_WINDOW_S", "300"))
+    )
+    min_edge: float = field(
+        default_factory=lambda: float(os.getenv("MIN_EDGE_TO_TRADE", "0.02"))
+    )
+    consecutive_failure_limit: int = field(
+        default_factory=lambda: int(os.getenv("CONSECUTIVE_FAILURE_LIMIT", "5"))
+    )
+    arb_cooldown_s: float = field(
+        default_factory=lambda: float(os.getenv("ARB_COOLDOWN_S", "60"))
+    )
+    arb_rearm_hysteresis: float = field(
+        default_factory=lambda: float(os.getenv("ARB_REARM_HYSTERESIS", "0.005"))
+    )
+    # Maximum age (seconds) of the cached price on either side of a pair
+    # before the arb engine refuses to fire. A price that hasn't been
+    # confirmed by a websocket tick within this window is assumed to be
+    # stale — firing on it would set a limit that the real market has
+    # already drifted past, producing the "Market price X below limit Y"
+    # rejections we saw on Kalshi. Seed prices (from the matcher) get a
+    # fresh tick-time stamp at engine startup, so the guard only kicks
+    # in once the seed window has elapsed without a real WS confirm.
+    max_price_age_s: float = field(
+        default_factory=lambda: float(os.getenv("MAX_PRICE_AGE_S", "10"))
+    )
+    slippage_bps: float = field(
+        default_factory=lambda: float(os.getenv("SLIPPAGE_BPS", "10"))
+    )
+    strategy_holding_period_s: int = field(
+        default_factory=lambda: int(os.getenv("STRATEGY_HOLDING_PERIOD_S", "300"))
+    )
+    strategy_replay_cooldown_s: int = field(
+        default_factory=lambda: int(os.getenv("STRATEGY_REPLAY_COOLDOWN_S", "300"))
+    )
+    strategy_replay_min_move: float = field(
+        default_factory=lambda: float(os.getenv("STRATEGY_REPLAY_MIN_MOVE", "0.01"))
+    )
+    strategy_p2_enabled: bool = field(
+        default_factory=lambda: (
+            os.getenv("STRATEGY_P2_ENABLED", "true").lower() == "true"
+        )
+    )
+    strategy_p3_enabled: bool = field(
+        default_factory=lambda: (
+            os.getenv("STRATEGY_P3_ENABLED", "true").lower() == "true"
+        )
+    )
+    strategy_p4_enabled: bool = field(
+        default_factory=lambda: (
+            os.getenv("STRATEGY_P4_ENABLED", "true").lower() == "true"
+        )
+    )
+    strategy_p5_enabled: bool = field(
+        default_factory=lambda: (
+            os.getenv("STRATEGY_P5_ENABLED", "true").lower() == "true"
+        )
+    )
+    strategy_killswitch_window_s: int = field(
+        default_factory=lambda: int(os.getenv("STRATEGY_KILLSWITCH_WINDOW_S", "604800"))
+    )
+    strategy_killswitch_min_trades: int = field(
+        default_factory=lambda: int(os.getenv("STRATEGY_KILLSWITCH_MIN_TRADES", "5"))
+    )
+    pnl_sanity_cap_ratio: float = field(
+        default_factory=lambda: float(os.getenv("PNL_SANITY_CAP_RATIO", "0.10"))
+    )
+    reconcile_every: int = field(
+        default_factory=lambda: int(os.getenv("RECONCILE_EVERY", "5"))
+    )
+    reconcile_stuck_pending_threshold_s: int = field(
+        default_factory=lambda: int(os.getenv("STUCK_PENDING_THRESHOLD_S", "300"))
+    )
+    # Minimum character length of a stripped title root before a market is
+    # eligible for P2 series grouping. Lower values increase recall but risk
+    # false groupings on short generic titles. Minimum recommended: 15.
+    strategy_p2_min_root_len: int = field(
+        default_factory=lambda: int(os.getenv("STRATEGY_P2_MIN_ROOT_LEN", "25"))
+    )
+
+
+@dataclass
+class ExecutionConfig:
+    """Order execution and settlement settings."""
+
+    execution_mode: str = field(
+        default_factory=lambda: os.getenv("EXECUTION_MODE", "paper")
+    )
+    max_order_retries: int = field(
+        default_factory=lambda: int(os.getenv("MAX_ORDER_RETRIES", "3"))
+    )
+    retry_backoff_base_s: float = field(
+        default_factory=lambda: float(os.getenv("RETRY_BACKOFF_BASE_S", "1"))
+    )
+    partial_fill_cancel_window_s: int = field(
+        default_factory=lambda: int(os.getenv("PARTIAL_FILL_CANCEL_WINDOW_S", "5"))
+    )
+
+
+@dataclass
+class ObservabilityConfig:
+    """Logging and monitoring settings."""
+
+    log_level: str = field(default_factory=lambda: os.getenv("LOG_LEVEL", "INFO"))
+    log_format: str = field(default_factory=lambda: os.getenv("LOG_FORMAT", "text"))
+    pnl_snapshot_interval_s: int = field(
+        default_factory=lambda: int(os.getenv("PNL_SNAPSHOT_INTERVAL_S", "900"))
+    )
+
+
+@dataclass
+class Config:
+    """Main configuration class combining all sub-configurations."""
+
+    platform_credentials: PlatformCredentials = field(
+        default_factory=PlatformCredentials
+    )
+    database: DatabaseConfig = field(default_factory=DatabaseConfig)
+    ingestor: IngestorConfig = field(default_factory=IngestorConfig)
+    risk_controls: RiskControlConfig = field(default_factory=RiskControlConfig)
+    execution: ExecutionConfig = field(default_factory=ExecutionConfig)
+    observability: ObservabilityConfig = field(default_factory=ObservabilityConfig)
+
+    def __post_init__(self):
+        """Validate configuration after initialization."""
+        self._validate()
+
+    def _validate(self):
+        """Validate all configuration constraints."""
+        # Execution mode validation
+        if self.execution.execution_mode not in ("live", "paper", "shadow"):
+            raise ValueError(
+                f"EXECUTION_MODE must be 'live', 'paper', or 'shadow', "
+                f"got {self.execution.execution_mode}"
+            )
+
+        # Credentials validation — only required for live mode
+        if self.execution.execution_mode == "live":
+            if not all(
+                [
+                    self.platform_credentials.polymarket_private_key,
+                    self.platform_credentials.polymarket_wallet_address,
+                    self.platform_credentials.kalshi_api_key,
+                    self.platform_credentials.kalshi_rsa_key_path,
+                ]
+            ):
+                raise ValueError(
+                    "All platform credentials required when EXECUTION_MODE=live"
+                )
+
+        # Kelly fraction validation
+        if not (0 < self.risk_controls.kelly_fraction <= 0.5):
+            raise ValueError(
+                f"KELLY_FRACTION must be > 0 and <= 0.5, "
+                f"got {self.risk_controls.kelly_fraction}"
+            )
+
+        # Position size validation
+        if not (0 < self.risk_controls.max_position_pct <= 1):
+            raise ValueError(
+                f"MAX_POSITION_PCT must be > 0 and <= 1, "
+                f"got {self.risk_controls.max_position_pct}"
+            )
+
+        # Daily loss validation
+        if not (0 < self.risk_controls.max_daily_loss_pct <= 1):
+            raise ValueError(
+                f"MAX_DAILY_LOSS_PCT must be > 0 and <= 1, "
+                f"got {self.risk_controls.max_daily_loss_pct}"
+            )
+
+        # Starting capital validation
+        if self.risk_controls.starting_capital <= 0:
+            raise ValueError(
+                f"STARTING_CAPITAL must be > 0, "
+                f"got {self.risk_controls.starting_capital}"
+            )
+
+        # PnL sanity cap validation
+        if not (0 < self.risk_controls.pnl_sanity_cap_ratio <= 1):
+            raise ValueError(
+                f"PNL_SANITY_CAP_RATIO must be > 0 and <= 1, "
+                f"got {self.risk_controls.pnl_sanity_cap_ratio}"
+            )
+        if self.risk_controls.max_price_age_s <= 0:
+            raise ValueError(
+                f"MAX_PRICE_AGE_S must be > 0, got {self.risk_controls.max_price_age_s}"
+            )
+        if self.risk_controls.strategy_holding_period_s <= 0:
+            raise ValueError(
+                f"STRATEGY_HOLDING_PERIOD_S must be > 0, "
+                f"got {self.risk_controls.strategy_holding_period_s}"
+            )
+        if self.risk_controls.arb_cooldown_s < 0:
+            raise ValueError(
+                f"ARB_COOLDOWN_S must be >= 0, got {self.risk_controls.arb_cooldown_s}"
+            )
+        if self.risk_controls.reconcile_every < 1:
+            raise ValueError(
+                f"RECONCILE_EVERY must be >= 1, got {self.risk_controls.reconcile_every}"
+            )
+        if self.risk_controls.duplicate_signal_window_s <= 0:
+            raise ValueError(
+                f"DUPLICATE_SIGNAL_WINDOW_S must be > 0, "
+                f"got {self.risk_controls.duplicate_signal_window_s}"
+            )
+
+        if (
+            self.risk_controls.max_position_pct
+            > self.risk_controls.max_portfolio_exposure_pct
+        ):
+            raise ValueError(
+                f"MAX_POSITION_PCT ({self.risk_controls.max_position_pct:.0%}) must be "
+                f"<= MAX_PORTFOLIO_EXPOSURE_PCT ({self.risk_controls.max_portfolio_exposure_pct:.0%}); "
+                "otherwise no trade can pass the portfolio exposure check"
+            )
+
+
+def load_config() -> Config:
+    """Load configuration from environment variables."""
+    config = Config()
+    logger.info(
+        "Config loaded: execution_mode=%s, starting_capital=%.2f, db_path=%s, log_level=%s",
+        config.execution.execution_mode,
+        config.risk_controls.starting_capital,
+        config.database.db_path,
+        config.observability.log_level,
+    )
+    return config
+
+
+# Global config instance
+_config: Config | None = None
+
+
+def get_config() -> Config:
+    """Get or create the global configuration instance."""
+    global _config
+    if _config is None:
+        _config = load_config()
+    return _config
