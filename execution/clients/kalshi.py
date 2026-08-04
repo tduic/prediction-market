@@ -214,7 +214,7 @@ class KalshiExecutionClient(BaseExecutionClient):
             return result
         except Exception as e:
             submission_latency_ms = int((time.time() - start_time) * 1000)
-            logger.error("Error submitting order: %s", e, exc_info=True)
+            logger.exception("Error submitting order: %s", e)
             result = OrderResult(
                 order_id=f"FAILED-{leg.market_id}",
                 platform="kalshi",
@@ -326,7 +326,7 @@ class KalshiExecutionClient(BaseExecutionClient):
                 return True
             return False
         except Exception as e:
-            logger.error("Error cancelling order: %s", e, exc_info=True)
+            logger.exception("Error cancelling order: %s", e)
             return False
 
     async def get_order_status(self, order_id: str) -> dict | None:
@@ -343,7 +343,7 @@ class KalshiExecutionClient(BaseExecutionClient):
                 return response.json().get("order", response.json())
             return None
         except Exception as e:
-            logger.error("Error getting order status: %s", e, exc_info=True)
+            logger.exception("Error getting order status: %s", e)
             return None
 
     async def get_balance(self) -> float | None:
@@ -359,7 +359,7 @@ class KalshiExecutionClient(BaseExecutionClient):
                 return response.json().get("balance", 0) / 100.0
             return None
         except Exception as e:
-            logger.error("Error getting balance: %s", e, exc_info=True)
+            logger.exception("Error getting balance: %s", e)
             return None
 
     async def close(self) -> None:
