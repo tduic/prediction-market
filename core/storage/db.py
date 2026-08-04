@@ -128,10 +128,7 @@ class Database:
                     await conn.commit()
                 except aiosqlite.Error as e:
                     await conn.rollback()
-                    logger.error(
-                        f"Migration failed: {migration_file.name}: {e}",
-                        exc_info=True,
-                    )
+                    logger.exception("Migration failed: %s: %s", migration_file.name, e)
                     raise
 
     async def _apply_alter_statements(self, sql_content: str) -> str:

@@ -12,6 +12,7 @@ Covers:
   - Context fields truncated safely
 """
 
+import asyncio
 import sys
 from pathlib import Path
 from unittest.mock import AsyncMock
@@ -139,13 +140,11 @@ async def test_dedup_allows_different_severities():
 
 @pytest.mark.asyncio
 async def test_dedup_window_expires():
-    import time as _t
-
     t = CollectingTransport()
     mgr = AlertManager(transports=[t], dedup_window_s=0.01)
 
     await mgr.send(title="same", message="1", severity=Severity.INFO)
-    _t.sleep(0.02)
+    await asyncio.sleep(0.02)
     await mgr.send(title="same", message="2", severity=Severity.INFO)
 
     assert len(t.alerts) == 2
