@@ -241,18 +241,17 @@ class Config:
             )
 
         # Credentials validation — only required for live mode
-        if self.execution.execution_mode == "live":
-            if not all(
-                [
-                    self.platform_credentials.polymarket_private_key,
-                    self.platform_credentials.polymarket_wallet_address,
-                    self.platform_credentials.kalshi_api_key,
-                    self.platform_credentials.kalshi_rsa_key_path,
-                ]
-            ):
-                raise ValueError(
-                    "All platform credentials required when EXECUTION_MODE=live"
-                )
+        if self.execution.execution_mode == "live" and not all(
+            [
+                self.platform_credentials.polymarket_private_key,
+                self.platform_credentials.polymarket_wallet_address,
+                self.platform_credentials.kalshi_api_key,
+                self.platform_credentials.kalshi_rsa_key_path,
+            ]
+        ):
+            raise ValueError(
+                "All platform credentials required when EXECUTION_MODE=live"
+            )
 
         # Kelly fraction validation
         if not (0 < self.risk_controls.kelly_fraction <= 0.5):

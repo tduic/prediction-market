@@ -145,7 +145,7 @@ class ExecutionService:
     async def wait_for_fill(
         self,
         order: Order,
-        timeout_s: int = None,
+        timeout_s: int | None = None,
     ) -> dict:
         """
         Wait for order fill confirmation.
