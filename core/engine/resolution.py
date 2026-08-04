@@ -161,12 +161,11 @@ async def close_resolved_positions(db: aiosqlite.Connection) -> dict[str, float]
                         _e,
                     )
         except Exception as e:
-            logger.error(
+            logger.exception(
                 "resolution: failed to close pos=%s market=%s err=%s",
                 pos_id,
                 market_id,
                 e,
-                exc_info=True,
             )
 
     if closed:
