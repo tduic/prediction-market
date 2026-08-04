@@ -74,12 +74,12 @@ class ScheduledStrategyRunner:
             mark_and_close_positions,
         )
 
-        if self._circuit_breaker is not None:
-            if await self._circuit_breaker.should_halt():
-                logger.warning(
-                    "CIRCUIT_BREAKER halted — skipping scheduled strategy cycle"
-                )
-                return []
+        if (
+            self._circuit_breaker is not None
+            and await self._circuit_breaker.should_halt()
+        ):
+            logger.warning("CIRCUIT_BREAKER halted — skipping scheduled strategy cycle")
+            return []
         # Resolution pass: close positions for markets that have settled.
         # Runs before mark_and_close so resolved markets close at their
         # settlement price rather than at a stale tape price.
@@ -88,7 +88,7 @@ class ScheduledStrategyRunner:
 
             await close_resolved_positions(self.db)
         except Exception as e:
-            logger.error("resolution pass failed: %s", e, exc_info=True)
+            logger.exception("resolution pass failed: %s", e)
         # Mark-to-market pass: close expired open positions at current prices
         await mark_and_close_positions(
             self.db,
@@ -105,7 +105,7 @@ class ScheduledStrategyRunner:
 
                 await reconcile_internal_state(self.db)
             except Exception as e:
-                logger.error("reconciliation pass failed: %s", e, exc_info=True)
+                logger.exception("reconciliation pass failed: %s", e)
         # Phase 7: run invariant checks before opening new positions.
         # alert_manager forwards violations to Discord when configured.
         from core.invariants import check_all_invariants

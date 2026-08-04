@@ -71,7 +71,7 @@ class BaseExecutionClient:
     async def close(self) -> None:
         """Clean up resources. Override if needed."""
 
-    # ── Shared DB writes ─────────────────────────────────────────────────
+    # ── Shared DB writes ────────────────────────────────────────────────────────────────────
 
     async def write_order(
         self,
@@ -158,7 +158,7 @@ class BaseExecutionClient:
             )
             # Note: caller is responsible for committing in batches
         except Exception as e:
-            logger.error("Failed to write order to DB: %s", e, exc_info=True)
+            logger.exception("Failed to write order to DB: %s", e)
 
     async def write_fill_event(self, result: OrderResult, detail: str = "") -> None:
         """Write a fill event to order_events."""
@@ -185,7 +185,7 @@ class BaseExecutionClient:
             )
             # Note: caller is responsible for committing in batches
         except Exception as e:
-            logger.error("Failed to write fill event to DB: %s", e, exc_info=True)
+            logger.exception("Failed to write fill event to DB: %s", e)
 
     async def update_order_fill(self, result: OrderResult) -> None:
         """Update an existing pending order with fill data (for live polling)."""
@@ -218,4 +218,4 @@ class BaseExecutionClient:
             )
             await self.db.commit()
         except Exception as e:
-            logger.error("Failed to update order fill: %s", e, exc_info=True)
+            logger.exception("Failed to update order fill: %s", e)
