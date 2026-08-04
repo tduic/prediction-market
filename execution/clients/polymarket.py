@@ -158,7 +158,7 @@ class PolymarketExecutionClient(BaseExecutionClient):
             )
             raise
         except Exception as e:
-            logger.error("Failed to configure proxy: %s", e, exc_info=True)
+            logger.exception("Failed to configure proxy: %s", e)
             raise
 
     async def submit_order(
@@ -281,7 +281,7 @@ class PolymarketExecutionClient(BaseExecutionClient):
 
         except Exception as e:
             submission_latency_ms = int((time.time() - start_time) * 1000)
-            logger.error("Error submitting to Polymarket: %s", e, exc_info=True)
+            logger.exception("Error submitting to Polymarket: %s", e)
             result = OrderResult(
                 order_id=f"FAILED-{leg.market_id}",
                 platform="polymarket",
@@ -387,7 +387,7 @@ class PolymarketExecutionClient(BaseExecutionClient):
             await self.db.commit()
             return True
         except Exception as e:
-            logger.error("Error cancelling order: %s", e, exc_info=True)
+            logger.exception("Error cancelling order: %s", e)
             return False
 
     async def get_order_status(self, order_id: str) -> dict | None:
@@ -397,7 +397,7 @@ class PolymarketExecutionClient(BaseExecutionClient):
             self._ensure_client()
             return self._client.get_order(order_id)
         except Exception as e:
-            logger.error("Error getting order status: %s", e, exc_info=True)
+            logger.exception("Error getting order status: %s", e)
             return None
 
     async def get_balance(self) -> float | None:
@@ -417,7 +417,7 @@ class PolymarketExecutionClient(BaseExecutionClient):
             row = await cursor.fetchone()
             return row[0] if row else None
         except Exception as e:
-            logger.error("Error getting Polymarket balance: %s", e, exc_info=True)
+            logger.exception("Error getting Polymarket balance: %s", e)
             return None
 
     async def close(self) -> None:
