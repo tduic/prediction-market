@@ -510,32 +510,32 @@ _POLY_TRIGGER = 0.51
 
 
 def _risk_config(**overrides):
-    defaults = dict(
-        starting_capital=10000.0,
-        max_position_pct=0.05,
-        max_daily_loss_pct=0.02,
-        max_portfolio_exposure_pct=0.20,
-        kelly_fraction=0.25,
-        duplicate_signal_window_s=300,
-        min_edge=0.02,
-        consecutive_failure_limit=5,
-        arb_cooldown_s=60.0,
-        arb_rearm_hysteresis=0.005,
-        max_price_age_s=3600.0,
-        slippage_bps=10.0,
-        strategy_holding_period_s=300,
-        strategy_replay_cooldown_s=300,
-        strategy_replay_min_move=0.01,
-        strategy_p2_enabled=True,
-        strategy_p3_enabled=True,
-        strategy_p4_enabled=True,
-        strategy_p5_enabled=True,
-        strategy_killswitch_window_s=604800,
-        strategy_killswitch_min_trades=5,
-        pnl_sanity_cap_ratio=0.10,
-        reconcile_every=5,
-        strategy_p2_min_root_len=25,
-    )
+    defaults = {
+        "starting_capital": 10000.0,
+        "max_position_pct": 0.05,
+        "max_daily_loss_pct": 0.02,
+        "max_portfolio_exposure_pct": 0.20,
+        "kelly_fraction": 0.25,
+        "duplicate_signal_window_s": 300,
+        "min_edge": 0.02,
+        "consecutive_failure_limit": 5,
+        "arb_cooldown_s": 60.0,
+        "arb_rearm_hysteresis": 0.005,
+        "max_price_age_s": 3600.0,
+        "slippage_bps": 10.0,
+        "strategy_holding_period_s": 300,
+        "strategy_replay_cooldown_s": 300,
+        "strategy_replay_min_move": 0.01,
+        "strategy_p2_enabled": True,
+        "strategy_p3_enabled": True,
+        "strategy_p4_enabled": True,
+        "strategy_p5_enabled": True,
+        "strategy_killswitch_window_s": 604800,
+        "strategy_killswitch_min_trades": 5,
+        "pnl_sanity_cap_ratio": 0.10,
+        "reconcile_every": 5,
+        "strategy_p2_min_root_len": 25,
+    }
     defaults.update(overrides)
     cfg = RiskControlConfig.__new__(RiskControlConfig)
     for k, v in defaults.items():
