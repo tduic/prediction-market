@@ -14,7 +14,7 @@ Usage at startup::
 """
 
 import os
-from datetime import date
+from datetime import datetime, timezone
 from pathlib import Path
 
 from core.config import RiskControlConfig
@@ -68,7 +68,7 @@ def check_live_gate(
     if confirmation_code is ...:
         confirmation_code = os.getenv("LIVE_CONFIRMATION_CODE")
 
-    today = date.today().isoformat()
+    today = datetime.now(tz=timezone.utc).date().isoformat()
 
     if not confirmation_code:
         raise LiveGateError(

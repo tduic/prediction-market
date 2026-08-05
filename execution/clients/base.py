@@ -157,8 +157,8 @@ class BaseExecutionClient:
                 ),
             )
             # Note: caller is responsible for committing in batches
-        except Exception as e:
-            logger.exception("Failed to write order to DB: %s", e)
+        except Exception:
+            logger.exception("Failed to write order to DB")
 
     async def write_fill_event(self, result: OrderResult, detail: str = "") -> None:
         """Write a fill event to order_events."""
@@ -184,8 +184,8 @@ class BaseExecutionClient:
                 ),
             )
             # Note: caller is responsible for committing in batches
-        except Exception as e:
-            logger.exception("Failed to write fill event to DB: %s", e)
+        except Exception:
+            logger.exception("Failed to write fill event to DB")
 
     async def update_order_fill(self, result: OrderResult) -> None:
         """Update an existing pending order with fill data (for live polling)."""
@@ -217,5 +217,5 @@ class BaseExecutionClient:
                 ),
             )
             await self.db.commit()
-        except Exception as e:
-            logger.exception("Failed to update order fill: %s", e)
+        except Exception:
+            logger.exception("Failed to update order fill")

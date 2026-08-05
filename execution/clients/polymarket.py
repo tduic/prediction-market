@@ -157,8 +157,8 @@ class PolymarketExecutionClient(BaseExecutionClient):
                 "Install with: pip install httpx-socks"
             )
             raise
-        except Exception as e:
-            logger.exception("Failed to configure proxy: %s", e)
+        except Exception:
+            logger.exception("Failed to configure proxy")
             raise
 
     async def submit_order(
@@ -279,9 +279,9 @@ class PolymarketExecutionClient(BaseExecutionClient):
             )
             return fill_result
 
-        except Exception as e:
+        except Exception:
             submission_latency_ms = int((time.time() - start_time) * 1000)
-            logger.exception("Error submitting to Polymarket: %s", e)
+            logger.exception("Error submitting to Polymarket")
             result = OrderResult(
                 order_id=f"FAILED-{leg.market_id}",
                 platform="polymarket",
@@ -386,8 +386,8 @@ class PolymarketExecutionClient(BaseExecutionClient):
             )
             await self.db.commit()
             return True
-        except Exception as e:
-            logger.exception("Error cancelling order: %s", e)
+        except Exception:
+            logger.exception("Error cancelling order")
             return False
 
     async def get_order_status(self, order_id: str) -> dict | None:
@@ -396,8 +396,8 @@ class PolymarketExecutionClient(BaseExecutionClient):
         try:
             self._ensure_client()
             return self._client.get_order(order_id)
-        except Exception as e:
-            logger.exception("Error getting order status: %s", e)
+        except Exception:
+            logger.exception("Error getting order status")
             return None
 
     async def get_balance(self) -> float | None:
@@ -416,8 +416,8 @@ class PolymarketExecutionClient(BaseExecutionClient):
                 """)
             row = await cursor.fetchone()
             return row[0] if row else None
-        except Exception as e:
-            logger.exception("Error getting Polymarket balance: %s", e)
+        except Exception:
+            logger.exception("Error getting Polymarket balance")
             return None
 
     async def close(self) -> None:

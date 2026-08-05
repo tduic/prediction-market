@@ -495,12 +495,14 @@ class ArbitrageEngine:
             buy_client, sell_client = self._kalshi_client, self._poly_client
 
         # Phase 2.4: circuit breaker halt check.
-        if self._circuit_breaker is not None:
-            if await self._circuit_breaker.should_halt():
-                logger.warning(
-                    "CIRCUIT_BREAKER halted — skipping arb trade on pair=%s", pair_id
-                )
-                return None
+        if (
+            self._circuit_breaker is not None
+            and await self._circuit_breaker.should_halt()
+        ):
+            logger.warning(
+                "CIRCUIT_BREAKER halted — skipping arb trade on pair=%s", pair_id
+            )
+            return None
 
         edge = spread
 

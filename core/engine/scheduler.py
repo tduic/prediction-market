@@ -87,8 +87,8 @@ class ScheduledStrategyRunner:
             from core.engine.resolution import close_resolved_positions
 
             await close_resolved_positions(self.db)
-        except Exception as e:
-            logger.exception("resolution pass failed: %s", e)
+        except Exception:
+            logger.exception("resolution pass failed")
         # Mark-to-market pass: close expired open positions at current prices
         await mark_and_close_positions(
             self.db,
@@ -104,8 +104,8 @@ class ScheduledStrategyRunner:
                 from core.engine.reconciliation import reconcile_internal_state
 
                 await reconcile_internal_state(self.db)
-            except Exception as e:
-                logger.exception("reconciliation pass failed: %s", e)
+            except Exception:
+                logger.exception("reconciliation pass failed")
         # Phase 7: run invariant checks before opening new positions.
         # alert_manager forwards violations to Discord when configured.
         from core.invariants import check_all_invariants

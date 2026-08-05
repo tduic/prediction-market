@@ -9,7 +9,7 @@ Covers:
 
 import os
 import sys
-from datetime import date
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -35,7 +35,7 @@ class TestSentinelFile:
             check_live_gate(
                 "live",
                 sentinel_path=sentinel,
-                confirmation_code=date.today().isoformat(),
+                confirmation_code=datetime.now(tz=timezone.utc).date().isoformat(),
             )
 
     def test_error_message_names_sentinel_path(self, tmp_path):
@@ -44,7 +44,7 @@ class TestSentinelFile:
             check_live_gate(
                 "live",
                 sentinel_path=sentinel,
-                confirmation_code=date.today().isoformat(),
+                confirmation_code=datetime.now(tz=timezone.utc).date().isoformat(),
             )
         assert str(sentinel) in str(exc_info.value)
 
@@ -54,7 +54,7 @@ class TestSentinelFile:
         check_live_gate(
             "live",
             sentinel_path=sentinel,
-            confirmation_code=date.today().isoformat(),
+            confirmation_code=datetime.now(tz=timezone.utc).date().isoformat(),
         )
 
     def test_paper_mode_ignores_missing_sentinel(self, tmp_path):
@@ -99,7 +99,7 @@ class TestConfirmationCode:
     def test_error_shows_expected_and_actual_date(self, tmp_path):
         sentinel = tmp_path / "ARMED_FOR_LIVE"
         sentinel.write_text("armed\n")
-        today = date.today().isoformat()
+        today = datetime.now(tz=timezone.utc).date().isoformat()
         with pytest.raises(LiveGateError) as exc_info:
             check_live_gate(
                 "live", sentinel_path=sentinel, confirmation_code="2020-01-01"
@@ -112,7 +112,7 @@ class TestConfirmationCode:
         check_live_gate(
             "live",
             sentinel_path=sentinel,
-            confirmation_code=date.today().isoformat(),
+            confirmation_code=datetime.now(tz=timezone.utc).date().isoformat(),
         )
 
     def test_paper_mode_ignores_confirmation_code(self, tmp_path):
@@ -129,7 +129,7 @@ class TestConfirmationCode:
         """check_live_gate with no confirmation_code arg reads LIVE_CONFIRMATION_CODE."""
         sentinel = tmp_path / "ARMED_FOR_LIVE"
         sentinel.write_text("armed\n")
-        today = date.today().isoformat()
+        today = datetime.now(tz=timezone.utc).date().isoformat()
         with patch.dict(os.environ, {"LIVE_CONFIRMATION_CODE": today}):
             check_live_gate("live", sentinel_path=sentinel)
 
