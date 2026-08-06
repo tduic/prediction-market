@@ -126,7 +126,7 @@ class Database:
                         (migration_file.name,),
                     )
                     await conn.commit()
-                except aiosqlite.Error as e:
+                except aiosqlite.Error:
                     await conn.rollback()
                     logger.exception("Migration failed: %s", migration_file.name)
                     raise

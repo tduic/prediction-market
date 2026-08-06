@@ -941,7 +941,7 @@ def _build_app(static_dir: str | None = None) -> FastAPI:
                         (datetime.now(timezone.utc) - last_snap).total_seconds()
                     )
                     result["last_snapshot_age_s"] = age_s
-                    if age_s > 3600:
+                    if age_s > 4 * get_config().observability.pnl_snapshot_interval_s:
                         issues.append(f"snapshot_stale:{age_s}s")
                 else:
                     result["last_snapshot_age_s"] = None
