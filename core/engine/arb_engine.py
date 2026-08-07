@@ -805,14 +805,22 @@ class ArbitrageEngine:
 
     def stats(self) -> dict:
         total_pnl = sum(t.get("actual_pnl", 0) for t in self.trades)
+        now = time.time()
+        # Mirror the guards from _try_fire_pair() so pairs_eligible_now reflects
+        # how many pairs would actually fire, not just how many have a spread above
+        # the threshold. Pairs in cooldown or with stale prices are excluded.
+        # Note: _is_fresh() is called with the same `now` for both legs so they
+        # are anchored to a single timestamp (matching _try_fire_pair behaviour).
         eligible = sum(
             1
             for m in self._pairs.values()
             if (p := self.prices.get(m["poly_id"])) is not None
             and (k := self.prices.get(m["kalshi_id"])) is not None
             and abs(p - k) >= self.min_spread
+            and self._is_fresh(m["poly_id"], now)
+            and self._is_fresh(m["kalshi_id"], now)
+            and self._is_eligible(f"{m['poly_id']}_{m['kalshi_id']}")
         )
-        now = time.time()
         tick_age: dict[str, int] = {}
         for market_id, ts in self._last_tick_at.items():
             platform = self._market_platform.get(market_id, "unknown")

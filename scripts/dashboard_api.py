@@ -442,19 +442,20 @@ def _build_app(static_dir: str | None = None) -> FastAPI:
         strategy: str | None = Query(None),
         days: float = Query(30, ge=0.01, le=365.0),
         limit: int = Query(200, ge=1, le=1000),
+        offset: int = Query(0, ge=0),
     ) -> list[dict[str, Any]]:
         db = await get_db()
         try:
             cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
             if strategy:
                 cursor = await db.execute(
-                    "SELECT * FROM trade_outcomes WHERE created_at >= ? AND strategy = ? ORDER BY created_at DESC LIMIT ?",
-                    (cutoff_date.isoformat(), strategy, limit),
+                    "SELECT * FROM trade_outcomes WHERE created_at >= ? AND strategy = ? ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                    (cutoff_date.isoformat(), strategy, limit, offset),
                 )
             else:
                 cursor = await db.execute(
-                    "SELECT * FROM trade_outcomes WHERE created_at >= ? ORDER BY created_at DESC LIMIT ?",
-                    (cutoff_date.isoformat(), limit),
+                    "SELECT * FROM trade_outcomes WHERE created_at >= ? ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                    (cutoff_date.isoformat(), limit, offset),
                 )
             rows = await cursor.fetchall()
             result = []

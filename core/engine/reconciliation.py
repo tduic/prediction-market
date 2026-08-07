@@ -176,8 +176,21 @@ async def _check_unbalanced_arb_pairs(db: aiosqlite.Connection) -> int:
     exposed on-exchange without a hedge — that's the case the in-process
     UNBALANCED_ARB log in arb_engine warns about, and we record it here
     so it persists past the log ring buffer.
+
+    The scan is bounded to the last 30 days via submitted_at to prevent a
+    full-table scan of orders as the DB grows. submitted_at is stored as a
+    10-digit decimal epoch string; text comparison of equal-length decimal
+    strings is lexicographically equivalent to numeric comparison, so the
+    index on submitted_at (idx_orders_submitted_at) is used here. Arbs
+    older than 30 days have already been logged by _is_recently_logged
+    (1-hour dedup window) many times; the 30-day boundary is acceptable.
+    Note: a signal straddling the boundary (one leg older than 30 days,
+    one newer) will not appear in the subquery's HAVING COUNT(*) >= 2 and
+    will therefore be invisible — this is an accepted trade-off.
     """
-    cursor = await db.execute("""
+    cutoff_30d_str = str(int(time.time()) - 30 * 86400)
+    cursor = await db.execute(
+        """
         SELECT o.signal_id,
                SUM(CASE WHEN o.status IN ('filled','partially_filled') THEN 1 ELSE 0 END) AS filled_count,
                COUNT(*) AS leg_count,
@@ -185,13 +198,18 @@ async def _check_unbalanced_arb_pairs(db: aiosqlite.Connection) -> int:
                    CASE WHEN o.status IN ('filled','partially_filled') THEN o.platform END
                ) AS filled_platforms
         FROM orders o
-        WHERE o.signal_id IN (
-            SELECT signal_id FROM orders GROUP BY signal_id HAVING COUNT(*) >= 2
+        WHERE o.submitted_at > ?
+          AND o.signal_id IN (
+            SELECT signal_id FROM orders
+            WHERE submitted_at > ?
+            GROUP BY signal_id HAVING COUNT(*) >= 2
         )
         GROUP BY o.signal_id
         HAVING filled_count = 1
           AND o.signal_id NOT IN (SELECT signal_id FROM positions WHERE signal_id IS NOT NULL)
-        """)
+        """,
+        (cutoff_30d_str, cutoff_30d_str),
+    )
     rows = await cursor.fetchall()
     count = 0
     for signal_id, filled_count, leg_count, filled_platforms in rows:
