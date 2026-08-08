@@ -972,6 +972,21 @@ def _build_app(static_dir: str | None = None) -> FastAPI:
                 result["last_signal_age_s"] = None
                 issues.append("signal_age_query_failed")
 
+            # Daily loss budget utilization
+            try:
+                _daily_loss = await _compute_daily_loss_today(db)
+                _cfg = get_config().risk_controls
+                _daily_loss_limit = _cfg.starting_capital * _cfg.max_daily_loss_pct
+                daily_loss_pct_used = round(
+                    _daily_loss / _daily_loss_limit if _daily_loss_limit > 0 else 0.0, 4
+                )
+                result["daily_loss_pct_used"] = daily_loss_pct_used
+                if daily_loss_pct_used >= 0.80:
+                    issues.append(f"daily_loss_high:{daily_loss_pct_used:.0%}")
+            except Exception:
+                result["daily_loss_pct_used"] = None
+                issues.append("daily_loss_query_failed")
+
             # Overall status
             if any("tripped" in i or "critical" in i for i in issues):
                 result["status"] = "critical"

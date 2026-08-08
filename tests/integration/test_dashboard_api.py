@@ -476,6 +476,7 @@ class TestSystemHealthEndpoint:
         assert "circuit_breaker" in data
         assert "reconciliation_discrepancies_24h" in data
         assert "invariant_violations_24h" in data
+        assert "daily_loss_pct_used" in data
 
     async def test_system_health_ok_on_empty_db(self, app_and_client):
         _, client, _ = app_and_client
@@ -486,6 +487,12 @@ class TestSystemHealthEndpoint:
         assert data["circuit_breaker"]["tripped"] is False
         assert data["reconciliation_discrepancies_24h"] == 0
         assert data["invariant_violations_24h"] == 0
+
+    async def test_system_health_daily_loss_zero_on_empty_db(self, app_and_client):
+        _, client, _ = app_and_client
+        resp = await client.get("/api/system-health")
+        data = resp.json()
+        assert data["daily_loss_pct_used"] == 0.0
 
 
 # ── /api/signals ─────────────────────────────────────────────────────────────────────────────────────────
