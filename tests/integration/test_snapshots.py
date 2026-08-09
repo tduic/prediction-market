@@ -245,6 +245,7 @@ class TestMinSpreadEnvVar:
             capture_output=True,
             text=True,
             cwd=str(PROJECT_ROOT),
+            check=False,
         )
         assert result.returncode == 0
         assert float(result.stdout.strip()) == 0.99
@@ -259,6 +260,7 @@ class TestMinSpreadEnvVar:
             capture_output=True,
             text=True,
             cwd=str(PROJECT_ROOT),
+            check=False,
         )
         assert result.returncode == 0
         assert float(result.stdout.strip()) == 0.03

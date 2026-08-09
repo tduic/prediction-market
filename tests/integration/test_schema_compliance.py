@@ -16,6 +16,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
+import aiosqlite
 import pytest
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
@@ -100,7 +101,7 @@ class TestViolationsInsert:
         now = datetime.now(timezone.utc).isoformat()
 
         # Insert violation with non-existent pair_id should fail FK
-        with pytest.raises(Exception):
+        with pytest.raises(aiosqlite.IntegrityError):
             await db.execute(
                 """INSERT INTO violations
                    (id, pair_id, violation_type, price_a_at_detect, price_b_at_detect,
@@ -138,7 +139,7 @@ class TestSignalsInsert:
         """signals.market_id_a must reference markets.id."""
         now = datetime.now(timezone.utc).isoformat()
 
-        with pytest.raises(Exception):
+        with pytest.raises(aiosqlite.IntegrityError):
             await db.execute(
                 """INSERT INTO signals
                    (id, strategy, signal_type, market_id_a,
@@ -262,7 +263,7 @@ class TestOrdersInsert:
         now = datetime.now(timezone.utc).isoformat()
         await _insert_market(db, "fk_mkt")
 
-        with pytest.raises(Exception):
+        with pytest.raises(aiosqlite.IntegrityError):
             await db.execute(
                 """INSERT INTO orders
                    (id, signal_id, platform, market_id, side, order_type,
@@ -389,7 +390,7 @@ class TestStrategyPnlSnapshotsInsert:
 
     async def test_strategy_pnl_fk_to_snapshots(self, db):
         """strategy_pnl_snapshots.snapshot_id must reference pnl_snapshots.id."""
-        with pytest.raises(Exception):
+        with pytest.raises(aiosqlite.IntegrityError):
             await db.execute(
                 """INSERT INTO strategy_pnl_snapshots
                    (snapshot_id, strategy, realized_pnl)

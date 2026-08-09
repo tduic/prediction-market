@@ -9,6 +9,7 @@ Tests order execution pipeline:
 """
 
 import asyncio
+import sqlite3
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 
@@ -437,7 +438,7 @@ class TestOrderSubmissionAndFills:
         in_memory_db.commit()
 
         # Duplicate insert would fail due to PRIMARY KEY constraint
-        with pytest.raises(Exception):
+        with pytest.raises(sqlite3.IntegrityError):
             in_memory_db.execute(
                 """INSERT INTO signals (id, violation_id, signal_type, size_usd, status)
                    VALUES (?, ?, ?, ?, ?)""",

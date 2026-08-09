@@ -279,7 +279,7 @@ class PolymarketExecutionClient(BaseExecutionClient):
             )
             return fill_result
 
-        except Exception:
+        except Exception as e:
             submission_latency_ms = int((time.time() - start_time) * 1000)
             logger.exception("Error submitting to Polymarket")
             result = OrderResult(

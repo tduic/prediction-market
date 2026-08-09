@@ -212,7 +212,7 @@ class KalshiExecutionClient(BaseExecutionClient):
             )
             await self.write_order(leg, result, signal_id=signal_id, strategy=strategy)
             return result
-        except Exception:
+        except Exception as e:
             submission_latency_ms = int((time.time() - start_time) * 1000)
             logger.exception("Error submitting order")
             result = OrderResult(
