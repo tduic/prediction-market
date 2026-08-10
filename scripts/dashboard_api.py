@@ -16,7 +16,7 @@ import math
 import os
 import secrets
 import statistics
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -51,10 +51,8 @@ async def _compute_daily_loss_today(db: aiosqlite.Connection) -> float:
     Uses a UTC-date range comparison so the query planner can use the
     index on created_at.  Returns 0.0 when today is profitable.
     """
-    from datetime import date as _date
-
     _today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    _tomorrow = (_date.fromisoformat(_today) + timedelta(days=1)).isoformat()
+    _tomorrow = (date.fromisoformat(_today) + timedelta(days=1)).isoformat()
     cursor = await db.execute(
         "SELECT COALESCE(SUM(actual_pnl - COALESCE(fees_total, 0)), 0) "
         "FROM trade_outcomes WHERE created_at >= ? AND created_at < ?",

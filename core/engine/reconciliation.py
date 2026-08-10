@@ -21,6 +21,8 @@ from datetime import datetime, timedelta, timezone
 
 import aiosqlite
 
+from core.config import get_config
+
 logger = logging.getLogger(__name__)
 
 
@@ -125,8 +127,6 @@ async def _check_stuck_pending_orders(db: aiosqlite.Connection) -> int:
     numeric comparison, so we compare directly to allow SQLite to use the
     idx_orders_submitted_at index instead of computing CAST on every row.
     """
-    from core.config import get_config
-
     threshold_s = get_config().risk_controls.reconcile_stuck_pending_threshold_s
     cutoff_str = str(int(time.time()) - threshold_s)
     cursor = await db.execute(

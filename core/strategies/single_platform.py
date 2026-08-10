@@ -202,21 +202,69 @@ async def mark_and_close_positions(
                     holding_period_ms = int((now_dt - opened_dt).total_seconds() * 1000)
                 except Exception:
                     pass
+
+            # Populate edge/spread metrics from signals and violations so
+            # /api/strategies can compute avg_edge_capture and avg_spread
+            # for single-platform strategies (not just P1 arb).
+            violation_id = None
+            predicted_edge = None
+            predicted_pnl = None
+            edge_captured_pct = None
+            spread_at_signal = None
+            try:
+                sig_cur = await db.execute(
+                    "SELECT violation_id, model_edge, position_size_a "
+                    "FROM signals WHERE id=?",
+                    (signal_id,),
+                )
+                sig_row = await sig_cur.fetchone()
+                if sig_row:
+                    violation_id = sig_row[0]
+                    pred_edge = sig_row[1]
+                    pred_size = sig_row[2] or entry_size
+                    if pred_edge is not None:
+                        predicted_edge = pred_edge
+                        predicted_pnl = round(pred_edge * pred_size, 4)
+                        if predicted_pnl > 0:
+                            edge_captured_pct = round(
+                                realized_pnl / predicted_pnl * 100, 1
+                            )
+                    if violation_id:
+                        viol_cur = await db.execute(
+                            "SELECT raw_spread FROM violations WHERE id=?",
+                            (violation_id,),
+                        )
+                        viol_row = await viol_cur.fetchone()
+                        if viol_row:
+                            spread_at_signal = viol_row[0]
+            except Exception as _lookup_err:
+                logger.debug(
+                    "mark_and_close: signal/violation lookup failed pos=%s: %s",
+                    pos_id,
+                    _lookup_err,
+                )
+
             try:
                 await db.execute(
                     """INSERT OR IGNORE INTO trade_outcomes
-                       (id, signal_id, strategy, market_id_a,
-                        actual_pnl, fees_total, holding_period_ms,
-                        resolved_at, created_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                       (id, signal_id, strategy, violation_id, market_id_a,
+                        predicted_edge, predicted_pnl, actual_pnl, fees_total,
+                        edge_captured_pct, holding_period_ms,
+                        spread_at_signal, resolved_at, created_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         f"trade_{uuid.uuid4().hex[:12]}",
                         signal_id,
                         strategy,
+                        violation_id,
                         market_id,
+                        predicted_edge,
+                        predicted_pnl,
                         realized_pnl,
                         fees_paid or 0,
+                        edge_captured_pct,
                         holding_period_ms,
+                        spread_at_signal,
                         now,
                         now,
                     ),
