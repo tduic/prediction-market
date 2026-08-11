@@ -191,6 +191,12 @@ async def _check_unbalanced_arb_pairs(db: aiosqlite.Connection) -> int:
     cutoff_30d_str = str(int(time.time()) - 30 * 86400)
     cursor = await db.execute(
         """
+        WITH multi_leg_signals AS (
+            SELECT signal_id FROM orders
+            WHERE submitted_at > ?
+            GROUP BY signal_id
+            HAVING COUNT(*) >= 2
+        )
         SELECT o.signal_id,
                SUM(CASE WHEN o.status IN ('filled','partially_filled') THEN 1 ELSE 0 END) AS filled_count,
                COUNT(*) AS leg_count,
@@ -198,12 +204,8 @@ async def _check_unbalanced_arb_pairs(db: aiosqlite.Connection) -> int:
                    CASE WHEN o.status IN ('filled','partially_filled') THEN o.platform END
                ) AS filled_platforms
         FROM orders o
+        JOIN multi_leg_signals mls ON o.signal_id = mls.signal_id
         WHERE o.submitted_at > ?
-          AND o.signal_id IN (
-            SELECT signal_id FROM orders
-            WHERE submitted_at > ?
-            GROUP BY signal_id HAVING COUNT(*) >= 2
-        )
         GROUP BY o.signal_id
         HAVING filled_count = 1
           AND o.signal_id NOT IN (SELECT signal_id FROM positions WHERE signal_id IS NOT NULL)

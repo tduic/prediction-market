@@ -640,6 +640,7 @@ def _build_app(static_dir: str | None = None) -> FastAPI:
         strategy: str | None = Query(None),
         days: float = Query(7, ge=0.01, le=365.0),
         limit: int = Query(200, ge=1, le=1000),
+        offset: int = Query(0, ge=0),
     ) -> list[dict[str, Any]]:
         db = await get_db()
         try:
@@ -649,16 +650,16 @@ def _build_app(static_dir: str | None = None) -> FastAPI:
                     "SELECT id, violation_id, strategy, signal_type, market_id_a, market_id_b, "
                     "model_edge, kelly_fraction, position_size_a, position_size_b, "
                     "total_capital_at_risk, status, fired_at, updated_at "
-                    "FROM signals WHERE fired_at >= ? AND strategy = ? ORDER BY fired_at DESC LIMIT ?",
-                    (cutoff_date.isoformat(), strategy, limit),
+                    "FROM signals WHERE fired_at >= ? AND strategy = ? ORDER BY fired_at DESC LIMIT ? OFFSET ?",
+                    (cutoff_date.isoformat(), strategy, limit, offset),
                 )
             else:
                 cursor = await db.execute(
                     "SELECT id, violation_id, strategy, signal_type, market_id_a, market_id_b, "
                     "model_edge, kelly_fraction, position_size_a, position_size_b, "
                     "total_capital_at_risk, status, fired_at, updated_at "
-                    "FROM signals WHERE fired_at >= ? ORDER BY fired_at DESC LIMIT ?",
-                    (cutoff_date.isoformat(), limit),
+                    "FROM signals WHERE fired_at >= ? ORDER BY fired_at DESC LIMIT ? OFFSET ?",
+                    (cutoff_date.isoformat(), limit, offset),
                 )
             rows = await cursor.fetchall()
             result = []
@@ -969,6 +970,21 @@ def _build_app(static_dir: str | None = None) -> FastAPI:
             except Exception:
                 result["last_signal_age_s"] = None
                 issues.append("signal_age_query_failed")
+
+            # Signal count last 24h
+            try:
+                _sig_cutoff_24h = (
+                    datetime.now(timezone.utc) - timedelta(hours=24)
+                ).isoformat()
+                sig_count_cursor = await db.execute(
+                    "SELECT COUNT(*) FROM signals WHERE fired_at >= ?",
+                    (_sig_cutoff_24h,),
+                )
+                sig_count_row = await sig_count_cursor.fetchone()
+                result["signals_24h"] = sig_count_row[0] if sig_count_row else 0
+            except Exception:
+                result["signals_24h"] = None
+                issues.append("signal_count_query_failed")
 
             # Daily loss budget utilization
             try:
