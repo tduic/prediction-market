@@ -7,7 +7,6 @@ markets without needing a cross-platform match.
 """
 
 import logging
-import os
 import re
 import statistics
 import uuid
@@ -211,9 +210,10 @@ async def mark_and_close_positions(
             predicted_pnl = None
             edge_captured_pct = None
             spread_at_signal = None
+            signal_to_fill_ms = None
             try:
                 sig_cur = await db.execute(
-                    "SELECT violation_id, model_edge, position_size_a "
+                    "SELECT violation_id, model_edge, position_size_a, fired_at "
                     "FROM signals WHERE id=?",
                     (signal_id,),
                 )
@@ -222,6 +222,7 @@ async def mark_and_close_positions(
                     violation_id = sig_row[0]
                     pred_edge = sig_row[1]
                     pred_size = sig_row[2] or entry_size
+                    sig_fired_at = sig_row[3]
                     if pred_edge is not None:
                         predicted_edge = pred_edge
                         predicted_pnl = round(pred_edge * pred_size, 4)
@@ -237,6 +238,25 @@ async def mark_and_close_positions(
                         viol_row = await viol_cur.fetchone()
                         if viol_row:
                             spread_at_signal = viol_row[0]
+                    if sig_fired_at and opened_at:
+                        try:
+                            fired_dt = datetime.fromisoformat(sig_fired_at)
+                            if fired_dt.tzinfo is None:
+                                fired_dt = fired_dt.replace(tzinfo=timezone.utc)
+                            opened_dt = datetime.fromisoformat(opened_at)
+                            if opened_dt.tzinfo is None:
+                                opened_dt = opened_dt.replace(tzinfo=timezone.utc)
+                            delta_ms = int(
+                                (opened_dt - fired_dt).total_seconds() * 1000
+                            )
+                            if delta_ms >= 0:
+                                signal_to_fill_ms = delta_ms
+                        except Exception as _dt_err:
+                            logger.debug(
+                                "mark_and_close: signal_to_fill_ms parse failed pos=%s: %s",
+                                pos_id,
+                                _dt_err,
+                            )
             except Exception as _lookup_err:
                 logger.debug(
                     "mark_and_close: signal/violation lookup failed pos=%s: %s",
@@ -249,9 +269,9 @@ async def mark_and_close_positions(
                     """INSERT OR IGNORE INTO trade_outcomes
                        (id, signal_id, strategy, violation_id, market_id_a,
                         predicted_edge, predicted_pnl, actual_pnl, fees_total,
-                        edge_captured_pct, holding_period_ms,
+                        edge_captured_pct, signal_to_fill_ms, holding_period_ms,
                         spread_at_signal, resolved_at, created_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         f"trade_{uuid.uuid4().hex[:12]}",
                         signal_id,
@@ -263,6 +283,7 @@ async def mark_and_close_positions(
                         realized_pnl,
                         fees_paid or 0,
                         edge_captured_pct,
+                        signal_to_fill_ms,
                         holding_period_ms,
                         spread_at_signal,
                         now,
@@ -299,7 +320,7 @@ async def detect_single_platform_opportunities(
     - P4_liquidity_timing: Wide bid/ask spread indicates market maker opportunity
     - P5_mean_reversion: Price moved sharply, bet on reversion
     """
-    from core.config import RiskControlConfig
+    from core.config import RiskControlConfig, get_config
     from core.engine.fire_state import _RiskLeg, _RiskSignal
     from core.signals.risk import get_portfolio_value, run_all_checks
     from core.signals.sizing import compute_kelly_fraction, compute_position_size
@@ -308,7 +329,7 @@ async def detect_single_platform_opportunities(
 
     _risk_cfg: RiskControlConfig = risk_config or RiskControlConfig()
 
-    execution_mode = os.getenv("EXECUTION_MODE", "paper")
+    execution_mode = get_config().execution.execution_mode
     # Cache clients by platform to avoid re-initializing per trade
     _clients: dict = {}
 
