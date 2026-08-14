@@ -586,6 +586,17 @@ class ArbitrageEngine:
                 pair_id,
                 failed,
             )
+            try:
+                await self.db.execute(
+                    "UPDATE violations SET status = 'risk_rejected', updated_at = ? WHERE id = ?",
+                    (datetime.now(timezone.utc).isoformat(), violation_id),
+                )
+                await self.db.commit()
+            except Exception:
+                logger.exception(
+                    "Failed to mark violation risk_rejected for violation_id=%s",
+                    violation_id,
+                )
             return None
 
         logger.info(

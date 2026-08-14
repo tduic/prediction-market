@@ -181,9 +181,11 @@ async def detect_violations_and_trade(
             buy_result = await buy_client.submit_order(
                 buy_leg, signal_id=signal_id, strategy=strategy
             )
+            _buy_fill_ms = int(time.time() * 1000)
             sell_result = await sell_client.submit_order(
                 sell_leg, signal_id=signal_id, strategy=strategy
             )
+            _sell_done_ms = int(time.time() * 1000)
 
             # Record position and trade outcome
             if buy_result.filled_price and sell_result.filled_price:
@@ -257,9 +259,8 @@ async def detect_violations_and_trade(
                                 if edge * size > 0
                                 else 0
                             ),
-                            buy_result.submission_latency_ms
-                            + (buy_result.fill_latency_ms or 0),
-                            max(1, int(time.time() * 1000) - _trade_start_ms),
+                            _sell_done_ms - _trade_start_ms,
+                            max(1, _sell_done_ms - _buy_fill_ms),
                             spread,
                             now,
                             now,

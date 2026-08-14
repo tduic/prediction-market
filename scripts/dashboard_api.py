@@ -868,6 +868,8 @@ def _build_app(static_dir: str | None = None) -> FastAPI:
         result: dict[str, Any] = {}
 
         try:
+            _cutoff_24h = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+
             # Circuit breaker
             try:
                 cb_cursor = await db.execute(
@@ -891,9 +893,6 @@ def _build_app(static_dir: str | None = None) -> FastAPI:
 
             # Reconciliation discrepancies (last 24h)
             try:
-                _cutoff_24h = (
-                    datetime.now(timezone.utc) - timedelta(hours=24)
-                ).isoformat()
                 rec_cursor = await db.execute(
                     "SELECT COUNT(*) FROM reconciliation_log "
                     "WHERE status = 'discrepancy' AND checked_at >= ?",
@@ -910,9 +909,6 @@ def _build_app(static_dir: str | None = None) -> FastAPI:
 
             # Invariant violations (last 24h)
             try:
-                _cutoff_24h = (
-                    datetime.now(timezone.utc) - timedelta(hours=24)
-                ).isoformat()
                 inv_cursor = await db.execute(
                     "SELECT COUNT(*) FROM invariant_violations WHERE violated_at >= ?",
                     (_cutoff_24h,),
@@ -973,12 +969,9 @@ def _build_app(static_dir: str | None = None) -> FastAPI:
 
             # Signal count last 24h
             try:
-                _sig_cutoff_24h = (
-                    datetime.now(timezone.utc) - timedelta(hours=24)
-                ).isoformat()
                 sig_count_cursor = await db.execute(
                     "SELECT COUNT(*) FROM signals WHERE fired_at >= ?",
-                    (_sig_cutoff_24h,),
+                    (_cutoff_24h,),
                 )
                 sig_count_row = await sig_count_cursor.fetchone()
                 result["signals_24h"] = sig_count_row[0] if sig_count_row else 0
