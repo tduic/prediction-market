@@ -227,6 +227,7 @@ def _build_app(static_dir: str | None = None) -> FastAPI:
             except Exception as _dl_err:
                 logger.debug("overview: daily_loss_pct_used query failed: %s", _dl_err)
 
+            net_pnl = round(realized_pnl_total + unrealized_pnl - total_fees, 2)
             return {
                 "total_capital": round(total_capital, 2),
                 "cash": round(cash, 2),
@@ -235,6 +236,7 @@ def _build_app(static_dir: str | None = None) -> FastAPI:
                 "unrealized_pnl": round(unrealized_pnl, 2),
                 "realized_pnl_total": round(realized_pnl_total, 2),
                 "total_fees": round(total_fees, 2),
+                "net_pnl": net_pnl,
                 "net_return_pct": round(net_return_pct, 2),
                 "snapshotted_at": snapshotted_at,
                 "signals_24h": signals_24h,
@@ -264,7 +266,9 @@ def _build_app(static_dir: str | None = None) -> FastAPI:
                     COALESCE(AVG(signal_to_fill_ms), 0) as avg_execution_time_ms,
                     COALESCE(SUM(actual_pnl * actual_pnl), 0) as sum_pnl_sq,
                     COUNT(actual_pnl) as pnl_count,
-                    COALESCE(AVG(spread_at_signal), 0) as avg_spread_at_signal
+                    COALESCE(AVG(spread_at_signal), 0) as avg_spread_at_signal,
+                    MAX(actual_pnl) as max_pnl,
+                    MIN(actual_pnl) as min_pnl
                 FROM trade_outcomes
                 WHERE created_at >= ?
                 GROUP BY strategy
@@ -330,6 +334,8 @@ def _build_app(static_dir: str | None = None) -> FastAPI:
                         "avg_spread_at_signal": round(
                             row_dict.get("avg_spread_at_signal", 0) or 0, 4
                         ),
+                        "max_pnl": round(row_dict.get("max_pnl") or 0, 4),
+                        "min_pnl": round(row_dict.get("min_pnl") or 0, 4),
                     }
                 )
 
@@ -632,6 +638,49 @@ def _build_app(static_dir: str | None = None) -> FastAPI:
                 "by_platform": fees_by_platform,
                 "by_strategy": fees_by_strategy,
             }
+        finally:
+            await close_db(db)
+
+    @app.get("/api/daily-pnl")
+    async def get_daily_pnl(
+        days: int = Query(30, ge=1, le=365),
+    ) -> list[dict[str, Any]]:
+        """Daily P&L bucketed by UTC date for the last N days.
+
+        Returns one row per day with gross P&L, fees, net P&L, and trade count.
+        Days with no trades are omitted (sparse series).
+        """
+        db = await get_db()
+        try:
+            cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
+            cursor = await db.execute(
+                """
+                SELECT
+                    DATE(created_at) AS trade_date,
+                    COUNT(*) AS trade_count,
+                    COALESCE(SUM(actual_pnl), 0) AS gross_pnl,
+                    COALESCE(SUM(fees_total), 0) AS total_fees,
+                    COALESCE(SUM(actual_pnl) - SUM(COALESCE(fees_total, 0)), 0) AS net_pnl,
+                    SUM(CASE WHEN actual_pnl > 0 THEN 1 ELSE 0 END) AS win_count
+                FROM trade_outcomes
+                WHERE created_at >= ?
+                GROUP BY DATE(created_at)
+                ORDER BY trade_date ASC
+                """,
+                (cutoff_date.isoformat(),),
+            )
+            rows = await cursor.fetchall()
+            return [
+                {
+                    "date": dict(r)["trade_date"],
+                    "trade_count": dict(r)["trade_count"],
+                    "gross_pnl": round(dict(r)["gross_pnl"], 4),
+                    "total_fees": round(dict(r)["total_fees"], 4),
+                    "net_pnl": round(dict(r)["net_pnl"], 4),
+                    "win_count": dict(r)["win_count"],
+                }
+                for r in rows
+            ]
         finally:
             await close_db(db)
 

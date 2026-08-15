@@ -633,3 +633,128 @@ class TestReconciliationEndpoint:
         assert resp.status_code == 200
         data = resp.json()
         assert "total_count" in data
+
+
+# ── /api/overview net_pnl field ──────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+class TestOverviewNetPnl:
+    async def test_net_pnl_present(self, app_and_client):
+        _, client, _ = app_and_client
+        resp = await client.get("/api/overview")
+        assert resp.status_code == 200
+        assert "net_pnl" in resp.json()
+
+    async def test_net_pnl_zero_on_empty_db(self, app_and_client):
+        _, client, _ = app_and_client
+        resp = await client.get("/api/overview")
+        assert resp.json()["net_pnl"] == 0.0
+
+    async def test_net_pnl_reflects_trades(self, app_and_client):
+        _, client, db_path = app_and_client
+        import aiosqlite
+
+        async with aiosqlite.connect(db_path) as file_db:
+            file_db.row_factory = aiosqlite.Row
+            await _seed_trade_outcome(file_db, pnl=20.0, fees=2.0)
+
+        resp = await client.get("/api/overview")
+        data = resp.json()
+        # net_pnl = realized_pnl_total + unrealized_pnl - total_fees
+        # snapshot not seeded, so: 20.0 + 0.0 - 2.0 = 18.0
+        assert data["net_pnl"] == round(
+            data["realized_pnl_total"] + data["unrealized_pnl"] - data["total_fees"], 2
+        )
+
+
+# ── /api/strategies max_pnl / min_pnl fields ─────────────────────────────────
+
+
+@pytest.mark.asyncio
+class TestStrategiesOutlierFields:
+    async def test_max_min_pnl_present_in_row(self, app_and_client):
+        _, client, db_path = app_and_client
+        import aiosqlite
+
+        async with aiosqlite.connect(db_path) as file_db:
+            file_db.row_factory = aiosqlite.Row
+            await _seed_trade_outcome(file_db, strategy="P1_cross_market_arb", pnl=5.0)
+
+        resp = await client.get("/api/strategies")
+        rows = resp.json()
+        assert len(rows) >= 1
+        row = rows[0]
+        assert "max_pnl" in row, "max_pnl field missing"
+        assert "min_pnl" in row, "min_pnl field missing"
+
+    async def test_max_min_pnl_values(self, app_and_client):
+        _, client, db_path = app_and_client
+        import aiosqlite
+
+        async with aiosqlite.connect(db_path) as file_db:
+            file_db.row_factory = aiosqlite.Row
+            await _seed_trade_outcome(file_db, strategy="P2_structured_event", pnl=10.0)
+
+        resp = await client.get("/api/strategies")
+        rows = resp.json()
+        row = next((r for r in rows if r["strategy"] == "P2_structured_event"), None)
+        assert row is not None
+        assert row["max_pnl"] == row["min_pnl"]  # single trade, max == min
+        assert row["max_pnl"] == 10.0
+
+
+# ── /api/daily-pnl ───────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+class TestDailyPnlEndpoint:
+    async def test_endpoint_exists(self, app_and_client):
+        _, client, _ = app_and_client
+        resp = await client.get("/api/daily-pnl")
+        assert resp.status_code == 200
+
+    async def test_empty_db_returns_empty_list(self, app_and_client):
+        _, client, _ = app_and_client
+        resp = await client.get("/api/daily-pnl")
+        assert resp.json() == []
+
+    async def test_returns_list(self, app_and_client):
+        _, client, _ = app_and_client
+        resp = await client.get("/api/daily-pnl")
+        assert isinstance(resp.json(), list)
+
+    async def test_row_shape(self, app_and_client):
+        _, client, db_path = app_and_client
+        import aiosqlite
+
+        async with aiosqlite.connect(db_path) as file_db:
+            file_db.row_factory = aiosqlite.Row
+            await _seed_trade_outcome(file_db, pnl=12.0, fees=0.5)
+
+        resp = await client.get("/api/daily-pnl")
+        rows = resp.json()
+        assert len(rows) >= 1
+        row = rows[0]
+        for key in ("date", "trade_count", "gross_pnl", "total_fees", "net_pnl", "win_count"):
+            assert key in row, f"Missing key: {key}"
+
+    async def test_net_pnl_equals_gross_minus_fees(self, app_and_client):
+        _, client, db_path = app_and_client
+        import aiosqlite
+
+        async with aiosqlite.connect(db_path) as file_db:
+            file_db.row_factory = aiosqlite.Row
+            await _seed_trade_outcome(file_db, pnl=15.0, fees=1.5)
+
+        resp = await client.get("/api/daily-pnl")
+        rows = resp.json()
+        assert len(rows) >= 1
+        row = rows[0]
+        assert round(row["gross_pnl"] - row["total_fees"], 4) == row["net_pnl"]
+
+    async def test_days_param(self, app_and_client):
+        _, client, _ = app_and_client
+        resp = await client.get("/api/daily-pnl?days=7")
+        assert resp.status_code == 200
+        assert isinstance(resp.json(), list)
