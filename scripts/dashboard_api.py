@@ -366,6 +366,8 @@ def _build_app(static_dir: str | None = None) -> FastAPI:
                             "avg_execution_time_ms": 0.0,
                             "signals_24h": signals_24h_map.get(strat, 0),
                             "avg_spread_at_signal": 0.0,
+                            "max_pnl": 0.0,
+                            "min_pnl": 0.0,
                         }
                     )
 
