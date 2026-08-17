@@ -257,6 +257,58 @@ class TestTradesEndpoint:
         assert all(r["strategy"] == "P3_calibration_bias" for r in rows)
 
 
+# ── /api/trades/count ────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+class TestTradesCountEndpoint:
+    async def test_empty_db_returns_zero(self, app_and_client):
+        _, client, _ = app_and_client
+        resp = await client.get("/api/trades/count")
+        assert resp.status_code == 200
+        assert resp.json() == {"total_count": 0}
+
+    async def test_count_matches_trade_outcomes(self, app_and_client):
+        _, client, db_path = app_and_client
+        import aiosqlite
+
+        async with aiosqlite.connect(db_path) as file_db:
+            file_db.row_factory = aiosqlite.Row
+            await _seed_trade_outcome(file_db, strategy="P1_cross_market_arb", pnl=1.0)
+            await _seed_trade_outcome(file_db, strategy="P2_structured_event", pnl=2.0)
+
+        resp = await client.get("/api/trades/count")
+        assert resp.status_code == 200
+        assert resp.json()["total_count"] == 2
+
+    async def test_strategy_filter(self, app_and_client):
+        _, client, db_path = app_and_client
+        import aiosqlite
+
+        async with aiosqlite.connect(db_path) as file_db:
+            file_db.row_factory = aiosqlite.Row
+            await _seed_trade_outcome(file_db, strategy="P1_cross_market_arb", pnl=1.0)
+            await _seed_trade_outcome(file_db, strategy="P2_structured_event", pnl=2.0)
+
+        resp = await client.get("/api/trades/count?strategy=P1_cross_market_arb")
+        assert resp.status_code == 200
+        assert resp.json()["total_count"] == 1
+
+    async def test_count_consistent_with_trades_list(self, app_and_client):
+        """count endpoint and list endpoint agree on the same total."""
+        _, client, db_path = app_and_client
+        import aiosqlite
+
+        async with aiosqlite.connect(db_path) as file_db:
+            file_db.row_factory = aiosqlite.Row
+            for i in range(3):
+                await _seed_trade_outcome(file_db, pnl=float(i + 1))
+
+        count_resp = await client.get("/api/trades/count")
+        list_resp = await client.get("/api/trades?limit=1000")
+        assert count_resp.json()["total_count"] == len(list_resp.json())
+
+
 # ── /api/risk ───────────────────────────────────────────────────────────────────────────────────────────
 
 
@@ -272,9 +324,15 @@ class TestRiskEndpoint:
             "max_drawdown",
             "concentration_pct",
             "daily_var",
+            "daily_var_confidence_pct",
             "sharpe_overall",
         ):
             assert key in data, f"Missing key: {key}"
+
+    async def test_var_confidence_pct_is_95(self, app_and_client):
+        _, client, _ = app_and_client
+        resp = await client.get("/api/risk")
+        assert resp.json()["daily_var_confidence_pct"] == 95
 
     async def test_empty_db_returns_zeros(self, app_and_client):
         _, client, _ = app_and_client
@@ -736,7 +794,14 @@ class TestDailyPnlEndpoint:
         rows = resp.json()
         assert len(rows) >= 1
         row = rows[0]
-        for key in ("date", "trade_count", "gross_pnl", "total_fees", "net_pnl", "win_count"):
+        for key in (
+            "date",
+            "trade_count",
+            "gross_pnl",
+            "total_fees",
+            "net_pnl",
+            "win_count",
+        ):
             assert key in row, f"Missing key: {key}"
 
     async def test_net_pnl_equals_gross_minus_fees(self, app_and_client):

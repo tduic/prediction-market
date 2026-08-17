@@ -497,6 +497,34 @@ def _build_app(static_dir: str | None = None) -> FastAPI:
         finally:
             await close_db(db)
 
+    @app.get("/api/trades/count")
+    async def get_trades_count(
+        strategy: str | None = Query(None),
+        days: float = Query(30, ge=0.01, le=365.0),
+    ) -> dict[str, Any]:
+        """Total number of trade outcomes matching the same filters as /api/trades.
+
+        Clients use this alongside /api/trades?limit=N&offset=M to build
+        paginated UIs without fetching all rows.
+        """
+        db = await get_db()
+        try:
+            cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
+            if strategy:
+                cursor = await db.execute(
+                    "SELECT COUNT(*) FROM trade_outcomes WHERE created_at >= ? AND strategy = ?",
+                    (cutoff_date.isoformat(), strategy),
+                )
+            else:
+                cursor = await db.execute(
+                    "SELECT COUNT(*) FROM trade_outcomes WHERE created_at >= ?",
+                    (cutoff_date.isoformat(),),
+                )
+            row = await cursor.fetchone()
+            return {"total_count": row[0] if row else 0}
+        finally:
+            await close_db(db)
+
     @app.get("/api/risk")
     async def get_risk() -> dict[str, Any]:
         PAPER_CAPITAL = get_config().risk_controls.starting_capital
@@ -563,10 +591,11 @@ def _build_app(static_dir: str | None = None) -> FastAPI:
                 r["daily_pnl"] for r in daily_rows if r["daily_pnl"] is not None
             ]
 
+            _VAR_TAIL_PCT = 0.05  # 5th percentile → 95% confidence VaR
             daily_var = 0.0
             if len(daily_pnls) > 1:
                 daily_pnls_sorted = sorted(daily_pnls)
-                percentile_5_idx = max(0, int(len(daily_pnls_sorted) * 0.05))
+                percentile_5_idx = max(0, int(len(daily_pnls_sorted) * _VAR_TAIL_PCT))
                 # VaR = magnitude of loss at 5th percentile.  A positive P&L at
                 # the 5th percentile means no loss-tail risk, so VaR = 0.
                 daily_var = max(0.0, -daily_pnls_sorted[percentile_5_idx])
@@ -592,6 +621,7 @@ def _build_app(static_dir: str | None = None) -> FastAPI:
                 "concentration_pct": round(concentration, 2),
                 "daily_var": round(daily_var, 2),
                 "daily_var_sample_size": len(daily_pnls),
+                "daily_var_confidence_pct": round((1 - _VAR_TAIL_PCT) * 100),
                 "sharpe_overall": round(overall_sharpe, 2),
                 "sharpe_sample_size": len(pnl_values),
             }
