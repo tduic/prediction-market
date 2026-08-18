@@ -559,18 +559,18 @@ def _build_app(static_dir: str | None = None) -> FastAPI:
 
             max_drawdown = 0.0
             max_drawdown_dollar = 0.0
-            if snapshots:
-                peak_capital = None
-                for snap in snapshots:
-                    current_capital = snap["total_capital"] or 0
-                    if peak_capital is None or current_capital > peak_capital:
-                        peak_capital = current_capital
-                    if peak_capital and peak_capital > 0:
-                        dd_dollar = peak_capital - current_capital
-                        drawdown = dd_dollar / peak_capital * 100
-                        if drawdown > max_drawdown:
-                            max_drawdown = drawdown
-                            max_drawdown_dollar = dd_dollar
+            # Seed the peak at PAPER_CAPITAL so losses that occurred before the
+            # first snapshot still count toward max drawdown.
+            peak_capital = PAPER_CAPITAL
+            for snap in snapshots:
+                current_capital = snap["total_capital"] or 0
+                peak_capital = max(peak_capital, current_capital)
+                if peak_capital > 0:
+                    dd_dollar = peak_capital - current_capital
+                    drawdown = dd_dollar / peak_capital * 100
+                    if drawdown > max_drawdown:
+                        max_drawdown = drawdown
+                        max_drawdown_dollar = dd_dollar
 
             cursor = await db.execute(
                 "SELECT MAX(entry_price * entry_size) as max_pos FROM positions WHERE status = 'open'"
@@ -767,6 +767,34 @@ def _build_app(static_dir: str | None = None) -> FastAPI:
                     }
                 )
             return result
+        finally:
+            await close_db(db)
+
+    @app.get("/api/signals/count")
+    async def get_signals_count(
+        strategy: str | None = Query(None),
+        days: float = Query(7, ge=0.01, le=365.0),
+    ) -> dict[str, Any]:
+        """Total number of signals matching the same filters as /api/signals.
+
+        Clients use this alongside /api/signals?limit=N&offset=M to build
+        paginated UIs without fetching all rows.
+        """
+        db = await get_db()
+        try:
+            cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
+            if strategy:
+                cursor = await db.execute(
+                    "SELECT COUNT(*) FROM signals WHERE fired_at >= ? AND strategy = ?",
+                    (cutoff_date.isoformat(), strategy),
+                )
+            else:
+                cursor = await db.execute(
+                    "SELECT COUNT(*) FROM signals WHERE fired_at >= ?",
+                    (cutoff_date.isoformat(),),
+                )
+            row = await cursor.fetchone()
+            return {"total_count": row[0] if row else 0}
         finally:
             await close_db(db)
 
