@@ -1076,7 +1076,7 @@ def _build_app(static_dir: str | None = None) -> FastAPI:
                 result["last_signal_age_s"] = None
                 issues.append("signal_age_query_failed")
 
-            # Signal count last 24h
+            # Signal count last 24h — total and per-strategy breakdown
             try:
                 sig_count_cursor = await db.execute(
                     "SELECT COUNT(*) FROM signals WHERE fired_at >= ?",
@@ -1087,6 +1087,19 @@ def _build_app(static_dir: str | None = None) -> FastAPI:
             except Exception:
                 result["signals_24h"] = None
                 issues.append("signal_count_query_failed")
+
+            try:
+                strat_sig_cursor = await db.execute(
+                    "SELECT strategy, COUNT(*) as cnt FROM signals "
+                    "WHERE fired_at >= ? GROUP BY strategy",
+                    (_cutoff_24h,),
+                )
+                strat_sig_rows = await strat_sig_cursor.fetchall()
+                result["signals_24h_by_strategy"] = {
+                    r["strategy"]: r["cnt"] for r in strat_sig_rows
+                }
+            except Exception:
+                result["signals_24h_by_strategy"] = None
 
             # Daily loss budget utilization
             try:

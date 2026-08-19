@@ -131,6 +131,54 @@ async def mark_and_close_positions(
     )
     rows = await cursor.fetchall()
 
+    # Batch-fetch market prices for positions not already in price_cache.
+    # This avoids one SELECT per position when the cache is cold or missing entries.
+    _uncached_market_ids = list(
+        {r[1] for r in rows if not (price_cache and r[1] in price_cache)}
+    )
+    _db_prices: dict[str, float] = {}
+    if _uncached_market_ids:
+        _ph = ",".join("?" for _ in _uncached_market_ids)
+        _pr_cur = await db.execute(
+            f"SELECT market_id, yes_price FROM market_prices "
+            f"WHERE id IN (SELECT MAX(id) FROM market_prices "
+            f"             WHERE market_id IN ({_ph}) GROUP BY market_id)",
+            _uncached_market_ids,
+        )
+        for _pr_row in await _pr_cur.fetchall():
+            _db_prices[_pr_row[0]] = _pr_row[1]
+
+    # Batch-fetch signal metadata for all closing positions that have a signal_id.
+    _signal_ids = list({r[6] for r in rows if r[6]})
+    _signal_meta: dict[str, tuple] = {}
+    if _signal_ids:
+        _sig_ph = ",".join("?" for _ in _signal_ids)
+        _sig_cur = await db.execute(
+            f"SELECT id, violation_id, model_edge, position_size_a, fired_at "
+            f"FROM signals WHERE id IN ({_sig_ph})",
+            _signal_ids,
+        )
+        for _sig_row in await _sig_cur.fetchall():
+            _signal_meta[_sig_row[0]] = _sig_row
+
+    # Batch-fetch violation spreads for all violation_ids referenced by signals.
+    _violation_ids = list(
+        {
+            _signal_meta[sid][1]
+            for sid in _signal_ids
+            if _signal_meta.get(sid) and _signal_meta[sid][1]
+        }
+    )
+    _violation_spread: dict[str, float | None] = {}
+    if _violation_ids:
+        _viol_ph = ",".join("?" for _ in _violation_ids)
+        _viol_cur = await db.execute(
+            f"SELECT id, raw_spread FROM violations WHERE id IN ({_viol_ph})",
+            _violation_ids,
+        )
+        for _viol_row in await _viol_cur.fetchall():
+            _violation_spread[_viol_row[0]] = _viol_row[1]
+
     closed = 0
     for row in rows:
         (
@@ -145,22 +193,16 @@ async def mark_and_close_positions(
             opened_at,
         ) = row
 
-        # Use live cache price if available, fall back to DB
+        # Use live cache price, then batch-fetched DB prices
         if price_cache and market_id in price_cache:
             current_price = price_cache[market_id]
+        elif market_id in _db_prices:
+            current_price = _db_prices[market_id]
         else:
-            price_cursor = await db.execute(
-                "SELECT yes_price FROM market_prices WHERE market_id=? "
-                "ORDER BY polled_at DESC LIMIT 1",
-                (market_id,),
+            logger.debug(
+                "mark_and_close: no price for market %s -- leaving open", market_id
             )
-            price_row = await price_cursor.fetchone()
-            if price_row is None:
-                logger.debug(
-                    "mark_and_close: no price for market %s -- leaving open", market_id
-                )
-                continue
-            current_price = price_row[0]
+            continue
         if side == "BUY":
             realized_pnl = round(
                 (current_price - entry_price) * entry_size - (fees_paid or 0), 4
@@ -202,9 +244,7 @@ async def mark_and_close_positions(
                 except Exception:
                     pass
 
-            # Populate edge/spread metrics from signals and violations so
-            # /api/strategies can compute avg_edge_capture and avg_spread
-            # for single-platform strategies (not just P1 arb).
+            # Populate edge/spread metrics from pre-fetched signal/violation data.
             violation_id = None
             predicted_edge = None
             predicted_pnl = None
@@ -212,17 +252,12 @@ async def mark_and_close_positions(
             spread_at_signal = None
             signal_to_fill_ms = None
             try:
-                sig_cur = await db.execute(
-                    "SELECT violation_id, model_edge, position_size_a, fired_at "
-                    "FROM signals WHERE id=?",
-                    (signal_id,),
-                )
-                sig_row = await sig_cur.fetchone()
+                sig_row = _signal_meta.get(signal_id) if signal_id else None
                 if sig_row:
-                    violation_id = sig_row[0]
-                    pred_edge = sig_row[1]
-                    pred_size = sig_row[2] or entry_size
-                    sig_fired_at = sig_row[3]
+                    violation_id = sig_row[1]
+                    pred_edge = sig_row[2]
+                    pred_size = sig_row[3] or entry_size
+                    sig_fired_at = sig_row[4]
                     if pred_edge is not None:
                         predicted_edge = pred_edge
                         predicted_pnl = round(pred_edge * pred_size, 4)
@@ -231,13 +266,7 @@ async def mark_and_close_positions(
                                 realized_pnl / predicted_pnl * 100, 1
                             )
                     if violation_id:
-                        viol_cur = await db.execute(
-                            "SELECT raw_spread FROM violations WHERE id=?",
-                            (violation_id,),
-                        )
-                        viol_row = await viol_cur.fetchone()
-                        if viol_row:
-                            spread_at_signal = viol_row[0]
+                        spread_at_signal = _violation_spread.get(violation_id)
                     if sig_fired_at and opened_at:
                         try:
                             fired_dt = datetime.fromisoformat(sig_fired_at)
