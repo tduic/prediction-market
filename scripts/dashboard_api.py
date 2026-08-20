@@ -846,21 +846,45 @@ def _build_app(static_dir: str | None = None) -> FastAPI:
     async def get_positions(
         status: str | None = Query(None),
         limit: int = Query(200, ge=1, le=1000),
+        offset: int = Query(0, ge=0),
     ) -> list[dict[str, Any]]:
         db = await get_db()
         try:
             if status:
                 cursor = await db.execute(
-                    "SELECT * FROM positions WHERE status = ? ORDER BY updated_at DESC LIMIT ?",
-                    (status, limit),
+                    "SELECT * FROM positions WHERE status = ? ORDER BY updated_at DESC LIMIT ? OFFSET ?",
+                    (status, limit, offset),
                 )
             else:
                 cursor = await db.execute(
-                    "SELECT * FROM positions ORDER BY updated_at DESC LIMIT ?",
-                    (limit,),
+                    "SELECT * FROM positions ORDER BY updated_at DESC LIMIT ? OFFSET ?",
+                    (limit, offset),
                 )
             rows = await cursor.fetchall()
             return [dict(row) for row in rows]
+        finally:
+            await close_db(db)
+
+    @app.get("/api/positions/count")
+    async def get_positions_count(
+        status: str | None = Query(None),
+    ) -> dict[str, Any]:
+        """Total number of positions matching the same filters as /api/positions.
+
+        Clients use this alongside /api/positions?limit=N&offset=M to build
+        paginated UIs without fetching all rows.
+        """
+        db = await get_db()
+        try:
+            if status:
+                cursor = await db.execute(
+                    "SELECT COUNT(*) FROM positions WHERE status = ?",
+                    (status,),
+                )
+            else:
+                cursor = await db.execute("SELECT COUNT(*) FROM positions")
+            row = await cursor.fetchone()
+            return {"total_count": row[0] if row else 0}
         finally:
             await close_db(db)
 

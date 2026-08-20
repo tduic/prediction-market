@@ -658,6 +658,36 @@ class TestPositionsEndpoint:
         resp = await client.get("/api/positions?limit=10")
         assert resp.status_code == 200
 
+    async def test_positions_offset_param(self, app_and_client):
+        _, client, _ = app_and_client
+        resp = await client.get("/api/positions?offset=0")
+        assert resp.status_code == 200
+        resp2 = await client.get("/api/positions?limit=5&offset=100")
+        assert resp2.status_code == 200
+        assert resp2.json() == []
+
+    async def test_positions_count_endpoint_exists(self, app_and_client):
+        _, client, _ = app_and_client
+        resp = await client.get("/api/positions/count")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "total_count" in data
+        assert isinstance(data["total_count"], int)
+
+    async def test_positions_count_empty_db(self, app_and_client):
+        _, client, _ = app_and_client
+        resp = await client.get("/api/positions/count")
+        assert resp.json()["total_count"] == 0
+
+    async def test_positions_count_status_filter(self, app_and_client):
+        _, client, _ = app_and_client
+        resp_open = await client.get("/api/positions/count?status=open")
+        resp_closed = await client.get("/api/positions/count?status=closed")
+        assert resp_open.status_code == 200
+        assert resp_closed.status_code == 200
+        assert resp_open.json()["total_count"] == 0
+        assert resp_closed.json()["total_count"] == 0
+
 
 # ── /api/reconciliation ──────────────────────────────────────────────────────────────────────────────────
 
