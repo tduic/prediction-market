@@ -328,7 +328,7 @@ def _build_app(static_dir: str | None = None) -> FastAPI:
                             row_dict.get("avg_edge_capture", 0) or 0, 2
                         ),
                         "avg_execution_time_ms": round(
-                            row_dict.get("avg_execution_time_ms", 0) or 0, 0
+                            row_dict.get("avg_execution_time_ms", 0) or 0
                         ),
                         "signals_24h": signals_24h_map.get(row_dict.get("strategy"), 0),
                         "avg_spread_at_signal": round(
@@ -403,6 +403,9 @@ def _build_app(static_dir: str | None = None) -> FastAPI:
                     "realized_pnl": round(d.get("realized_pnl", 0) or 0, 2),
                     "unrealized_pnl": round(d.get("unrealized_pnl", 0) or 0, 2),
                     "fees": round(d.get("fees", 0) or 0, 2),
+                    "net_realized_pnl": round(
+                        (d.get("realized_pnl", 0) or 0) - (d.get("fees", 0) or 0), 2
+                    ),
                     "trade_count": d.get("trade_count", 0) or 0,
                     "win_count": d.get("win_count", 0) or 0,
                 }
@@ -710,6 +713,9 @@ def _build_app(static_dir: str | None = None) -> FastAPI:
                     "total_fees": round(dict(r)["total_fees"], 4),
                     "net_pnl": round(dict(r)["net_pnl"], 4),
                     "win_count": dict(r)["win_count"],
+                    "win_rate": round(
+                        dict(r)["win_count"] / dict(r)["trade_count"], 4
+                    ) if dict(r)["trade_count"] > 0 else 0.0,
                 }
                 for r in rows
             ]
