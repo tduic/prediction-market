@@ -177,7 +177,16 @@ async def check_portfolio_exposure(
             row = await cursor.fetchone()
             current_exposure = row[0] if row and row[0] else 0
         except Exception as e:
-            logger.warning("Could not query open exposure: %s", e)
+            logger.error(
+                "Error querying open exposure — failing check for safety: %s", e
+            )
+            return RiskCheckResult(
+                passed=False,
+                check_type="portfolio_exposure",
+                check_value=0,
+                threshold=max_exposure,
+                detail=f"DB error during open exposure query — check failed for safety: {e}",
+            )
 
     # Add this signal's notional
     signal_notional = 0.0
