@@ -427,3 +427,83 @@ async def test_reconciliation_stuck_order_dedup_prevents_double_log(db):
     assert row[0] == 1, (
         "Dedup should prevent a second log entry for the same stuck order"
     )
+
+
+# ── signals_without_orders tests ─────────────────────────────────────────────
+
+
+async def _seed_signal_aged(db, signal_id: str, market_id: str, age_s: int) -> None:
+    """Seed a signal with fired_at set to `age_s` seconds in the past."""
+    from datetime import timedelta
+
+    fired_at = (datetime.now(timezone.utc) - timedelta(seconds=age_s)).isoformat()
+    await db.execute(
+        """INSERT INTO signals
+           (id, strategy, signal_type, market_id_a, model_edge,
+            kelly_fraction, position_size_a, total_capital_at_risk,
+            fired_at, updated_at)
+           VALUES (?, 'P1_cross_market_arb', 'arb', ?, 0.02,
+                   0.25, 100.0, 100.0, ?, ?)""",
+        (signal_id, market_id, fired_at, fired_at),
+    )
+
+
+@pytest.mark.asyncio
+async def test_reconciliation_flags_signal_without_orders(db):
+    """Signal fired >60s ago with no orders → flagged as signals_without_orders."""
+    await _seed_market(db, "mktH", status="open")
+    await _seed_signal_aged(db, "sigH", "mktH", age_s=120)
+    await db.commit()
+
+    summary = await reconcile_internal_state(db)
+    assert summary["signals_without_orders"] == 1
+
+    cursor = await db.execute(
+        "SELECT detail FROM reconciliation_log WHERE check_type='signal_without_orders'"
+    )
+    rows = await cursor.fetchall()
+    assert len(rows) == 1
+    assert "sigH" in rows[0]["detail"]
+
+
+@pytest.mark.asyncio
+async def test_reconciliation_skips_signal_within_grace_period(db):
+    """Signal fired <60s ago (in-flight) must not be flagged."""
+    await _seed_market(db, "mktI", status="open")
+    await _seed_signal_aged(db, "sigI", "mktI", age_s=10)
+    await db.commit()
+
+    summary = await reconcile_internal_state(db)
+    assert summary["signals_without_orders"] == 0
+
+
+@pytest.mark.asyncio
+async def test_reconciliation_skips_signal_that_has_orders(db):
+    """Signal with a corresponding order must not be flagged."""
+    await _seed_market(db, "mktJ", status="open")
+    await _seed_signal_aged(db, "sigJ", "mktJ", age_s=120)
+    await _seed_order(db, "ordJ", signal_id="sigJ", market_id="mktJ", status="filled")
+    await db.commit()
+
+    summary = await reconcile_internal_state(db)
+    assert summary["signals_without_orders"] == 0
+
+
+@pytest.mark.asyncio
+async def test_reconciliation_signals_without_orders_dedup(db):
+    """Running reconciliation twice for the same orderless signal logs it only once."""
+    await _seed_market(db, "mktK", status="open")
+    await _seed_signal_aged(db, "sigK", "mktK", age_s=120)
+    await db.commit()
+
+    summary1 = await reconcile_internal_state(db)
+    assert summary1["signals_without_orders"] == 1
+
+    summary2 = await reconcile_internal_state(db)
+    assert summary2["signals_without_orders"] == 0
+
+    cursor = await db.execute(
+        "SELECT COUNT(*) FROM reconciliation_log WHERE check_type='signal_without_orders'"
+    )
+    row = await cursor.fetchone()
+    assert row[0] == 1, "Dedup should prevent a second log entry for the same signal"

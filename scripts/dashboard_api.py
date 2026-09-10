@@ -614,7 +614,7 @@ def _build_app(static_dir: str | None = None) -> FastAPI:
                 FROM trade_outcomes
                 WHERE created_at >= ?
                 GROUP BY DATE(created_at)
-                ORDER BY trade_date DESC LIMIT 30
+                ORDER BY trade_date ASC
                 """,
                 (_cutoff_90d,),
             )
