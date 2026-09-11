@@ -16,7 +16,6 @@ import math
 import os
 import secrets
 import sqlite3
-import statistics
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -633,19 +632,23 @@ def _build_app(static_dir: str | None = None) -> FastAPI:
                 daily_var = max(0.0, -daily_pnls_sorted[percentile_5_idx])
 
             cursor = await db.execute(
-                "SELECT actual_pnl FROM trade_outcomes WHERE actual_pnl IS NOT NULL"
-                " AND created_at >= ?",
+                "SELECT COUNT(actual_pnl), COALESCE(AVG(actual_pnl), 0), "
+                "COALESCE(SUM(actual_pnl * actual_pnl), 0) "
+                "FROM trade_outcomes WHERE actual_pnl IS NOT NULL AND created_at >= ?",
                 (_cutoff_90d,),
             )
-            pnl_rows = await cursor.fetchall()
-            pnl_values = [r["actual_pnl"] for r in pnl_rows]
+            _agg = await cursor.fetchone()
+            pnl_count = int(_agg[0] or 0)
+            _mean_pnl = float(_agg[1] or 0)
+            _sum_pnl_sq = float(_agg[2] or 0)
 
             overall_sharpe = 0
-            if len(pnl_values) > 1:
-                mean_pnl = statistics.mean(pnl_values)
-                stdev_pnl = statistics.stdev(pnl_values)
-                if stdev_pnl > 0:
-                    overall_sharpe = mean_pnl / stdev_pnl
+            if pnl_count > 1:
+                _variance = max(
+                    0.0, (_sum_pnl_sq - pnl_count * _mean_pnl**2) / (pnl_count - 1)
+                )
+                if _variance > 0:
+                    overall_sharpe = _mean_pnl / math.sqrt(_variance)
 
             worst_day_pnl = round(min(daily_pnls), 2) if daily_pnls else 0.0
             best_day_pnl = round(max(daily_pnls), 2) if daily_pnls else 0.0
@@ -663,7 +666,7 @@ def _build_app(static_dir: str | None = None) -> FastAPI:
                 "daily_var_reliable": len(daily_pnls) >= 20,
                 "daily_var_confidence_pct": round((1 - _VAR_TAIL_PCT) * 100),
                 "sharpe_overall": round(overall_sharpe, 2),
-                "sharpe_sample_size": len(pnl_values),
+                "sharpe_sample_size": pnl_count,
                 "worst_day_pnl": worst_day_pnl,
                 "best_day_pnl": best_day_pnl,
                 "profitable_days_pct": profitable_days_pct,

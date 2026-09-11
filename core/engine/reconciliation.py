@@ -366,10 +366,11 @@ async def _check_closed_without_outcomes(db: aiosqlite.Connection) -> int:
     cutoff_30d = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
     cursor = await db.execute(
         """
-        SELECT p.id, p.signal_id, p.market_id, p.updated_at
+        SELECT p.id, p.signal_id, p.market_id, p.closed_at
         FROM positions p
         WHERE p.status = 'closed'
-          AND p.updated_at >= ?
+          AND p.closed_at IS NOT NULL
+          AND p.closed_at >= ?
           AND p.signal_id IS NOT NULL
           AND NOT EXISTS (
               SELECT 1 FROM trade_outcomes t WHERE t.signal_id = p.signal_id
@@ -379,10 +380,10 @@ async def _check_closed_without_outcomes(db: aiosqlite.Connection) -> int:
     )
     rows = await cursor.fetchall()
     count = 0
-    for pos_id, signal_id, market_id, updated_at in rows:
+    for pos_id, signal_id, market_id, closed_at in rows:
         detail = (
             f"position_id={pos_id} signal_id={signal_id} "
-            f"market_id={market_id} closed_at={updated_at}"
+            f"market_id={market_id} closed_at={closed_at}"
         )
         if await _is_recently_logged(db, "closed_without_outcome", detail):
             continue
