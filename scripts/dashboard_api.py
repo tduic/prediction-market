@@ -481,12 +481,12 @@ def _build_app(static_dir: str | None = None) -> FastAPI:
             cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
             if strategy:
                 cursor = await db.execute(
-                    "SELECT * FROM trade_outcomes WHERE created_at >= ? AND strategy = ? ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                    "SELECT * FROM trade_outcomes WHERE created_at >= ? AND strategy = ? ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
                     (cutoff_date.isoformat(), strategy, limit, offset),
                 )
             else:
                 cursor = await db.execute(
-                    "SELECT * FROM trade_outcomes WHERE created_at >= ? ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                    "SELECT * FROM trade_outcomes WHERE created_at >= ? ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
                     (cutoff_date.isoformat(), limit, offset),
                 )
             rows = await cursor.fetchall()
@@ -785,7 +785,7 @@ def _build_app(static_dir: str | None = None) -> FastAPI:
                     "SELECT id, violation_id, strategy, signal_type, market_id_a, market_id_b, "
                     "model_edge, kelly_fraction, position_size_a, position_size_b, "
                     "total_capital_at_risk, status, fired_at, updated_at "
-                    "FROM signals WHERE fired_at >= ? AND strategy = ? ORDER BY fired_at DESC LIMIT ? OFFSET ?",
+                    "FROM signals WHERE fired_at >= ? AND strategy = ? ORDER BY fired_at DESC, id DESC LIMIT ? OFFSET ?",
                     (cutoff_date.isoformat(), strategy, limit, offset),
                 )
             else:
@@ -793,7 +793,7 @@ def _build_app(static_dir: str | None = None) -> FastAPI:
                     "SELECT id, violation_id, strategy, signal_type, market_id_a, market_id_b, "
                     "model_edge, kelly_fraction, position_size_a, position_size_b, "
                     "total_capital_at_risk, status, fired_at, updated_at "
-                    "FROM signals WHERE fired_at >= ? ORDER BY fired_at DESC LIMIT ? OFFSET ?",
+                    "FROM signals WHERE fired_at >= ? ORDER BY fired_at DESC, id DESC LIMIT ? OFFSET ?",
                     (cutoff_date.isoformat(), limit, offset),
                 )
             rows = await cursor.fetchall()
@@ -1078,7 +1078,7 @@ def _build_app(static_dir: str | None = None) -> FastAPI:
                 result["circuit_breaker"] = {"error": str(e)}
                 issues.append("circuit_breaker_query_failed")
 
-            # Reconciliation discrepancies (last 24h)
+            # Reconciliation discrepancies (last 24h) + liveness
             try:
                 rec_cursor = await db.execute(
                     "SELECT COUNT(*) FROM reconciliation_log "
@@ -1090,8 +1090,29 @@ def _build_app(static_dir: str | None = None) -> FastAPI:
                 result["reconciliation_discrepancies_24h"] = rec_count
                 if rec_count > 0:
                     issues.append(f"reconciliation_discrepancies:{rec_count}")
+
+                rec_live_cursor = await db.execute(
+                    "SELECT MAX(checked_at) FROM reconciliation_log"
+                )
+                rec_live_row = await rec_live_cursor.fetchone()
+                last_rec = rec_live_row[0] if rec_live_row else None
+                result["last_reconciliation_at"] = last_rec
+                if last_rec is not None:
+                    last_rec_dt = datetime.fromisoformat(last_rec)
+                    if last_rec_dt.tzinfo is None:
+                        last_rec_dt = last_rec_dt.replace(tzinfo=timezone.utc)
+                    rec_age_s = int(
+                        (datetime.now(timezone.utc) - last_rec_dt).total_seconds()
+                    )
+                    result["last_reconciliation_age_s"] = rec_age_s
+                    if rec_age_s > 3600:
+                        issues.append(f"reconciliation_stale:{rec_age_s}s")
+                else:
+                    result["last_reconciliation_age_s"] = None
             except Exception:
                 result["reconciliation_discrepancies_24h"] = None
+                result["last_reconciliation_at"] = None
+                result["last_reconciliation_age_s"] = None
                 issues.append("reconciliation_query_failed")
 
             # Invariant violations (last 24h)

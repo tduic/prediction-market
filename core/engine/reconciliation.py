@@ -210,6 +210,7 @@ async def _check_unbalanced_arb_pairs(db: aiosqlite.Connection) -> int:
                COUNT(*) AS leg_count,
                GROUP_CONCAT(
                    CASE WHEN o.status IN ('filled','partially_filled') THEN o.platform END
+                   ORDER BY o.platform
                ) AS filled_platforms
         FROM orders o
         JOIN multi_leg_signals mls ON o.signal_id = mls.signal_id
