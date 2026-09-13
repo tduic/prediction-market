@@ -266,8 +266,10 @@ class AlertManager:
         key = self._dedup_key(alert)
         window = window_s if window_s is not None else self.dedup_window_s
 
-        # Opportunistic cleanup of old entries
-        cutoff = now - self.dedup_window_s
+        # Opportunistic cleanup of old entries. Use the larger of the two dedup
+        # windows so CRITICAL entries (which may have a longer dedup window than
+        # the normal one) are not evicted before their suppress window expires.
+        cutoff = now - max(self.dedup_window_s, self.critical_dedup_window_s)
         self._recent = {k: t for k, t in self._recent.items() if t > cutoff}
 
         last = self._recent.get(key)

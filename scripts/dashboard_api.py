@@ -657,6 +657,22 @@ def _build_app(static_dir: str | None = None) -> FastAPI:
                 round(profitable_days / len(daily_pnls) * 100, 1) if daily_pnls else 0.0
             )
 
+            daily_loss_today = 0.0
+            daily_loss_limit = 0.0
+            daily_loss_pct_used = 0.0
+            try:
+                daily_loss_today = await _compute_daily_loss_today(db)
+                _cfg = get_config().risk_controls
+                daily_loss_limit = _cfg.starting_capital * _cfg.max_daily_loss_pct
+                daily_loss_pct_used = round(
+                    daily_loss_today / daily_loss_limit
+                    if daily_loss_limit > 0
+                    else 0.0,
+                    4,
+                )
+            except Exception as _dl_err:
+                logger.debug("risk: daily_loss_today query failed: %s", _dl_err)
+
             return {
                 "max_drawdown": round(max_drawdown_dollar, 2),
                 "max_drawdown_pct": round(max_drawdown, 2),
@@ -672,6 +688,9 @@ def _build_app(static_dir: str | None = None) -> FastAPI:
                 "profitable_days_pct": profitable_days_pct,
                 "profitable_days": profitable_days,
                 "total_days_with_trades_in_sample": len(daily_pnls),
+                "daily_loss_today": round(daily_loss_today, 4),
+                "daily_loss_limit": round(daily_loss_limit, 2),
+                "daily_loss_pct_used": daily_loss_pct_used,
             }
         finally:
             await close_db(db)
@@ -1025,6 +1044,21 @@ def _build_app(static_dir: str | None = None) -> FastAPI:
             discrepancy_row = await discrepancy_cursor.fetchone()
             discrepancy_count = discrepancy_row[0] if discrepancy_row else 0
 
+            discrepancy_count_24h = 0
+            try:
+                _cutoff_24h = (
+                    datetime.now(timezone.utc) - timedelta(hours=24)
+                ).isoformat()
+                d24h_cursor = await db.execute(
+                    "SELECT COUNT(*) FROM reconciliation_log "
+                    "WHERE status = 'discrepancy' AND checked_at >= ?",
+                    (_cutoff_24h,),
+                )
+                d24h_row = await d24h_cursor.fetchone()
+                discrepancy_count_24h = d24h_row[0] if d24h_row else 0
+            except Exception as _e:
+                logger.debug("reconciliation: 24h count query failed: %s", _e)
+
             recent_cursor = await db.execute(
                 """SELECT id, platform, check_type, discrepancy, status, detail, checked_at
                    FROM reconciliation_log
@@ -1038,6 +1072,7 @@ def _build_app(static_dir: str | None = None) -> FastAPI:
             return {
                 "total_count": total_count,
                 "discrepancy_count": discrepancy_count,
+                "discrepancy_count_24h": discrepancy_count_24h,
                 "recent_discrepancies": recent,
             }
         finally:
