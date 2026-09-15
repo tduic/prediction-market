@@ -758,6 +758,7 @@ class TestReconciliationEndpoint:
         data = resp.json()
         assert "total_count" in data
         assert "discrepancy_count" in data
+        assert "discrepancy_count_24h" in data
         assert "recent_discrepancies" in data
 
     async def test_reconciliation_empty_on_clean_db(self, app_and_client):
@@ -1021,3 +1022,166 @@ class TestPositionsOffset:
         resp = await client.get("/api/positions?offset=999")
         assert resp.status_code == 200
         assert resp.json() == []
+
+
+# ── /api/strategies/pnl-series ───────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+class TestStrategiesPnlSeriesEndpoint:
+    async def test_endpoint_exists(self, app_and_client):
+        _, client, _ = app_and_client
+        resp = await client.get("/api/strategies/pnl-series")
+        assert resp.status_code == 200
+
+    async def test_returns_list(self, app_and_client):
+        _, client, _ = app_and_client
+        resp = await client.get("/api/strategies/pnl-series")
+        assert isinstance(resp.json(), list)
+
+    async def test_empty_db_returns_empty_list(self, app_and_client):
+        _, client, _ = app_and_client
+        resp = await client.get("/api/strategies/pnl-series")
+        assert resp.json() == []
+
+    async def test_days_param_accepted(self, app_and_client):
+        _, client, _ = app_and_client
+        resp = await client.get("/api/strategies/pnl-series?days=7")
+        assert resp.status_code == 200
+
+    async def test_row_shape_when_populated(self, app_and_client):
+        """Rows come from strategy_pnl_snapshots joined to pnl_snapshots."""
+        _, client, db_path = app_and_client
+        import aiosqlite
+
+        async with aiosqlite.connect(db_path) as file_db:
+            file_db.row_factory = aiosqlite.Row
+            now = datetime.now(timezone.utc).isoformat()
+            await file_db.execute(
+                """INSERT INTO pnl_snapshots
+                   (total_capital, cash, open_positions_count, unrealized_pnl,
+                    realized_pnl_total, fees_total, snapshotted_at)
+                   VALUES (10100.0, 9900.0, 0, 0.0, 100.0, 1.0, ?)""",
+                (now,),
+            )
+            snap_cursor = await file_db.execute(
+                "SELECT id FROM pnl_snapshots ORDER BY id DESC LIMIT 1"
+            )
+            snap_row = await snap_cursor.fetchone()
+            snap_id = snap_row[0]
+            await file_db.execute(
+                """INSERT INTO strategy_pnl_snapshots
+                   (snapshot_id, strategy, realized_pnl, unrealized_pnl,
+                    fees, trade_count, win_count)
+                   VALUES (?, 'P1_cross_market_arb', 100.0, 0.0, 1.0, 3, 2)""",
+                (snap_id,),
+            )
+            await file_db.commit()
+
+        resp = await client.get("/api/strategies/pnl-series?days=7")
+        rows = resp.json()
+        assert len(rows) >= 1
+        row = rows[0]
+        for key in (
+            "snapshotted_at",
+            "strategy",
+            "realized_pnl",
+            "unrealized_pnl",
+            "fees",
+            "net_realized_pnl",
+            "trade_count",
+            "win_count",
+        ):
+            assert key in row, f"Missing key: {key}"
+
+    async def test_net_realized_pnl_equals_realized_minus_fees(self, app_and_client):
+        _, client, db_path = app_and_client
+        import aiosqlite
+
+        async with aiosqlite.connect(db_path) as file_db:
+            file_db.row_factory = aiosqlite.Row
+            now = datetime.now(timezone.utc).isoformat()
+            await file_db.execute(
+                """INSERT INTO pnl_snapshots
+                   (total_capital, cash, open_positions_count, unrealized_pnl,
+                    realized_pnl_total, fees_total, snapshotted_at)
+                   VALUES (10050.0, 9950.0, 0, 0.0, 60.0, 2.5, ?)""",
+                (now,),
+            )
+            snap_cursor = await file_db.execute(
+                "SELECT id FROM pnl_snapshots ORDER BY id DESC LIMIT 1"
+            )
+            snap_row = await snap_cursor.fetchone()
+            snap_id = snap_row[0]
+            await file_db.execute(
+                """INSERT INTO strategy_pnl_snapshots
+                   (snapshot_id, strategy, realized_pnl, unrealized_pnl,
+                    fees, trade_count, win_count)
+                   VALUES (?, 'P2_structured_event', 60.0, 0.0, 2.5, 1, 1)""",
+                (snap_id,),
+            )
+            await file_db.commit()
+
+        resp = await client.get("/api/strategies/pnl-series?days=7")
+        rows = resp.json()
+        row = next((r for r in rows if r["strategy"] == "P2_structured_event"), None)
+        assert row is not None
+        assert round(row["realized_pnl"] - row["fees"], 2) == row["net_realized_pnl"]
+
+
+# ── /api/signals/count ───────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+class TestSignalsCountEndpoint:
+    async def test_endpoint_exists(self, app_and_client):
+        _, client, _ = app_and_client
+        resp = await client.get("/api/signals/count")
+        assert resp.status_code == 200
+
+    async def test_returns_total_count_key(self, app_and_client):
+        _, client, _ = app_and_client
+        resp = await client.get("/api/signals/count")
+        assert "total_count" in resp.json()
+
+    async def test_empty_db_returns_zero(self, app_and_client):
+        _, client, _ = app_and_client
+        resp = await client.get("/api/signals/count")
+        assert resp.json()["total_count"] == 0
+
+    async def test_count_reflects_seeded_signals(self, app_and_client):
+        _, client, db_path = app_and_client
+        import aiosqlite
+
+        async with aiosqlite.connect(db_path) as file_db:
+            file_db.row_factory = aiosqlite.Row
+            await _seed_trade_outcome(file_db, strategy="P1_cross_market_arb", pnl=5.0)
+
+        resp = await client.get("/api/signals/count?days=30")
+        assert resp.json()["total_count"] >= 1
+
+    async def test_strategy_filter_isolates_strategy(self, app_and_client):
+        _, client, db_path = app_and_client
+        import aiosqlite
+
+        async with aiosqlite.connect(db_path) as file_db:
+            file_db.row_factory = aiosqlite.Row
+            await _seed_trade_outcome(file_db, strategy="P1_cross_market_arb", pnl=5.0)
+            await _seed_trade_outcome(file_db, strategy="P2_structured_event", pnl=3.0)
+
+        resp_p1 = await client.get(
+            "/api/signals/count?strategy=P1_cross_market_arb&days=30"
+        )
+        resp_p2 = await client.get(
+            "/api/signals/count?strategy=P2_structured_event&days=30"
+        )
+        resp_all = await client.get("/api/signals/count?days=30")
+        assert resp_p1.json()["total_count"] >= 1
+        assert resp_p2.json()["total_count"] >= 1
+        assert resp_all.json()["total_count"] >= resp_p1.json()["total_count"]
+
+    async def test_days_param_limits_window(self, app_and_client):
+        _, client, _ = app_and_client
+        resp = await client.get("/api/signals/count?days=1")
+        assert resp.status_code == 200
+        assert "total_count" in resp.json()

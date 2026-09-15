@@ -47,6 +47,7 @@ def configure(db_path: str) -> None:
     # Uses the sync sqlite3 driver so this works in both sync and async contexts.
     try:
         with sqlite3.connect(db_path) as _c:
+            _c.execute("PRAGMA busy_timeout=5000")
             _c.execute("PRAGMA journal_mode=WAL")
     except sqlite3.Error as _e:
         logger.warning("Could not enable WAL mode on %s: %s", db_path, _e)
