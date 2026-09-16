@@ -286,20 +286,15 @@ def _build_app(static_dir: str | None = None) -> FastAPI:
 
             cutoff_24h = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
             signals_cursor = await db.execute(
-                "SELECT strategy, COUNT(*) as cnt FROM signals "
-                "WHERE fired_at >= ? GROUP BY strategy",
-                (cutoff_24h,),
+                "SELECT strategy, "
+                "SUM(CASE WHEN fired_at >= ? THEN 1 ELSE 0 END) AS cnt_24h, "
+                "COUNT(*) AS cnt_window "
+                "FROM signals WHERE fired_at >= ? GROUP BY strategy",
+                (cutoff_24h, cutoff_date.isoformat()),
             )
             signals_rows = await signals_cursor.fetchall()
-            signals_24h_map = {r["strategy"]: r["cnt"] for r in signals_rows}
-
-            signals_window_cursor = await db.execute(
-                "SELECT strategy, COUNT(*) as cnt FROM signals "
-                "WHERE fired_at >= ? GROUP BY strategy",
-                (cutoff_date.isoformat(),),
-            )
-            signals_window_rows = await signals_window_cursor.fetchall()
-            signals_window_map = {r["strategy"]: r["cnt"] for r in signals_window_rows}
+            signals_24h_map = {r["strategy"]: r["cnt_24h"] for r in signals_rows}
+            signals_window_map = {r["strategy"]: r["cnt_window"] for r in signals_rows}
 
             strategies = []
             for row in rows:

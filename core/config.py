@@ -328,6 +328,21 @@ class Config:
                 f"DUPLICATE_SIGNAL_WINDOW_S must be > 0, "
                 f"got {self.risk_controls.duplicate_signal_window_s}"
             )
+        if self.risk_controls.arb_rearm_hysteresis < 0:
+            raise ValueError(
+                f"ARB_REARM_HYSTERESIS must be >= 0, "
+                f"got {self.risk_controls.arb_rearm_hysteresis}"
+            )
+        if self.risk_controls.strategy_p2_min_root_len < 1:
+            raise ValueError(
+                f"STRATEGY_P2_MIN_ROOT_LEN must be >= 1, "
+                f"got {self.risk_controls.strategy_p2_min_root_len}"
+            )
+        if self.risk_controls.strategy_replay_min_move <= 0:
+            raise ValueError(
+                f"STRATEGY_REPLAY_MIN_MOVE must be > 0, "
+                f"got {self.risk_controls.strategy_replay_min_move}"
+            )
 
         if (
             self.risk_controls.max_position_pct
