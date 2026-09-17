@@ -1322,6 +1322,15 @@ def _build_app(static_dir: str | None = None) -> FastAPI:
                 )
             except Exception:
                 result["circuit_breaker_tripped"] = None
+            try:
+                _daily_loss = await _compute_daily_loss_today(db)
+                _cfg = get_config().risk_controls
+                _daily_loss_limit = _cfg.starting_capital * _cfg.max_daily_loss_pct
+                result["daily_loss_pct_used"] = round(
+                    _daily_loss / _daily_loss_limit if _daily_loss_limit > 0 else 0.0, 4
+                )
+            except Exception:
+                result["daily_loss_pct_used"] = None
             return result
         except Exception as e:
             from fastapi.responses import JSONResponse
