@@ -101,10 +101,10 @@ class StrategyScorecard:
 
             # Compute metrics
             total_trades = len(trades)
-            win_count = sum(1 for t in trades if t["actual_pnl"] > 0)
+            win_count = sum(1 for t in trades if (t["actual_pnl"] or 0.0) > 0)
             win_rate = (win_count / total_trades * 100) if total_trades > 0 else 0.0
 
-            pnl_values = [t["actual_pnl"] for t in trades]
+            pnl_values = [(t["actual_pnl"] or 0.0) for t in trades]
             total_pnl = sum(pnl_values)
             avg_pnl = total_pnl / total_trades if total_trades > 0 else 0.0
 
@@ -206,7 +206,7 @@ class StrategyScorecard:
             for date_str, pnl in rows:
                 if date_str not in daily_dict:
                     daily_dict[date_str] = {"pnl": 0.0, "trades": 0}
-                daily_dict[date_str]["pnl"] += pnl
+                daily_dict[date_str]["pnl"] += pnl or 0.0
                 daily_dict[date_str]["trades"] += 1
 
             # Build series with cumulative

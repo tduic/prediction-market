@@ -71,6 +71,17 @@ async def _compute_daily_loss_today(db: aiosqlite.Connection) -> float:
     return max(0.0, -net_pnl)
 
 
+class _SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Inject standard defensive security headers on every response."""
+
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        return response
+
+
 class _BasicAuthMiddleware(BaseHTTPMiddleware):
     """HTTP Basic Auth gate. Applied only when DASHBOARD_PASSWORD is set."""
 
@@ -111,6 +122,9 @@ def _build_app(static_dir: str | None = None) -> FastAPI:
         frontend is served from the same process.
     """
     app = FastAPI(title="Prediction Market Dashboard API")
+
+    # Security headers on every response.
+    app.add_middleware(_SecurityHeadersMiddleware)
 
     # HTTP Basic Auth — enabled when DASHBOARD_PASSWORD env var is set.
     # Add before CORS so unauthenticated requests are rejected at the gate.

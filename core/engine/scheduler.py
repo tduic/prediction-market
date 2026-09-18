@@ -140,8 +140,8 @@ class ScheduledStrategyRunner:
                     elapsed,
                     self.total_trades,
                 )
-            except Exception as e:
-                logger.error("Scheduled strategy error: %s", e)
+            except Exception:
+                logger.exception("Scheduled strategy error")
 
             # Wait for interval or stop
             try:
