@@ -79,6 +79,8 @@ class _SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["X-XSS-Protection"] = "1; mode=block"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["Cache-Control"] = "no-store"
         return response
 
 
@@ -150,7 +152,7 @@ def _build_app(static_dir: str | None = None) -> FastAPI:
         allow_headers=["*"],
     )
 
-    # ── helpers ────────────────────────────────────────────────────────────────────────────────────────────────────────────
+    # ── helpers ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
     async def get_db() -> aiosqlite.Connection:
         db = await aiosqlite.connect(_DB_PATH)
@@ -177,7 +179,7 @@ def _build_app(static_dir: str | None = None) -> FastAPI:
             if own_db:
                 await close_db(db)
 
-    # ── endpoints ───────────────────────────────────────────────────────────────────────────────────────────────────────────────
+    # ── endpoints ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
     @app.get("/api/overview")
     async def get_overview() -> dict[str, Any]:
@@ -675,9 +677,11 @@ def _build_app(static_dir: str | None = None) -> FastAPI:
                 _cfg = get_config().risk_controls
                 daily_loss_limit = _cfg.starting_capital * _cfg.max_daily_loss_pct
                 daily_loss_pct_used = round(
-                    daily_loss_today / daily_loss_limit
-                    if daily_loss_limit > 0
-                    else 0.0,
+                    (
+                        daily_loss_today / daily_loss_limit
+                        if daily_loss_limit > 0
+                        else 0.0
+                    ),
                     4,
                 )
             except Exception as _dl_err:
@@ -709,10 +713,7 @@ def _build_app(static_dir: str | None = None) -> FastAPI:
     async def get_fees() -> dict[str, Any]:
         db = await get_db()
         try:
-            cursor = await db.execute("""
-                SELECT platform, COALESCE(SUM(fee_paid), 0) as total_fees
-                FROM orders WHERE fee_paid IS NOT NULL GROUP BY platform
-                """)
+            cursor = await db.execute("""\n                SELECT platform, COALESCE(SUM(fee_paid), 0) as total_fees\n                FROM orders WHERE fee_paid IS NOT NULL GROUP BY platform\n                """)
             platform_rows = await cursor.fetchall()
             fees_by_platform = [
                 {
@@ -722,10 +723,7 @@ def _build_app(static_dir: str | None = None) -> FastAPI:
                 for row in platform_rows
             ]
 
-            cursor = await db.execute("""
-                SELECT strategy, COALESCE(SUM(fees_total), 0) as total_fees
-                FROM trade_outcomes WHERE fees_total IS NOT NULL GROUP BY strategy
-                """)
+            cursor = await db.execute("""\n                SELECT strategy, COALESCE(SUM(fees_total), 0) as total_fees\n                FROM trade_outcomes WHERE fees_total IS NOT NULL GROUP BY strategy\n                """)
             strategy_rows = await cursor.fetchall()
             fees_by_strategy = [
                 {
@@ -980,15 +978,7 @@ def _build_app(static_dir: str | None = None) -> FastAPI:
         """
         db = await get_db()
         try:
-            cursor = await db.execute("""SELECT
-                       pnl_model,
-                       COUNT(*) AS trade_count,
-                       COALESCE(SUM(realized_pnl), 0.0) AS total_pnl,
-                       COALESCE(SUM(fees_paid), 0.0) AS total_fees
-                   FROM positions
-                   WHERE status = 'closed'
-                     AND realized_pnl IS NOT NULL
-                   GROUP BY pnl_model""")
+            cursor = await db.execute("""SELECT\n                       pnl_model,\n                       COUNT(*) AS trade_count,\n                       COALESCE(SUM(realized_pnl), 0.0) AS total_pnl,\n                       COALESCE(SUM(fees_paid), 0.0) AS total_fees\n                   FROM positions\n                   WHERE status = 'closed'\n                     AND realized_pnl IS NOT NULL\n                   GROUP BY pnl_model""")
             rows = await cursor.fetchall()
             result: dict[str, Any] = {
                 "realistic": {"trade_count": 0, "total_pnl": 0.0, "total_fees": 0.0},
@@ -1021,10 +1011,7 @@ def _build_app(static_dir: str | None = None) -> FastAPI:
             violation_count = count_row[0] if count_row else 0
 
             recent_cursor = await db.execute(
-                """SELECT id, name, message, severity, violated_at
-                   FROM invariant_violations
-                   ORDER BY violated_at DESC
-                   LIMIT ?""",
+                """SELECT id, name, message, severity, violated_at\n                   FROM invariant_violations\n                   ORDER BY violated_at DESC\n                   LIMIT ?""",
                 (limit,),
             )
             rows = await recent_cursor.fetchall()
@@ -1070,10 +1057,7 @@ def _build_app(static_dir: str | None = None) -> FastAPI:
                 logger.debug("reconciliation: 24h count query failed: %s", _e)
 
             recent_cursor = await db.execute(
-                """SELECT id, platform, check_type, discrepancy, status, detail, checked_at
-                   FROM reconciliation_log
-                   ORDER BY checked_at DESC
-                   LIMIT ?""",
+                """SELECT id, platform, check_type, discrepancy, status, detail, checked_at\n                   FROM reconciliation_log\n                   ORDER BY checked_at DESC\n                   LIMIT ?""",
                 (limit,),
             )
             rows = await recent_cursor.fetchall()
@@ -1354,7 +1338,7 @@ def _build_app(static_dir: str | None = None) -> FastAPI:
             if db is not None:
                 await close_db(db)
 
-    # ── Serve React frontend if static_dir provided ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+    # ── Serve React frontend if static_dir provided ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
     if static_dir and Path(static_dir).is_dir():
         app.mount(
             "/",

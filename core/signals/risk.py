@@ -39,10 +39,35 @@ async def get_portfolio_value(
     """
     Compute current portfolio value from trade history.
 
-    Returns starting_capital + sum(actual_pnl) - sum(fees_total)
-    from trade_outcomes. Falls back to starting_capital if no trades.
+    Uses the most recent pnl_snapshot as a warm-start base, then sums only
+    trades created after that snapshot. Falls back to a full scan when no
+    snapshot exists, and to starting_capital on any error.
     """
     try:
+        snap_row = None
+        try:
+            snap_cursor = await db.execute(
+                "SELECT total_capital, snapshotted_at FROM pnl_snapshots "
+                "ORDER BY snapshotted_at DESC LIMIT 1"
+            )
+            snap_row = await snap_cursor.fetchone()
+        except Exception as _snap_err:
+            logger.debug(
+                "pnl_snapshots query failed, falling back to full scan: %s", _snap_err
+            )
+
+        if snap_row and snap_row[0] is not None:
+            base = float(snap_row[0])
+            snap_at = snap_row[1]
+            cursor = await db.execute(
+                "SELECT COALESCE(SUM(actual_pnl), 0), COALESCE(SUM(fees_total), 0) "
+                "FROM trade_outcomes WHERE created_at > ?",
+                (snap_at,),
+            )
+            row = await cursor.fetchone()
+            return base + float(row[0] or 0) - float(row[1] or 0)
+
+        # No snapshot yet — full scan
         cursor = await db.execute(
             "SELECT COALESCE(SUM(actual_pnl), 0), COALESCE(SUM(fees_total), 0) "
             "FROM trade_outcomes"
