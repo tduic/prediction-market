@@ -498,6 +498,7 @@ class ArbitrageEngine:
                             datetime.now(timezone.utc).isoformat(),
                         ),
                     )
+                    await self.db.commit()
                 except Exception:
                     logger.debug("order_events retry log failed", exc_info=True)
                 await asyncio.sleep(delay)
@@ -873,7 +874,7 @@ class ArbitrageEngine:
         """Commit any pending DB writes.
 
         No-op under the current per-trade-commit model; retained so callers
-        (trading_session shutdown, tests) can keep their \"drain before exit\"
+        (trading_session shutdown, tests) can keep their "drain before exit"
         semantics without caring how persistence is scheduled internally.
         """
         await self.db.commit()

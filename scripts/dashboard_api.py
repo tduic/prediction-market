@@ -81,6 +81,17 @@ class _SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["X-XSS-Protection"] = "1; mode=block"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
         response.headers["Cache-Control"] = "no-store"
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; "
+            "script-src 'self' 'unsafe-inline'; "
+            "style-src 'self' 'unsafe-inline'; "
+            "img-src 'self' data: blob:; "
+            "connect-src 'self'; "
+            "font-src 'self' data:"
+        )
+        response.headers["Permissions-Policy"] = (
+            "camera=(), microphone=(), geolocation=(), payment=()"
+        )
         return response
 
 
@@ -713,7 +724,9 @@ def _build_app(static_dir: str | None = None) -> FastAPI:
     async def get_fees() -> dict[str, Any]:
         db = await get_db()
         try:
-            cursor = await db.execute("""\n                SELECT platform, COALESCE(SUM(fee_paid), 0) as total_fees\n                FROM orders WHERE fee_paid IS NOT NULL GROUP BY platform\n                """)
+            cursor = await db.execute(
+                """\n                SELECT platform, COALESCE(SUM(fee_paid), 0) as total_fees\n                FROM orders WHERE fee_paid IS NOT NULL GROUP BY platform\n                """
+            )
             platform_rows = await cursor.fetchall()
             fees_by_platform = [
                 {
@@ -723,7 +736,9 @@ def _build_app(static_dir: str | None = None) -> FastAPI:
                 for row in platform_rows
             ]
 
-            cursor = await db.execute("""\n                SELECT strategy, COALESCE(SUM(fees_total), 0) as total_fees\n                FROM trade_outcomes WHERE fees_total IS NOT NULL GROUP BY strategy\n                """)
+            cursor = await db.execute(
+                """\n                SELECT strategy, COALESCE(SUM(fees_total), 0) as total_fees\n                FROM trade_outcomes WHERE fees_total IS NOT NULL GROUP BY strategy\n                """
+            )
             strategy_rows = await cursor.fetchall()
             fees_by_strategy = [
                 {
@@ -978,7 +993,9 @@ def _build_app(static_dir: str | None = None) -> FastAPI:
         """
         db = await get_db()
         try:
-            cursor = await db.execute("""SELECT\n                       pnl_model,\n                       COUNT(*) AS trade_count,\n                       COALESCE(SUM(realized_pnl), 0.0) AS total_pnl,\n                       COALESCE(SUM(fees_paid), 0.0) AS total_fees\n                   FROM positions\n                   WHERE status = 'closed'\n                     AND realized_pnl IS NOT NULL\n                   GROUP BY pnl_model""")
+            cursor = await db.execute(
+                """SELECT\n                       pnl_model,\n                       COUNT(*) AS trade_count,\n                       COALESCE(SUM(realized_pnl), 0.0) AS total_pnl,\n                       COALESCE(SUM(fees_paid), 0.0) AS total_fees\n                   FROM positions\n                   WHERE status = 'closed'\n                     AND realized_pnl IS NOT NULL\n                   GROUP BY pnl_model"""
+            )
             rows = await cursor.fetchall()
             result: dict[str, Any] = {
                 "realistic": {"trade_count": 0, "total_pnl": 0.0, "total_fees": 0.0},
