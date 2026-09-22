@@ -208,7 +208,7 @@ def _build_app(static_dir: str | None = None) -> FastAPI:
                 open_positions = snapshot.get("open_positions_count", 0) or 0
                 snapshotted_at = snapshot.get("snapshotted_at")
             else:
-                # No snapshots yet — compute live from trade_outcomes
+                # No snapshots yet — compute live from trade_outcomes and positions
                 cursor = await db.execute(
                     "SELECT COALESCE(SUM(actual_pnl), 0), COALESCE(SUM(fees_total), 0) FROM trade_outcomes"
                 )
@@ -216,10 +216,15 @@ def _build_app(static_dir: str | None = None) -> FastAPI:
                 realized_pnl_total = row[0] if row else 0
                 total_fees = row[1] if row else 0
                 total_capital = PAPER_CAPITAL + realized_pnl_total - total_fees
-                cash = total_capital
-                deployed = 0
+                pos_cursor = await db.execute(
+                    "SELECT COUNT(*), COALESCE(SUM(entry_price * entry_size), 0) "
+                    "FROM positions WHERE status = 'open'"
+                )
+                pos_row = await pos_cursor.fetchone()
+                open_positions = pos_row[0] if pos_row else 0
+                deployed = pos_row[1] if pos_row else 0
+                cash = total_capital - deployed
                 unrealized_pnl = 0
-                open_positions = 0
                 snapshotted_at = None
 
             net_return_pct = 0.0
@@ -455,8 +460,7 @@ def _build_app(static_dir: str | None = None) -> FastAPI:
                     "trade_count": d.get("trade_count", 0) or 0,
                     "win_count": d.get("win_count", 0) or 0,
                 }
-                for r in rows
-                for d in [dict(r)]
+                for d in (dict(r) for r in rows)
             ]
         finally:
             await close_db(db)
@@ -486,8 +490,7 @@ def _build_app(static_dir: str | None = None) -> FastAPI:
                     "realized_pnl_total": round(d.get("realized_pnl_total", 0) or 0, 2),
                     "fees_total": round(d.get("fees_total", 0) or 0, 2),
                 }
-                for r in rows
-                for d in [dict(r)]
+                for d in (dict(r) for r in rows)
             ]
         finally:
             await close_db(db)
@@ -806,8 +809,7 @@ def _build_app(static_dir: str | None = None) -> FastAPI:
                         else 0.0
                     ),
                 }
-                for r in rows
-                for d in [dict(r)]
+                for d in (dict(r) for r in rows)
             ]
         finally:
             await close_db(db)
@@ -891,6 +893,54 @@ def _build_app(static_dir: str | None = None) -> FastAPI:
                 )
             row = await cursor.fetchone()
             return {"total_count": row[0] if row else 0}
+        finally:
+            await close_db(db)
+
+    @app.get("/api/risk-checks")
+    async def get_risk_checks(
+        days: float = Query(1, ge=0.01, le=30.0),
+        limit: int = Query(200, ge=1, le=1000),
+        offset: int = Query(0, ge=0),
+        passed: int | None = Query(
+            None, description="Filter: 0=failed, 1=passed, None=all"
+        ),
+    ) -> list[dict[str, Any]]:
+        """Recent risk check results from the audit log.
+
+        signal_id is always NULL at log time (signal is not yet persisted when
+        checks run); use violation_id to correlate with the originating signal.
+        Default filters to the last 24h. Pass ?passed=0 to see only rejections.
+        """
+        db = await get_db()
+        try:
+            cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
+            params: list[Any] = [cutoff_date.isoformat()]
+            where_extra = ""
+            if passed is not None:
+                where_extra = " AND passed = ?"
+                params.append(passed)
+            cursor = await db.execute(
+                f"SELECT check_type, passed, check_value, threshold, detail, "
+                f"violation_id, evaluated_at "
+                f"FROM risk_check_log "
+                f"WHERE evaluated_at >= ?{where_extra} "
+                f"ORDER BY evaluated_at DESC, rowid DESC "
+                f"LIMIT ? OFFSET ?",
+                (*params, limit, offset),
+            )
+            rows = await cursor.fetchall()
+            return [
+                {
+                    "check_type": d.get("check_type"),
+                    "passed": bool(d.get("passed")),
+                    "check_value": round(d.get("check_value", 0) or 0, 6),
+                    "threshold": round(d.get("threshold", 0) or 0, 6),
+                    "detail": d.get("detail"),
+                    "violation_id": d.get("violation_id"),
+                    "evaluated_at": d.get("evaluated_at"),
+                }
+                for d in (dict(r) for r in rows)
+            ]
         finally:
             await close_db(db)
 
