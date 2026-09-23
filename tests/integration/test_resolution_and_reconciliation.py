@@ -424,9 +424,9 @@ async def test_reconciliation_stuck_order_dedup_prevents_double_log(db):
         "SELECT COUNT(*) FROM reconciliation_log WHERE check_type='stuck_pending_order'"
     )
     row = await cursor.fetchone()
-    assert row[0] == 1, (
-        "Dedup should prevent a second log entry for the same stuck order"
-    )
+    assert (
+        row[0] == 1
+    ), "Dedup should prevent a second log entry for the same stuck order"
 
 
 # ── signals_without_orders tests ─────────────────────────────────────────────
