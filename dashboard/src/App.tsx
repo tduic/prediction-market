@@ -2,21 +2,25 @@ import { useState } from 'react'
 import { useApi } from './hooks/useApi'
 import {
   CircuitBreakerStatus,
+  DailyPnlPoint,
+  EquityCurvePoint,
+  FeeBreakdown,
   OverviewData,
+  RiskMetrics,
   StrategyMetrics,
   StrategyPnlPoint,
-  EquityCurvePoint,
+  SystemHealth,
   Trade,
-  FeeBreakdown,
-  RiskMetrics,
 } from './types'
 import { CircuitBreakerStatusComponent } from './components/CircuitBreakerStatus'
-import { OverviewCards } from './components/OverviewCards'
-import { StrategyPnlChart } from './components/StrategyPnlChart'
-import { StrategyComparison } from './components/StrategyComparison'
+import { DailyPnlChart } from './components/DailyPnlChart'
 import { EquityCurve } from './components/EquityCurve'
 import { FeeBreakdownComponent } from './components/FeeBreakdown'
+import { OverviewCards } from './components/OverviewCards'
 import { RiskMetricsComponent } from './components/RiskMetrics'
+import { StrategyComparison } from './components/StrategyComparison'
+import { StrategyPnlChart } from './components/StrategyPnlChart'
+import { SystemHealthBadge } from './components/SystemHealthBadge'
 import { TradeLog } from './components/TradeLog'
 
 const REFRESH_INTERVAL = 30000 // 30 seconds
@@ -48,6 +52,8 @@ function App() {
   const feeResult = useApi<FeeBreakdown>('/api/fees', REFRESH_INTERVAL)
   const riskResult = useApi<RiskMetrics>('/api/risk', REFRESH_INTERVAL)
   const circuitBreakerResult = useApi<CircuitBreakerStatus>('/api/circuit-breaker', CB_REFRESH_INTERVAL)
+  const systemHealthResult = useApi<SystemHealth>('/api/system-health', REFRESH_INTERVAL)
+  const dailyPnlResult = useApi<DailyPnlPoint[]>('/api/daily-pnl', REFRESH_INTERVAL, { days: 30 })
 
   const refreshAll = () => {
     overviewResult.refresh()
@@ -58,6 +64,8 @@ function App() {
     feeResult.refresh()
     riskResult.refresh()
     circuitBreakerResult.refresh()
+    systemHealthResult.refresh()
+    dailyPnlResult.refresh()
   }
 
   // Get unique strategies for trade log filter
@@ -79,7 +87,8 @@ function App() {
     tradesResult.loading ||
     feeResult.loading ||
     riskResult.loading ||
-    circuitBreakerResult.loading
+    circuitBreakerResult.loading ||
+    systemHealthResult.loading
 
   // Check for errors
   const errors = [
@@ -91,6 +100,8 @@ function App() {
     feeResult.error,
     riskResult.error,
     circuitBreakerResult.error,
+    systemHealthResult.error,
+    dailyPnlResult.error,
   ].filter(Boolean)
 
   // Most recent successful fetch time across all endpoints
@@ -103,6 +114,8 @@ function App() {
     feeResult.lastUpdated,
     riskResult.lastUpdated,
     circuitBreakerResult.lastUpdated,
+    systemHealthResult.lastUpdated,
+    dailyPnlResult.lastUpdated,
   ].reduce<Date | null>((latest, d) => {
     if (!d) return latest
     if (!latest) return d
@@ -128,6 +141,7 @@ function App() {
                 </span>
               </div>
               <CircuitBreakerStatusComponent data={circuitBreakerResult.data} />
+              <SystemHealthBadge data={systemHealthResult.data} />
             </div>
             <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 w-full sm:w-auto">
               <div className="flex gap-2">
@@ -210,6 +224,11 @@ function App() {
         {/* Equity Curve */}
         <section>
           <EquityCurve data={equityResult.data || []} />
+        </section>
+
+        {/* Daily PnL */}
+        <section>
+          <DailyPnlChart data={dailyPnlResult.data || []} />
         </section>
 
         {/* Fee Breakdown and Risk Metrics */}

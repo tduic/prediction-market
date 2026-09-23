@@ -96,3 +96,27 @@ export interface CircuitBreakerStatus {
   daily_loss_available: boolean
   daily_loss_pct_used: number
 }
+
+export interface SystemHealth {
+  status: 'ok' | 'warn' | 'critical'
+  issues: string[]
+  circuit_breaker: { tripped: boolean; reason: string | null } | { error: string }
+  reconciliation_discrepancies_24h: number | null
+  last_reconciliation_age_s: number | null
+  invariant_violations_24h: number | null
+  last_snapshot_age_s: number | null
+  last_signal_age_s: number | null
+  signals_24h: number | null
+  signals_24h_by_strategy: Record<string, number> | null
+  daily_loss_pct_used: number | null
+}
+
+export interface DailyPnlPoint {
+  date: string
+  trade_count: number
+  gross_pnl: number
+  total_fees: number
+  net_pnl: number
+  win_count: number
+  win_rate: number
+}
