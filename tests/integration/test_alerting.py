@@ -390,12 +390,12 @@ async def test_slack_transport_sends_text_field(monkeypatch):
     ok = await transport.publish(alert)
     assert ok is True
     assert "text" in posted["json"], "Slack payload must have 'text' field"
-    assert (
-        "embeds" not in posted["json"]
-    ), "Slack payload must not have Discord 'embeds'"
-    assert (
-        "content" not in posted["json"]
-    ), "Slack payload must not have Discord 'content'"
+    assert "embeds" not in posted["json"], (
+        "Slack payload must not have Discord 'embeds'"
+    )
+    assert "content" not in posted["json"], (
+        "Slack payload must not have Discord 'content'"
+    )
     assert "Health check" in posted["json"]["text"]
 
 
