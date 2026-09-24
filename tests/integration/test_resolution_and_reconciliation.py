@@ -122,7 +122,7 @@ async def _seed_order(
     )
 
 
-# ── Resolution tests ──────────────────────────────────────────────────────
+# ── Resolution tests ────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -242,7 +242,7 @@ async def test_resolution_sell_side_pnl(db):
     assert summary["total_pnl"] == pytest.approx(60.0)
 
 
-# ── Reconciliation tests ──────────────────────────────────────────────────
+# ── Reconciliation tests ────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -424,12 +424,12 @@ async def test_reconciliation_stuck_order_dedup_prevents_double_log(db):
         "SELECT COUNT(*) FROM reconciliation_log WHERE check_type='stuck_pending_order'"
     )
     row = await cursor.fetchone()
-    assert (
-        row[0] == 1
-    ), "Dedup should prevent a second log entry for the same stuck order"
+    assert row[0] == 1, (
+        "Dedup should prevent a second log entry for the same stuck order"
+    )
 
 
-# ── signals_without_orders tests ─────────────────────────────────────────────
+# ── signals_without_orders tests ──────────────────────────────────────────────────────
 
 
 async def _seed_signal_aged(db, signal_id: str, market_id: str, age_s: int) -> None:
