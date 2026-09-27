@@ -666,7 +666,10 @@ class ArbitrageEngine:
                     market_id=sell_id, limit_price=sell_price, size=size, side="SELL"
                 ),
             ],
-            edge=edge,
+            # Gross spread, as before: MIN_EDGE_TO_TRADE was calibrated as a
+            # gross proxy for fees. Fees are now enforced exactly by the gate
+            # above, so passing the net edge here would count them twice.
+            edge=spread,
             strategy=strategy,
             violation_id=violation_id,
         )
