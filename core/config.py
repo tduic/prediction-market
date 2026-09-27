@@ -201,6 +201,10 @@ class RiskControlConfig:
     arb_pretrade_lookup_timeout_s: float = field(
         default_factory=lambda: float(os.getenv("ARB_PRETRADE_LOOKUP_TIMEOUT_S", "2.0"))
     )
+    # Smallest P1 arb worth sending after capping size to book depth.
+    arb_min_fill_size: float = field(
+        default_factory=lambda: float(os.getenv("ARB_MIN_FILL_SIZE", "1.0"))
+    )
     reconcile_every: int = field(
         default_factory=lambda: int(os.getenv("RECONCILE_EVERY", "5"))
     )

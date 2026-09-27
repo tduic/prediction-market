@@ -92,6 +92,8 @@ class ArbitrageEngine:
         self._skipped_fee_unknown: int = 0
         self._skipped_unprofitable: int = 0
         self._skipped_halted: int = 0
+        self._skipped_depth_unknown: int = 0
+        self._skipped_thin_book: int = 0
 
         # Build pair indexes for O(1) lookup on price update
         # poly_id -> list of (kalshi_id, match_dict)
@@ -654,12 +656,55 @@ class ArbitrageEngine:
         )
         max_size = bankroll * self._risk_config.max_position_pct
         size = round(compute_position_size(kelly_f, bankroll, max_size=max_size), 1)
-        # Every P1 pair has a Kalshi leg, which trades whole contracts only;
-        # a fractional size could never be fully hedged.
-        size = float(math.floor(size))
         if size <= 0:
             logger.debug(
                 "Kelly sizing produced zero size for edge=%.4f — skipping", edge
+            )
+            return None
+
+        # Cap to what both books can fill right now at our limits.
+        try:
+            buy_depth, sell_depth = await asyncio.wait_for(
+                asyncio.gather(
+                    market_data.executable_depth(
+                        self.db,
+                        OrderLeg(
+                            market_id=buy_id,
+                            platform=buy_platform,
+                            side=Side.BUY,
+                            size=size,
+                            limit_price=buy_price,
+                        ),
+                    ),
+                    market_data.executable_depth(
+                        self.db,
+                        OrderLeg(
+                            market_id=sell_id,
+                            platform=sell_platform,
+                            side=Side.SELL,
+                            size=size,
+                            limit_price=sell_price,
+                        ),
+                    ),
+                ),
+                timeout=self._risk_config.arb_pretrade_lookup_timeout_s,
+            )
+        except asyncio.TimeoutError:
+            buy_depth = sell_depth = None
+        if buy_depth is None or sell_depth is None:
+            self._skipped_depth_unknown += 1
+            logger.info("DEPTH_UNKNOWN pair=%s — skipping (fail closed)", pair_id)
+            return None
+        # Every P1 pair has a Kalshi leg, which trades whole contracts only;
+        # a fractional size could never be fully hedged.
+        size = float(math.floor(min(size, buy_depth, sell_depth)))
+        if size < max(1.0, self._risk_config.arb_min_fill_size):
+            self._skipped_thin_book += 1
+            logger.debug(
+                "THIN_BOOK pair=%s buy_depth=%s sell_depth=%s",
+                pair_id,
+                buy_depth,
+                sell_depth,
             )
             return None
 
@@ -1073,4 +1118,6 @@ class ArbitrageEngine:
             "skipped_fee_unknown": self._skipped_fee_unknown,
             "skipped_unprofitable": self._skipped_unprofitable,
             "skipped_halted": self._skipped_halted,
+            "skipped_depth_unknown": self._skipped_depth_unknown,
+            "skipped_thin_book": self._skipped_thin_book,
         }
