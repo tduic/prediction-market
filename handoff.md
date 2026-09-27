@@ -22,9 +22,12 @@ _Last updated: 2026-09-27_
     buy fills. `pending` is never retried.
   - **P&L fix**: translated Polymarket sells (BUY NO) are converted to YES
     space (`OrderResult.book`).
-- In progress on branch `polymarket-v2` (worktree): Polymarket CLOB V2 client
-  (`execution/clients/polymarket_v2.py`, `POLYMARKET_CLIENT=v2` default)
-  awaiting review.
+  - **Polymarket CLOB V2 client** (`execution/clients/polymarket_v2.py`) is
+    the live default (`POLYMARKET_CLIENT=v2`; `legacy` = archived
+    py-clob-client). It uses FAK orders, never guesses a fill (ambiguous
+    means `pending`, which halts), and installs the proxy before key
+    derivation. It has not placed a real order yet: its first live order is
+    the real test.
 - Checks: ~800 tests. `black` clean. ruff (88 BLE001) and mypy (9) are
   pre-existing baselines; main's CI lint/type jobs were already red.
   Smoke: `python scripts/smoke_paper_arb.py` (live public data, no creds).
@@ -33,9 +36,10 @@ _Last updated: 2026-09-27_
 1. **Before the next deploy**: the systemd units set `SECRETS_STRICT=true`.
    On the VM run `scripts/verify_prod_config.py --require-gcp`. Missing
    `ALERT_DISCORD_WEBHOOK_URL` = silent alerts; missing `DASHBOARD_PASSWORD`
-   = dashboard won't bind publicly. After the V2 client lands also run
-   `scripts/verify_api_auth.py` on the VM (it authenticates through V2 and
-   the proxy).
+   = dashboard won't bind publicly. Also run `scripts/verify_api_auth.py` on
+   the VM: it authenticates through the V2 client and the proxy, and a
+   failure means live Polymarket is broken. Fallback:
+   `POLYMARKET_CLIENT=legacy`.
 2. Open follow-ups (task chips were created):
    - The legacy Kalshi live client sends the internal `kal_` id as the ticker.
    - Single-platform/batch strategies store translated-sell (NO-book) fills

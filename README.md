@@ -184,9 +184,11 @@ Pairs related markets across platforms using title normalization plus an inverte
 - `sizing.py` — Kelly fractional sizing, capped by `MAX_POSITION_PCT`.
 
 ### Execution (`execution/`)
-- `clients/kalshi.py`, `clients/polymarket.py` — live clients with RSA-PSS auth. Polymarket routes through a SOCKS5 proxy for EU compliance.
-- `clients/paper.py` — fills at real market prices with configurable slippage; writes identical DB rows to live mode so analytics work unchanged.
-- `factory.py` — builds the correct client per `EXECUTION_MODE`.
+- `clients/polymarket_v2.py` — live Polymarket client on py-clob-client-v2 (default). LIMIT orders are fill-and-kill, so nothing rests; an ambiguous post or unconfirmed fill returns `pending` (which halts execution) rather than guessing. Fees come from the market's live fee curve. Routes through the `POLYMARKET_PROXY` SOCKS5 proxy for EU compliance, including key derivation.
+- `clients/kalshi.py` — live Kalshi client (RSA-PSS auth). `clients/polymarket.py` is the archived py-clob-client implementation, kept behind `POLYMARKET_CLIENT=legacy`.
+- `clients/paper.py` — fills at real market prices with configurable slippage and the venues' fee curves; writes identical DB rows to live mode so analytics work unchanged.
+- `market_data.py` — public pre-trade reads: fee metadata (cached, warmed at startup) and executable order-book depth.
+- `factory.py` — builds the correct client per `EXECUTION_MODE` / `POLYMARKET_CLIENT`.
 - `circuit_breaker.py` — sticky daily-loss halt shared by tick and scheduled paths.
 
 ### Dashboard (`scripts/dashboard_api.py`, `dashboard/`)
