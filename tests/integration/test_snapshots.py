@@ -21,8 +21,8 @@ import pytest
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from core.engine import ArbitrageEngine  # noqa: E402
-from execution.clients.paper import PaperExecutionClient  # noqa: E402
+from core.engine import ArbitrageEngine
+from execution.clients.paper import PaperExecutionClient
 
 
 @pytest.fixture(autouse=True)

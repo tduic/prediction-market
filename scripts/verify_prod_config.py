@@ -57,13 +57,13 @@ if _env_file.exists():
                 _k, _, _v = _line.partition("=")
                 os.environ.setdefault(_k.strip(), _v.strip())
 
-from core.alerting import (  # noqa: E402 - imports intentionally follow local .env loading
+from core.alerting import (
     DiscordWebhookTransport,
     NullTransport,
     Severity,
     get_alert_manager,
 )
-from core.secrets import (  # noqa: E402 - imports intentionally follow local .env loading
+from core.secrets import (
     GCPSecretManagerBackend,
     get_backend,
     get_secret,
@@ -90,7 +90,7 @@ def _check_secrets(require_gcp: bool) -> tuple[bool, list[tuple[str, str, bool]]
     came from its internal store or fell through to os.getenv.
     """
     backend = get_backend()
-    rows: list[tuple[str, str, str]] = []
+    rows: list[tuple[str, str, bool]] = []
     all_ok = True
 
     for name in REQUIRED_SECRETS:

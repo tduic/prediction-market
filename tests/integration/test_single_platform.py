@@ -29,9 +29,9 @@ import pytest
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from core.config import RiskControlConfig  # noqa: E402
-from core.engine import ScheduledStrategyRunner  # noqa: E402
-from core.strategies.single_platform import (  # noqa: E402
+from core.config import RiskControlConfig
+from core.engine import ScheduledStrategyRunner
+from core.strategies.single_platform import (
     _cross_strategy_dedup,
     _get_strategy_rolling_pnl,
     _normalize_signal_strengths,
@@ -39,8 +39,8 @@ from core.strategies.single_platform import (  # noqa: E402
     detect_single_platform_opportunities,
     mark_and_close_positions,
 )
-from execution.clients.paper import PaperExecutionClient  # noqa: E402
-from execution.models import OrderLeg  # noqa: E402
+from execution.clients.paper import PaperExecutionClient
+from execution.models import OrderLeg
 
 
 @pytest.fixture(autouse=True)
@@ -1148,3 +1148,50 @@ class TestStrategyKillSwitch:
             "SELECT COUNT(*) FROM positions WHERE strategy='P3_calibration_bias' AND market_id='mkt_pos_trigger'"
         )
         assert (await cursor.fetchone())[0] >= 1
+
+
+class TestCircuitBreakerRecording:
+    """Resting (pending) orders are not execution failures and must not
+    count toward the consecutive-failure halt or the failure-rate alert."""
+
+    class _Breaker:
+        def __init__(self):
+            self.calls: list[bool] = []
+
+        async def record_order_result(self, success: bool) -> None:
+            self.calls.append(success)
+
+    @staticmethod
+    def _result(status: str, filled_price: float | None):
+        from execution.clients.base import OrderResult
+
+        return OrderResult(
+            order_id="o1",
+            platform="kalshi",
+            status=status,
+            submission_latency_ms=1,
+            filled_price=filled_price,
+        )
+
+    @pytest.mark.parametrize(
+        "status,filled_price,expected",
+        [
+            ("filled", 0.42, [True]),
+            ("partially_filled", 0.42, [True]),
+            ("failed", None, [False]),
+            ("pending", None, []),
+        ],
+    )
+    async def test_records_only_terminal_outcomes(self, status, filled_price, expected):
+        from core.strategies.single_platform import _record_circuit_breaker_result
+
+        breaker = self._Breaker()
+        await _record_circuit_breaker_result(
+            breaker, self._result(status, filled_price)
+        )
+        assert breaker.calls == expected
+
+    async def test_none_breaker_is_noop(self):
+        from core.strategies.single_platform import _record_circuit_breaker_result
+
+        await _record_circuit_breaker_result(None, self._result("failed", None))

@@ -27,13 +27,38 @@ def test_alert_policy_defaults_are_documented_values(monkeypatch):
 @pytest.mark.parametrize(
     ("name", "value", "attribute", "default"),
     [
-        ("AGED_POSITION_ALERT_THRESHOLD_S", "invalid", "aged_position_alert_threshold_s", 259200),
-        ("AGED_POSITION_ALERT_THRESHOLD_S", "0", "aged_position_alert_threshold_s", 259200),
-        ("AGED_POSITION_ALERT_THRESHOLD_S", "31536001", "aged_position_alert_threshold_s", 259200),
+        (
+            "AGED_POSITION_ALERT_THRESHOLD_S",
+            "invalid",
+            "aged_position_alert_threshold_s",
+            259200,
+        ),
+        (
+            "AGED_POSITION_ALERT_THRESHOLD_S",
+            "0",
+            "aged_position_alert_threshold_s",
+            259200,
+        ),
+        (
+            "AGED_POSITION_ALERT_THRESHOLD_S",
+            "31536001",
+            "aged_position_alert_threshold_s",
+            259200,
+        ),
         ("EXECUTION_FAILURE_ALERT_COUNT", "-1", "execution_failure_alert_count", 3),
         ("EXECUTION_FAILURE_ALERT_COUNT", "1001", "execution_failure_alert_count", 3),
-        ("EXECUTION_FAILURE_ALERT_WINDOW_S", "0", "execution_failure_alert_window_s", 600),
-        ("EXECUTION_FAILURE_ALERT_WINDOW_S", "86401", "execution_failure_alert_window_s", 600),
+        (
+            "EXECUTION_FAILURE_ALERT_WINDOW_S",
+            "0",
+            "execution_failure_alert_window_s",
+            600,
+        ),
+        (
+            "EXECUTION_FAILURE_ALERT_WINDOW_S",
+            "86401",
+            "execution_failure_alert_window_s",
+            600,
+        ),
     ],
 )
 def test_invalid_alert_policy_values_fall_back_safely(

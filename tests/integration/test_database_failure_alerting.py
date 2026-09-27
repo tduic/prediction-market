@@ -25,14 +25,21 @@ async def _db_failure(*args, **kwargs):
     ("target", "component"),
     [
         ("core.engine.resolution.close_resolved_positions", "resolution"),
-        ("core.strategies.single_platform.mark_and_close_positions", "position_lifecycle"),
+        (
+            "core.strategies.single_platform.mark_and_close_positions",
+            "position_lifecycle",
+        ),
         ("core.engine.reconciliation.reconcile_internal_state", "reconciliation"),
     ],
 )
-async def test_material_scheduler_database_failures_alert(target, component, db, monkeypatch):
+async def test_material_scheduler_database_failures_alert(
+    target, component, db, monkeypatch
+):
     """Each scheduler-owned DB pass invokes the sanitized critical notifier."""
     monkeypatch.setattr("core.engine.resolution.close_resolved_positions", _noop)
-    monkeypatch.setattr("core.strategies.single_platform.mark_and_close_positions", _noop)
+    monkeypatch.setattr(
+        "core.strategies.single_platform.mark_and_close_positions", _noop
+    )
     monkeypatch.setattr("core.engine.reconciliation.reconcile_internal_state", _noop)
     monkeypatch.setattr("core.invariants.check_all_invariants", _noop)
     monkeypatch.setattr(

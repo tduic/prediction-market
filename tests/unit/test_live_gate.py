@@ -18,7 +18,7 @@ import pytest
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from core.live_gate import (  # noqa: E402
+from core.live_gate import (
     SENTINEL_PATH,
     LiveGateError,
     check_live_gate,

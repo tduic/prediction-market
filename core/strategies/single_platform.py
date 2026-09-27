@@ -337,6 +337,18 @@ async def mark_and_close_positions(
     return closed
 
 
+async def _record_circuit_breaker_result(circuit_breaker, result) -> None:
+    """Feed a single-platform order outcome into the circuit breaker.
+
+    A live LIMIT order still resting after the fill-poll timeout comes back as
+    status="pending" with no fill price. That is not an execution failure, so
+    it neither counts toward the consecutive-failure halt nor resets it.
+    """
+    if circuit_breaker is None or result.status == "pending":
+        return
+    await circuit_breaker.record_order_result(success=result.status != "failed")
+
+
 async def detect_single_platform_opportunities(
     db: aiosqlite.Connection,
     max_trades: int = 20,
@@ -765,10 +777,7 @@ async def detect_single_platform_opportunities(
         result = await _clients[platform].submit_order(
             leg, signal_id=signal_id, strategy=strategy
         )
-        if circuit_breaker is not None:
-            await circuit_breaker.record_order_result(
-                success=result.filled_price is not None
-            )
+        await _record_circuit_breaker_result(circuit_breaker, result)
 
         if result.filled_price is not None:
             # Phase 4: open position, NO synthetic exit price.

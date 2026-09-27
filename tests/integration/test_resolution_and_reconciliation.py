@@ -20,8 +20,8 @@ import pytest
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from core.engine.reconciliation import reconcile_internal_state  # noqa: E402
-from core.engine.resolution import close_resolved_positions  # noqa: E402
+from core.engine.reconciliation import reconcile_internal_state
+from core.engine.resolution import close_resolved_positions
 
 
 def _iso_now() -> str:
@@ -290,24 +290,36 @@ async def test_reconciliation_clean_when_everything_consistent(db):
 
 
 @pytest.mark.asyncio
-async def test_reconciliation_flags_and_deduplicates_aged_open_position(db, monkeypatch):
+async def test_reconciliation_flags_and_deduplicates_aged_open_position(
+    db, monkeypatch
+):
     await _seed_market(db, "aged_market")
     await _seed_signal(db, "aged_signal", "aged_market")
-    await _seed_position(db, "aged_position", signal_id="aged_signal", market_id="aged_market")
+    await _seed_position(
+        db, "aged_position", signal_id="aged_signal", market_id="aged_market"
+    )
     old = (datetime.now(timezone.utc) - timedelta(hours=73)).isoformat()
-    await db.execute("UPDATE positions SET opened_at = ? WHERE id = 'aged_position'", (old,))
+    await db.execute(
+        "UPDATE positions SET opened_at = ? WHERE id = 'aged_position'", (old,)
+    )
     await db.commit()
     monkeypatch.setattr(
         "core.engine.reconciliation.get_config",
-        lambda: SimpleNamespace(risk_controls=SimpleNamespace(
-            aged_position_alert_threshold_s=72 * 3600,
-            reconcile_stuck_pending_threshold_s=300,
-        )),
+        lambda: SimpleNamespace(
+            risk_controls=SimpleNamespace(
+                aged_position_alert_threshold_s=72 * 3600,
+                reconcile_stuck_pending_threshold_s=300,
+            )
+        ),
     )
     manager = MagicMock()
-    assert (await reconcile_internal_state(db, alert_manager=manager))["aged_open_positions"] == 1
+    assert (await reconcile_internal_state(db, alert_manager=manager))[
+        "aged_open_positions"
+    ] == 1
     assert manager.send_nowait.call_count == 2  # position alert + aggregate alert
-    assert (await reconcile_internal_state(db, alert_manager=manager))["aged_open_positions"] == 0
+    assert (await reconcile_internal_state(db, alert_manager=manager))[
+        "aged_open_positions"
+    ] == 0
     assert manager.send_nowait.call_count == 2
 
 
@@ -315,7 +327,12 @@ async def test_reconciliation_flags_and_deduplicates_aged_open_position(db, monk
 async def test_aged_position_below_threshold_does_not_alert(db, monkeypatch):
     await _seed_market(db, "fresh_aged_market")
     await _seed_signal(db, "fresh_aged_signal", "fresh_aged_market")
-    await _seed_position(db, "fresh_aged_position", signal_id="fresh_aged_signal", market_id="fresh_aged_market")
+    await _seed_position(
+        db,
+        "fresh_aged_position",
+        signal_id="fresh_aged_signal",
+        market_id="fresh_aged_market",
+    )
     await _seed_order(
         db,
         "fresh_aged_order",
@@ -331,19 +348,25 @@ async def test_aged_position_below_threshold_does_not_alert(db, monkeypatch):
     await db.commit()
     monkeypatch.setattr(
         "core.engine.reconciliation.get_config",
-        lambda: SimpleNamespace(risk_controls=SimpleNamespace(
-            aged_position_alert_threshold_s=72 * 3600,
-            reconcile_stuck_pending_threshold_s=300,
-        )),
+        lambda: SimpleNamespace(
+            risk_controls=SimpleNamespace(
+                aged_position_alert_threshold_s=72 * 3600,
+                reconcile_stuck_pending_threshold_s=300,
+            )
+        ),
     )
     manager = MagicMock()
 
-    assert (await reconcile_internal_state(db, alert_manager=manager))["aged_open_positions"] == 0
+    assert (await reconcile_internal_state(db, alert_manager=manager))[
+        "aged_open_positions"
+    ] == 0
     manager.send_nowait.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_multiple_aged_positions_alert_independently_with_configured_threshold(db, monkeypatch):
+async def test_multiple_aged_positions_alert_independently_with_configured_threshold(
+    db, monkeypatch
+):
     for suffix in ("one", "two"):
         market_id = f"configured_aged_market_{suffix}"
         signal_id = f"configured_aged_signal_{suffix}"
@@ -352,26 +375,32 @@ async def test_multiple_aged_positions_alert_independently_with_configured_thres
         await _seed_signal(db, signal_id, market_id)
         await _seed_position(db, position_id, signal_id=signal_id, market_id=market_id)
         old = (datetime.now(timezone.utc) - timedelta(seconds=121)).isoformat()
-        await db.execute("UPDATE positions SET opened_at = ? WHERE id = ?", (old, position_id))
+        await db.execute(
+            "UPDATE positions SET opened_at = ? WHERE id = ?", (old, position_id)
+        )
     await db.commit()
     monkeypatch.setattr(
         "core.engine.reconciliation.get_config",
-        lambda: SimpleNamespace(risk_controls=SimpleNamespace(
-            aged_position_alert_threshold_s=120,
-            reconcile_stuck_pending_threshold_s=300,
-        )),
+        lambda: SimpleNamespace(
+            risk_controls=SimpleNamespace(
+                aged_position_alert_threshold_s=120,
+                reconcile_stuck_pending_threshold_s=300,
+            )
+        ),
     )
     manager = MagicMock()
 
     summary = await reconcile_internal_state(db, alert_manager=manager)
     position_alerts = [
-        call for call in manager.send_nowait.call_args_list
+        call
+        for call in manager.send_nowait.call_args_list
         if call.kwargs["title"].startswith("Open position exceeded age threshold:")
     ]
     assert summary["aged_open_positions"] == 2
     assert len(position_alerts) == 2
     assert {call.kwargs["context"]["position_id"] for call in position_alerts} == {
-        "configured_aged_position_one", "configured_aged_position_two"
+        "configured_aged_position_one",
+        "configured_aged_position_two",
     }
 
 
@@ -512,9 +541,9 @@ async def test_reconciliation_stuck_order_dedup_prevents_double_log(db):
         "SELECT COUNT(*) FROM reconciliation_log WHERE check_type='stuck_pending_order'"
     )
     row = await cursor.fetchone()
-    assert row[0] == 1, (
-        "Dedup should prevent a second log entry for the same stuck order"
-    )
+    assert (
+        row[0] == 1
+    ), "Dedup should prevent a second log entry for the same stuck order"
 
 
 # ── signals_without_orders tests ──────────────────────────────────────────────────────

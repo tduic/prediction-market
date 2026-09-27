@@ -610,6 +610,7 @@ class ArbitrageEngine:
                 pair_id,
             )
             from core.alerting import notify_database_failure
+
             notify_database_failure("arb_engine", exc)
             return None
 
@@ -690,6 +691,7 @@ class ArbitrageEngine:
                 "Aborting arb trade for pair=%s: signal insert failed", pair_id
             )
             from core.alerting import notify_database_failure
+
             notify_database_failure("arb_engine", exc)
             return None
 

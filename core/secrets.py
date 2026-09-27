@@ -129,7 +129,8 @@ class GCPSecretManagerBackend:
                     "Install with: pip install google-cloud-secret-manager"
                 )
                 return None
-            except Exception as e:  # noqa: BLE001 - provider initialization errors vary by environment
+            # Provider initialization errors vary by environment.
+            except Exception as e:  # noqa: BLE001
                 logger.error("Failed to init GCP Secret Manager client: %s", e)
                 return None
         return self._client
@@ -173,7 +174,8 @@ class GCPSecretManagerBackend:
             self._cache[name] = value
             logger.debug("Loaded secret %s from GCP Secret Manager", name)
             return value
-        except Exception as e:  # noqa: BLE001 - normalize provider failures into configured fallback behavior
+        # Normalize provider failures into the configured fallback behavior.
+        except Exception as e:  # noqa: BLE001
             # Don't spam retries after a failed lookup for the process lifetime.
             self._unavailable.add(name)
             return self._fallback(name, default, type(e).__name__)

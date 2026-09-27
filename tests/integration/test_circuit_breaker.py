@@ -159,12 +159,17 @@ async def test_consecutive_failures_trip(db):
 
 
 @pytest.mark.asyncio
-async def test_rolling_execution_failure_alert_uses_configured_threshold(db, monkeypatch):
+async def test_rolling_execution_failure_alert_uses_configured_threshold(
+    db, monkeypatch
+):
     manager = MagicMock()
     monkeypatch.setattr("execution.circuit_breaker.get_alert_manager", lambda: manager)
     breaker = DailyLossCircuitBreaker(
-        db=db, starting_capital=10_000, max_daily_loss_pct=0.02,
-        execution_failure_alert_count=3, execution_failure_alert_window_s=600,
+        db=db,
+        starting_capital=10_000,
+        max_daily_loss_pct=0.02,
+        execution_failure_alert_count=3,
+        execution_failure_alert_window_s=600,
     )
     for _ in range(3):
         await breaker.record_order_result(success=False)
@@ -198,7 +203,9 @@ async def test_execution_failure_window_expires_old_failures(db, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_execution_failure_custom_count_and_successes_do_not_alert(db, monkeypatch):
+async def test_execution_failure_custom_count_and_successes_do_not_alert(
+    db, monkeypatch
+):
     manager = MagicMock()
     monkeypatch.setattr("execution.circuit_breaker.get_alert_manager", lambda: manager)
     breaker = DailyLossCircuitBreaker(
@@ -360,9 +367,9 @@ async def test_load_state_respects_reset_after_trip(db):
     await breaker.load_state()
 
     state = await breaker.get_state()
-    assert state.tripped is False, (
-        "load_state should NOT restore tripped when the most recent event today is a RESET"
-    )
+    assert (
+        state.tripped is False
+    ), "load_state should NOT restore tripped when the most recent event today is a RESET"
 
 
 @pytest.mark.asyncio

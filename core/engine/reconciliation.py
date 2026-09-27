@@ -26,7 +26,9 @@ from core.config import get_config
 logger = logging.getLogger(__name__)
 
 
-async def reconcile_internal_state(db: aiosqlite.Connection, alert_manager=None) -> dict[str, int]:
+async def reconcile_internal_state(
+    db: aiosqlite.Connection, alert_manager=None
+) -> dict[str, int]:
     """Run all internal reconciliation checks.
 
     Returns a summary dict with the number of discrepancies found per
@@ -92,9 +94,14 @@ async def _check_aged_open_positions(
         if await _is_recently_logged(db, "aged_open_position", detail):
             continue
         await _log_discrepancy(
-            db, platform=platform or "unknown", check_type="aged_open_position",
-            local_value=float(threshold_s), exchange_value=None,
-            discrepancy=float(threshold_s), status="discrepancy", detail=detail,
+            db,
+            platform=platform or "unknown",
+            check_type="aged_open_position",
+            local_value=float(threshold_s),
+            exchange_value=None,
+            discrepancy=float(threshold_s),
+            status="discrepancy",
+            detail=detail,
             action_taken=f"market_id={market_id} age_threshold_s={threshold_s}",
         )
         try:
