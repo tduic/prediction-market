@@ -3,42 +3,57 @@
 _Last updated: 2026-09-27_
 
 ## State
-- `main` includes the sandsthebrand fork's `main` (4 commits, merged 2026-09-27):
-  paper-soak runtime telemetry in `/api/system-health`, Secret Manager strict
-  mode, DB-failure / aged-position / execution-failure-rate alerts.
-- Follow-up fix on top: resting (`status="pending"`) single-platform orders no
-  longer count as circuit-breaker failures (`_record_circuit_breaker_result`
-  in `core/strategies/single_platform.py`).
-- Suite: 714 passing. `black` clean. `ruff` (88 BLE001) and `mypy` (9 errors)
-  are pre-existing on main, so CI's lint/type jobs were already red.
+- Fork `sandsthebrand/prediction-market` `main` (4 commits) merged 2026-09-27,
+  plus a breaker fix: resting (`pending`) single-platform orders don't count
+  as failures.
+- Useful pieces of fork branch `phase1-arb-hardening` ported with fixes
+  (plan: `docs/superpowers/plans/2026-09-27-phase1-port.md`). Each money-path
+  commit was reviewed by an independent second model before push:
+  - **Fee gate**: `core/engine/fees.py` (Kalshi 0.07·mult·C·P(1−P) rounded
+    up to the cent; Polymarket r·(P(1−P))^e) and `execution/market_data.py`
+    (public fee discovery keyed by `markets.platform_id`, served stale while
+    refreshing, warmed at startup). Kelly sizes on the net edge.
+    `MIN_EDGE_TO_TRADE` stays on the gross spread (fees aren't counted twice).
+  - **Paper fees** follow the same curves.
+  - **Depth**: size capped to executable book depth at our limits and floored
+    to whole contracts.
+  - **Execution halt** (migration 019, `scripts/clear_halt.py`): trips on an
+    unknown fill or incomplete hedge. The hedge leg is sent only after the
+    buy fills. `pending` is never retried.
+  - **P&L fix**: translated Polymarket sells (BUY NO) are converted to YES
+    space (`OrderResult.book`).
+- In progress on branch `polymarket-v2` (worktree): Polymarket CLOB V2 client
+  (`execution/clients/polymarket_v2.py`, `POLYMARKET_CLIENT=v2` default)
+  awaiting review.
+- Checks: ~800 tests. `black` clean. ruff (88 BLE001) and mypy (9) are
+  pre-existing baselines; main's CI lint/type jobs were already red.
+  Smoke: `python scripts/smoke_paper_arb.py` (live public data, no creds).
 
 ## Next steps
-1. **Before the next deploy**: the systemd units now set `SECRETS_STRICT=true`
-   and `deploy.yml` no longer copies webhook/API secrets into `.env`. On the VM
-   run `scripts/verify_prod_config.py --require-gcp` and confirm every secret
-   (incl. `ALERT_DISCORD_WEBHOOK_URL`, `DASHBOARD_PASSWORD`) is in Secret
-   Manager. Missing webhook = silent alerts; missing dashboard password = the
-   dashboard refuses to bind publicly.
-2. **Fork branch `sandsthebrand/phase1-arb-hardening`: not merged.** It breaks
-   DB init (migration 020 spans two lines; the runner applies ALTERs line by
-   line), under-counts sell-leg exposure (`size*sell_price` vs
-   `size*(1-sell_price)`), treats unknown fills as zero without halting, and
-   signs Kalshi reads without the `/trade-api/v2` prefix. Worth porting later,
-   with fixes: Polymarket CLOB V2 client (legacy `py-clob-client` is archived),
-   fee-curve profitability gate (`arb_profitability.py`; Kalshi fees must round
-   up to the cent), persistent halt (migration 019), order-book depth sizing.
-3. Main's fee model is flat (Kalshi 7% of notional, Polymarket 2%). The arb
-   engine does not net out fees before firing.
+1. **Before the next deploy**: the systemd units set `SECRETS_STRICT=true`.
+   On the VM run `scripts/verify_prod_config.py --require-gcp`. Missing
+   `ALERT_DISCORD_WEBHOOK_URL` = silent alerts; missing `DASHBOARD_PASSWORD`
+   = dashboard won't bind publicly. After the V2 client lands also run
+   `scripts/verify_api_auth.py` on the VM (it authenticates through V2 and
+   the proxy).
+2. Open follow-ups (task chips were created):
+   - The legacy Kalshi live client sends the internal `kal_` id as the ticker.
+   - Single-platform/batch strategies store translated-sell (NO-book) fills
+     as YES prices.
+3. Fork pieces deliberately not ported: its engine rewrite, Kalshi V2 client
+   (read signing broken, endpoint unverified), exchange reconciliation
+   (3 bugs), CI narrowing, P2–P5 disable.
 
 ## Gotchas
-- `scripts/trading_session.py` must run from the repo root (migrations are
-  found by a relative path). It calls `load_dotenv()`, which finds the repo
-  `.env`, so pass `ALERT_DISCORD_WEBHOOK_URL=` explicitly for local smoke
-  runs to avoid posting to Discord.
-- With an empty DB the session has no matches and parks with only the
-  dashboard up. It never reaches the streaming loop (`runtime.state` stays
-  `starting`).
-- `deploy.yml` triggers on published releases (or manual dispatch).
-  `create_release.yml` is manual. The last Deploy run was v2.4.0
-  (2026-04-17), even though releases up to v2.33.0 exist, most likely because
-  releases created with `GITHUB_TOKEN` don't trigger workflows.
+- `scripts/trading_session.py` must run from the repo root (relative
+  migrations path) and `load_dotenv()` finds the repo `.env`, so pass
+  `ALERT_DISCORD_WEBHOOK_URL=` for local runs. `--refresh` needs Kalshi
+  credentials (the ingestor signs market listing).
+- The test helper `_risk_config()` in `tests/integration/test_arb_engine.py`
+  builds `RiskControlConfig` without `__init__`, so new config fields must be
+  added to its defaults.
+- `core.engine` eagerly imports `arb_engine`. `execution.market_data`
+  imports `core.engine.fees`, so `arb_engine` imports the market_data
+  *module* (not the function) to avoid a cycle.
+- `deploy.yml` triggers on published releases. The last Deploy run was
+  v2.4.0 (2026-04-17).
