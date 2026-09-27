@@ -1201,6 +1201,18 @@ def _build_app(
                 result["circuit_breaker"] = {"error": str(e)}
                 issues.append("circuit_breaker_query_failed")
 
+            # Persistent execution halt (unknown/unbalanced fill). Never
+            # auto-clears; see scripts/clear_halt.py.
+            try:
+                from core.engine.execution_control import get_halt
+
+                result["execution_halt"] = await get_halt(db)
+                if result["execution_halt"] is not None:
+                    issues.append("execution_halted")
+            except aiosqlite.Error as e:
+                result["execution_halt"] = {"error": str(e)}
+                issues.append("execution_halt_query_failed")
+
             # Reconciliation discrepancies (last 24h) + liveness
             try:
                 rec_cursor = await db.execute(
@@ -1403,7 +1415,10 @@ def _build_app(
                             )
 
             # Overall status
-            if any("tripped" in i or "critical" in i for i in issues):
+            if any(
+                "tripped" in i or "critical" in i or i == "execution_halted"
+                for i in issues
+            ):
                 result["status"] = "critical"
             elif issues:
                 result["status"] = "warn"

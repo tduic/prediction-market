@@ -1195,3 +1195,57 @@ class TestCircuitBreakerRecording:
         from core.strategies.single_platform import _record_circuit_breaker_result
 
         await _record_circuit_breaker_result(None, self._result("failed", None))
+
+
+class TestExecutionHalt:
+    @pytest.fixture(autouse=True)
+    def _quiet_alerts(self, monkeypatch):
+        from unittest.mock import MagicMock
+
+        from core.engine import execution_control
+
+        monkeypatch.setattr(execution_control, "get_alert_manager", MagicMock)
+
+    async def _orders(self, db) -> int:
+        cursor = await db.execute("SELECT COUNT(*) FROM orders")
+        return (await cursor.fetchone())[0]
+
+    async def test_halted_places_no_orders(self, db):
+        from core.engine.execution_control import halt
+
+        await halt(db, "unknown_fill earlier", component="arb_engine")
+        await _seed_market(db, "m_halt", yes_price=0.25)
+        trades = await detect_single_platform_opportunities(db, max_trades=10)
+        assert not trades
+        assert await self._orders(db) == 0
+
+    async def test_pending_result_halts_and_cancels(self, db, monkeypatch):
+        from core.engine.execution_control import get_halt
+        from execution.clients.base import OrderResult
+
+        class _Resting:
+            def __init__(self):
+                self.cancelled: list[str] = []
+
+            async def submit_order(self, leg, signal_id=None, strategy=None):
+                return OrderResult(
+                    order_id="o-rest",
+                    platform=leg.platform,
+                    status="pending",
+                    submission_latency_ms=1,
+                )
+
+            async def cancel_order(self, order_id):
+                self.cancelled.append(order_id)
+                return True
+
+        client = _Resting()
+        monkeypatch.setattr(
+            "execution.factory._make_single_execution_client",
+            lambda db, mode, platform: client,
+        )
+        await _seed_market(db, "m_pend", yes_price=0.25)
+        await detect_single_platform_opportunities(db, max_trades=10)
+        state = await get_halt(db)
+        assert state is not None and state["reason"].startswith("unknown_fill")
+        assert client.cancelled == ["o-rest"]

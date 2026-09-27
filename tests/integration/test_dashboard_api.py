@@ -599,6 +599,30 @@ class TestSystemHealthEndpoint:
         assert data["reconciliation_discrepancies_24h"] == 0
         assert data["invariant_violations_24h"] == 0
 
+    async def test_system_health_reports_execution_halt_as_critical(
+        self, app_and_client, monkeypatch
+    ):
+        from unittest.mock import MagicMock
+
+        import aiosqlite
+
+        from core.engine import execution_control
+        from core.engine.execution_control import halt
+
+        monkeypatch.setattr(execution_control, "get_alert_manager", MagicMock)
+        _, client, db_path = app_and_client
+        async with aiosqlite.connect(db_path) as conn:
+            await halt(conn, "unbalanced_arb pair=p1", component="arb_engine")
+        data = (await client.get("/api/system-health")).json()
+        assert data["status"] == "critical"
+        assert "execution_halted" in data["issues"]
+        assert data["execution_halt"]["reason"] == "unbalanced_arb pair=p1"
+
+    async def test_system_health_not_halted_on_empty_db(self, app_and_client):
+        _, client, _ = app_and_client
+        data = (await client.get("/api/system-health")).json()
+        assert data["execution_halt"] is None
+
     async def test_system_health_daily_loss_zero_on_empty_db(self, app_and_client):
         _, client, _ = app_and_client
         resp = await client.get("/api/system-health")

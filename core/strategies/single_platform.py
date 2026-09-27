@@ -731,6 +731,14 @@ async def detect_single_platform_opportunities(
                 strategy,
             )
             break
+        # Persistent execution halt (unknown/unbalanced fill somewhere).
+        from core.engine.execution_control import is_halted
+
+        if await is_halted(db):
+            logger.warning(
+                "EXECUTION_HALTED -- skipping single-platform trade for %s", strategy
+            )
+            break
 
         # Write signal
         try:
@@ -778,6 +786,24 @@ async def detect_single_platform_opportunities(
             leg, signal_id=signal_id, strategy=strategy
         )
         await _record_circuit_breaker_result(circuit_breaker, result)
+        if result.status == "pending":
+            # Fill state unknown: the position can't be booked either way.
+            from core.engine.execution_control import halt
+
+            await halt(
+                db,
+                f"unknown_fill strategy={strategy} market={m['id']} "
+                f"order={result.order_id}",
+                component="single_platform",
+            )
+            try:
+                await _clients[platform].cancel_order(result.order_id)
+            except Exception:
+                logger.exception(
+                    "Cancel failed for unknown-fill order %s (halt stays set)",
+                    result.order_id,
+                )
+            break
 
         if result.filled_price is not None:
             # Phase 4: open position, NO synthetic exit price.
