@@ -219,3 +219,45 @@ def test_proxy_swaps_sdk_http_client(monkeypatch):
         assert helpers._http_client is not original
     finally:
         helpers._http_client = original
+
+
+async def test_repeated_failures_get_distinct_order_ids(db):
+    await _seed(db)
+    fake = FakeClob(post={"success": False, "errorMsg": "not enough balance"})
+    client = _client(db, fake)
+    first = await client.submit_order(_leg())
+    second = await client.submit_order(_leg())
+    # orders.id is the primary key: a collision would drop the audit row.
+    assert first.order_id != second.order_id
+
+
+def test_concurrent_init_builds_one_client(monkeypatch):
+    import threading
+    import time
+
+    import py_clob_client_v2
+
+    built: list[int] = []
+    gate = threading.Barrier(2)
+
+    class _Clob:
+        def __init__(self, **kwargs):
+            built.append(1)
+            time.sleep(0.05)  # widen the race window
+
+        def create_or_derive_api_key(self):
+            return None
+
+    monkeypatch.setattr(py_clob_client_v2, "ClobClient", _Clob)
+    client = PolymarketExecutionClientV2(None, private_key="0x" + "1" * 64)
+
+    def _init():
+        gate.wait()
+        client._ensure_client()
+
+    threads = [threading.Thread(target=_init) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert len(built) == 2  # one L1 client for key derivation + one L2 client

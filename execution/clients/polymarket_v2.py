@@ -23,7 +23,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import threading
 import time
+import uuid
 from typing import Any
 
 import aiosqlite
@@ -66,6 +68,9 @@ class PolymarketExecutionClientV2(BaseExecutionClient):
         self.max_polls = max_polls
         self._client: Any = None
         self._initialized = False
+        # _ensure_client runs in worker threads; concurrent pairs could race
+        # to derive keys and swap the SDK's module-level HTTP client.
+        self._init_lock = threading.Lock()
 
         self._rate_limit_tokens = 10.0
         self._rate_limit_max = 10.0
@@ -92,6 +97,11 @@ class PolymarketExecutionClientV2(BaseExecutionClient):
     def _ensure_client(self) -> None:
         if self._initialized:
             return
+        with self._init_lock:
+            if not self._initialized:
+                self._build_client()
+
+    def _build_client(self) -> None:
         from py_clob_client_v2 import ApiCreds, ClobClient
 
         if not self.private_key:
@@ -135,6 +145,15 @@ class PolymarketExecutionClientV2(BaseExecutionClient):
             "Polymarket V2 traffic routed through proxy: %s",
             self.proxy_url.split("@")[-1],  # host:port only, never credentials
         )
+
+    @staticmethod
+    def _local_id(prefix: str, leg: OrderLeg) -> str:
+        """Unique id for an order the exchange never acknowledged.
+
+        orders.id is the primary key, so reusing an id would drop the audit
+        row. For UNKNOWN ids, reconcile by market and time, not by id.
+        """
+        return f"{prefix}-{leg.market_id}-{uuid.uuid4().hex[:8]}"
 
     def _result(self, order_id: str, status: str, start: float, **kw) -> OrderResult:
         return OrderResult(
@@ -186,7 +205,10 @@ class PolymarketExecutionClientV2(BaseExecutionClient):
         except Exception as exc:
             logger.exception("Polymarket V2 order could not be built")
             result = self._result(
-                f"FAILED-{leg.market_id}", "failed", start, error_message=str(exc)
+                self._local_id("FAILED", leg),
+                "failed",
+                start,
+                error_message=str(exc),
             )
             await self.write_order(leg, result, signal_id=signal_id, strategy=strategy)
             return result
@@ -221,8 +243,7 @@ class PolymarketExecutionClientV2(BaseExecutionClient):
                 exc,
             )
             result = self._result(
-                f"{'FAILED' if rejected else 'UNKNOWN'}-{leg.market_id}-"
-                f"{int(start * 1000)}",
+                self._local_id("FAILED" if rejected else "UNKNOWN", leg),
                 "failed" if rejected else "pending",
                 start,
                 error_message=f"post error: {exc!r}",
@@ -250,7 +271,7 @@ class PolymarketExecutionClientV2(BaseExecutionClient):
                 response.get("errorMsg") if isinstance(response, dict) else response
             ) or "order rejected"
             result = self._result(
-                order_id or f"FAILED-{leg.market_id}",
+                order_id or self._local_id("FAILED", leg),
                 "failed",
                 start,
                 error_message=str(error),
