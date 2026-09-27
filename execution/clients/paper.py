@@ -8,6 +8,7 @@ for fill simulation, producing analytics identical to live mode.
 Enable via: EXECUTION_MODE=paper
 """
 
+import asyncio
 import logging
 import random
 import time
@@ -97,10 +98,12 @@ class PaperExecutionClient(BaseExecutionClient):
         if self._fee_rate_override is not None:
             return round(size * price * self._fee_rate_override, 4)
         try:
-            params = await get_market_data().fee_params(self.db, market_id)
+            params = await asyncio.wait_for(
+                get_market_data().fee_params(self.db, market_id), timeout=2.0
+            )
             if params is not None:
                 return taker_fee(params, size, price)
-        except (ValueError, aiosqlite.Error) as e:
+        except (ValueError, aiosqlite.Error, asyncio.TimeoutError) as e:
             logger.debug("[PAPER] fee curve unavailable for %s: %s", market_id, e)
         base_platform = self.platform_label.replace("paper_", "")
         return round(size * price * FEE_RATES.get(base_platform, 0.02), 4)

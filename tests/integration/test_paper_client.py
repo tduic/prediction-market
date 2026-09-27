@@ -388,6 +388,26 @@ class TestVenueFeeCurves:
         result = await _fill(db, "kal_flat", "kalshi", 0.50)
         assert result.fee_paid == round(10.0 * 0.50 * 0.07, 4)
 
+    async def test_slow_fee_lookup_falls_back_to_flat_rate(self, db, monkeypatch):
+        import asyncio
+
+        from execution.clients import paper
+        from execution.market_data import StaticMarketData, set_market_data
+
+        class _Slow(StaticMarketData):
+            async def fee_params(self, db, market_id):
+                await asyncio.sleep(10)
+
+        real_wait_for = asyncio.wait_for
+
+        async def _fast_wait_for(awaitable, timeout):
+            return await real_wait_for(awaitable, timeout=0.01)
+
+        monkeypatch.setattr(paper.asyncio, "wait_for", _fast_wait_for)
+        set_market_data(_Slow())
+        result = await _fill(db, "kal_slow", "kalshi", 0.50)
+        assert result.fee_paid == round(10.0 * 0.50 * 0.07, 4)
+
     async def test_explicit_fee_rate_override_stays_flat(self, db):
         result = await _fill(db, "kal_override", "kalshi", 0.50, fee_rate=0.01)
         assert result.fee_paid == round(10.0 * 0.50 * 0.01, 4)
