@@ -151,41 +151,23 @@ async def verify_polymarket():
         return True
 
     try:
-        from py_clob_client.client import ClobClient
+        from execution.clients.polymarket_v2 import PolymarketExecutionClientV2
 
-        logger.info("POLYMARKET: Testing CLOB client authentication...")
-
-        # Stage 1: derive credentials
-        l1_client = ClobClient(
-            host="https://clob.polymarket.com",
-            key=private_key,
-            chain_id=137,
-        )
-        creds = l1_client.create_or_derive_api_creds()
-        logger.info("POLYMARKET: ✅ API credentials derived successfully")
-
-        # Stage 2: authenticated client
-        l2_client = ClobClient(
-            host="https://clob.polymarket.com",
-            key=private_key,
-            chain_id=137,
-            creds=creds,
-            signature_type=1,
-            funder=funder if funder else None,
-        )
-
-        # Try fetching open orders (should return empty list if no orders)
-        try:
-            orders = l2_client.get_orders()
-            order_count = len(orders) if isinstance(orders, list) else 0
-            logger.info("POLYMARKET: ✅ Auth OK — %d open orders", order_count)
-        except Exception:
-            # Some versions use different method names
-            logger.info("POLYMARKET: ✅ Auth OK (credential derivation succeeded)")
-
+        logger.info("POLYMARKET: Testing CLOB V2 authentication...")
+        client = PolymarketExecutionClientV2(None, funder=funder or None)
+        # Same code path as live trading: proxy install + key derivation.
+        await asyncio.to_thread(client._ensure_client)
+        logger.info("POLYMARKET: ✅ API credentials ready")
+        orders = await asyncio.to_thread(client._client.get_open_orders)
+        order_count = len(orders) if isinstance(orders, list) else 0
+        logger.info("POLYMARKET: ✅ Auth OK — %d open orders", order_count)
+        balance = await client.get_balance()
+        if balance is not None:
+            logger.info("POLYMARKET: ✅ Collateral balance: $%.2f", balance)
     except ImportError:
         logger.warning(
-            "POLYMARKET: py-clob-client not installed. Run: pip install py-clob-client"
+            "POLYMARKET: py-clob-client-v2 not installed. "
+            "Run: pip install -r requirements.txt"
         )
         return True
     except Exception as e:

@@ -210,6 +210,7 @@ All settings load from environment variables. Key ones (see `core/config.py` for
 | `KALSHI_API_KEY` / `KALSHI_RSA_KEY_PATH` | — | Production credential and PEM-path configuration; the credential is read from Secret Manager. |
 | `POLYMARKET_PRIVATE_KEY` / `POLYMARKET_WALLET_ADDRESS` | — | Production credentials read from Secret Manager. |
 | `POLYMARKET_PROXY` | — | `socks5://host:port` for EU routing. |
+| `POLYMARKET_CLIENT` | `v2` | Live Polymarket client: `v2` (py-clob-client-v2, FAK orders) or `legacy` (archived py-clob-client). |
 | `SECRETS_BACKEND` | `env` | `env` or `gcp` (GCP Secret Manager). |
 | `SECRETS_STRICT` | `false` | Set `true` in production to fail closed instead of reading environment credentials. |
 | `GCP_PROJECT_ID` | — | Project for Secret Manager lookups. |
