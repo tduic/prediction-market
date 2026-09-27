@@ -470,3 +470,14 @@ async def async_in_memory_db() -> Generator[sqlite3.Connection, None, None]:
 
     yield conn
     conn.close()
+
+
+@pytest.fixture(autouse=True)
+def _offline_market_data():
+    """Keep every test offline: zero fees and unlimited depth unless a test
+    installs its own provider with ``set_market_data``."""
+    from execution.market_data import StaticMarketData, set_market_data
+
+    set_market_data(StaticMarketData())
+    yield
+    set_market_data(None)
