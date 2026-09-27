@@ -38,6 +38,7 @@ import httpx
 from core.engine.arb_engine import ArbitrageEngine
 from core.engine.execution_control import get_halt
 from core.storage.db import Database
+from execution.enums import Side
 from execution.market_data import LiveMarketData, set_market_data
 from execution.models import OrderLeg
 
@@ -91,6 +92,8 @@ async def main() -> int:
     database = Database(os.path.join(tmp, "smoke.db"), migrations_dir=MIGRATIONS)
     await database.init()
     db = database._conn
+    if db is None:
+        raise RuntimeError("database failed to open")
     now = datetime.now(timezone.utc).isoformat()
     cid = poly_market["conditionId"]
     yes_tok, no_tok = json.loads(poly_market["clobTokenIds"])[:2]
@@ -126,14 +129,14 @@ async def main() -> int:
         OrderLeg(
             market_id=poly_id,
             platform="polymarket",
-            side="BUY",
+            side=Side.BUY,
             size=10,
             limit_price=poly_ask,
         ),
         OrderLeg(
             market_id=kal_id,
             platform="kalshi",
-            side="SELL",
+            side=Side.SELL,
             size=10,
             limit_price=kal_bid,
         ),
