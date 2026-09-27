@@ -91,8 +91,14 @@ Market re-matching runs separately via `scripts/refresh_markets.py` (invoked ad-
 
 ```bash
 pytest tests/ -q
-# 669 tests, all self-contained (in-memory aiosqlite with real migration schema).
-# No external services required.
+# ~800 tests, all self-contained (in-memory aiosqlite with real migration
+# schema; fee/depth lookups stubbed by an autouse fixture). No network needed.
+```
+
+Smoke test of the P1 path against live public venue data (no credentials,
+no orders, throwaway DB):
+```bash
+python scripts/smoke_paper_arb.py   # prints fee params, depth, engine decision; exits 1 on failure
 ```
 
 Type-check:
