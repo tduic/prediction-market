@@ -21,6 +21,8 @@ import aiosqlite
 import httpx
 
 from core.engine.fees import FeeParams, kalshi_params, polymarket_params
+from execution.clients.polymarket_book import BookResolver
+from execution.enums import Side
 from execution.models import OrderLeg
 
 logger = logging.getLogger(__name__)
@@ -28,6 +30,8 @@ logger = logging.getLogger(__name__)
 DEFAULT_POLY_HOST = "https://clob.polymarket.com"
 DEFAULT_KALSHI_PUBLIC_BASE = "https://api.elections.kalshi.com/trade-api/v2"
 _KALSHI_TAKER_FEE_TYPES = {"quadratic", "quadratic_with_maker_fees"}
+# Price comparisons tolerate float noise from string parsing ("0.4500").
+_EPS = 1e-9
 
 
 class MarketData(Protocol):
@@ -207,8 +211,71 @@ class LiveMarketData:
     async def executable_depth(
         self, db: aiosqlite.Connection, leg: OrderLeg
     ) -> float | None:
-        # Implemented with the depth-sizing work; unknown depth fails closed.
+        """Quantity immediately fillable within ``leg.limit_price``.
+
+        Read live on every call (books move too fast to cache). None means
+        unknown — the caller must not trade.
+        """
+        if leg.limit_price is None:
+            return None
+        ident = await _platform_id(db, leg.market_id)
+        if ident is None:
+            return None
+        platform, platform_id = ident
+        try:
+            if platform == "polymarket":
+                return await self._polymarket_depth(db, leg)
+            if platform == "kalshi":
+                return await self._kalshi_depth(platform_id, leg.side, leg.limit_price)
+        except (
+            httpx.HTTPError,
+            ValueError,
+            KeyError,
+            TypeError,
+            AttributeError,
+            IndexError,
+        ) as exc:
+            logger.warning(
+                "executable_depth: lookup failed for %s (%s): %s",
+                leg.market_id,
+                type(exc).__name__,
+                exc,
+            )
         return None
+
+    async def _polymarket_depth(
+        self, db: aiosqlite.Connection, leg: OrderLeg
+    ) -> float | None:
+        # Route exactly as the execution client will (no-naked-shorts: a SELL
+        # without YES inventory becomes a BUY on the NO book at 1 - p).
+        resolved = await BookResolver(db).resolve(
+            leg.market_id, leg.side, leg.size, leg.limit_price
+        )
+        if resolved is None:
+            return None
+        book = await self._get_json(
+            f"{self._poly_host}/book", params={"token_id": resolved.token_id}
+        )
+        limit = resolved.limit_price
+        if resolved.side is Side.BUY:
+            levels, fillable = book.get("asks") or [], lambda p: p <= limit + _EPS
+        else:
+            levels, fillable = book.get("bids") or [], lambda p: p >= limit - _EPS
+        return sum(
+            float(level["size"]) for level in levels if fillable(float(level["price"]))
+        )
+
+    async def _kalshi_depth(self, ticker: str, side: Side, limit: float) -> float:
+        # Both sides of a Kalshi book are bids. Buying YES at <= p lifts NO
+        # bids at >= 1 - p; selling YES at >= p hits YES bids at >= p.
+        book = (
+            await self._get_json(f"{self._kalshi_base}/markets/{ticker}/orderbook")
+        )["orderbook_fp"]
+        if side is Side.BUY:
+            levels, floor = book.get("no_dollars") or [], 1.0 - limit
+        else:
+            levels, floor = book.get("yes_dollars") or [], limit
+        return sum(float(qty) for price, qty in levels if float(price) >= floor - _EPS)
 
 
 class StaticMarketData:

@@ -20,9 +20,12 @@ from core.config import RiskControlConfig, get_config
 from core.engine.execution_control import halt, is_halted
 from core.engine.fees import arb_economics, unit_net_edge
 from core.engine.fire_state import PairFireState, _RiskLeg, _RiskSignal
+
+# Module import (not the function): execution.market_data imports
+# core.engine.fees, whose package __init__ imports this module.
+from execution import market_data as _market_data
 from execution.clients.base import BaseExecutionClient, OrderResult
 from execution.enums import Side
-from execution.market_data import get_market_data
 from execution.models import OrderLeg
 
 logger = logging.getLogger(__name__)
@@ -387,7 +390,7 @@ class ArbitrageEngine:
             mid for m in self._pairs.values() for mid in (m["poly_id"], m["kalshi_id"])
         ]
         try:
-            await get_market_data().prefetch_fees(self.db, market_ids)
+            await _market_data.get_market_data().prefetch_fees(self.db, market_ids)
             logger.info("Fee cache warmed for %d markets", len(set(market_ids)))
         except Exception:
             logger.exception("Fee cache warm-up failed; lookups will run on demand")
@@ -613,7 +616,7 @@ class ArbitrageEngine:
         # Fee gate: both venues charge price-dependent taker fees, so a raw
         # spread above min_spread can still lose money. Unknown fee metadata
         # fails closed.
-        market_data = get_market_data()
+        market_data = _market_data.get_market_data()
         try:
             buy_fees, sell_fees = await asyncio.wait_for(
                 asyncio.gather(
