@@ -140,3 +140,57 @@ class TestStaticMarketData:
         md = StaticMarketData(fees={"kalshi": kalshi_params()})
         await _seed(db, "kal_X", "kalshi", "X")
         assert await md.fee_params(db, "kal_X") == kalshi_params()
+
+
+class TestHotPathSafety:
+    async def test_non_dict_json_fails_closed(self, db):
+        await _seed(db, "poly_0xabc", "polymarket", "0xabc")
+        md, _ = _live(lambda r: httpx.Response(200, json=["not", "a", "dict"]))
+        assert await md.fee_params(db, "poly_0xabc") is None
+
+    async def test_expired_entry_served_while_refreshing(self, db):
+        import asyncio
+
+        await _seed(db, "poly_0xabc", "polymarket", "0xabc")
+        rates = iter([0.05, 0.03])
+        md, calls = _live(
+            lambda r: httpx.Response(200, json={"fd": {"r": next(rates), "e": 1}})
+        )
+        md._ttl_s = 0.0
+        first = await md.fee_params(db, "poly_0xabc")
+        stale = await md.fee_params(db, "poly_0xabc")
+        assert first == stale == polymarket_params(0.05, 1.0)
+        await asyncio.gather(*md._refreshing.values())
+        assert len(calls) == 2
+        assert md._fee_cache["poly_0xabc"][1] == polymarket_params(0.03, 1.0)
+
+    async def test_kalshi_event_and_series_cached_across_markets(self, db):
+        await _seed(db, "kal_KXTEST-1", "kalshi", "KXTEST-1")
+        await _seed(db, "kal_KXTEST-2", "kalshi", "KXTEST-2")
+
+        def handler(request):
+            path = request.url.path
+            if "/markets/KXTEST-" in path:
+                return httpx.Response(200, json={"market": {"event_ticker": "KXTEST"}})
+            if path.endswith("/events/KXTEST"):
+                return httpx.Response(200, json={"event": {"series_ticker": "KXS"}})
+            if path.endswith("/series/KXS"):
+                return httpx.Response(
+                    200, json={"series": {"fee_type": "quadratic", "fee_multiplier": 1}}
+                )
+            return httpx.Response(404)
+
+        md, calls = _live(handler)
+        await md.fee_params(db, "kal_KXTEST-1")
+        await md.fee_params(db, "kal_KXTEST-2")
+        assert sum(p.endswith("/events/KXTEST") for p in calls) == 1
+        assert sum(p.endswith("/series/KXS") for p in calls) == 1
+
+    async def test_prefetch_warms_cache(self, db):
+        await _seed(db, "poly_0xa", "polymarket", "0xa")
+        await _seed(db, "poly_0xb", "polymarket", "0xb")
+        md, calls = _live(lambda r: httpx.Response(200, json={"fd": None}))
+        await md.prefetch_fees(db, ["poly_0xa", "poly_0xb", "poly_missing"])
+        assert set(md._fee_cache) == {"poly_0xa", "poly_0xb"}
+        await md.fee_params(db, "poly_0xa")
+        assert len(calls) == 2

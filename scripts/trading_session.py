@@ -248,6 +248,7 @@ async def _pair_refresh_loop(
             )
             ws_state["poly_ids"] = set(new_poly)
             ws_state["kalshi_tickers"] = set(new_kalshi)
+            await arb_engine.warm_fee_cache()
             await arb_engine.initial_sweep()
         except Exception:
             logger.exception("pair refresh loop error")
@@ -436,6 +437,10 @@ async def main():
             risk_config=risk_config,
             circuit_breaker=circuit_breaker,
         )
+        # Warm the fee cache in the background so the fee gate rarely has to
+        # hit venue APIs on the tick path. Keep a reference: asyncio holds
+        # only weak references to tasks.
+        fee_warmup_task = asyncio.create_task(arb_engine.warm_fee_cache())
         await arb_engine.initial_sweep()
 
         # Shared live price cache — updated on every websocket tick.
@@ -605,10 +610,13 @@ async def main():
             stop_event.set()
             await arb_engine.flush()
             current_ws_tasks = ws_state["tasks"]
-            for t in [*supervisor_tasks, *current_ws_tasks]:
+            for t in [*supervisor_tasks, *current_ws_tasks, fee_warmup_task]:
                 t.cancel()
             await asyncio.gather(
-                *supervisor_tasks, *current_ws_tasks, return_exceptions=True
+                *supervisor_tasks,
+                *current_ws_tasks,
+                fee_warmup_task,
+                return_exceptions=True,
             )
             total_arb = len(arb_engine.trades)
             total_sched = scheduled.total_trades

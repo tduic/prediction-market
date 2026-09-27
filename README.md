@@ -207,6 +207,7 @@ All settings load from environment variables. Key ones (see `core/config.py` for
 | `KELLY_FRACTION` | `0.25` | Fractional Kelly. |
 | `MIN_SPREAD_CROSS_PLATFORM` | `0.03` | Overrides `--min-spread`. Set to `99.0` to pause P1. |
 | `ARB_MIN_NET_PROFIT` | `0.0` | Minimum expected P1 profit in dollars after both venues' taker fees. Net must always be strictly positive. |
+| `ARB_PRETRADE_LOOKUP_TIMEOUT_S` | `2.0` | Hard cap on pre-trade venue lookups (fees, depth) on the tick path. A timeout skips the trade. |
 | `KALSHI_PUBLIC_API_BASE` | `https://api.elections.kalshi.com/trade-api/v2` | Host for public Kalshi reads (fee metadata, order books). |
 | `STRATEGY_P{2,3,4,5}_ENABLED` | `true` | Per-label kill. |
 | `LOG_FORMAT` | `text` | `json` for structured prod logging. |

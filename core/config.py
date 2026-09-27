@@ -196,6 +196,11 @@ class RiskControlConfig:
     arb_min_net_profit: float = field(
         default_factory=lambda: float(os.getenv("ARB_MIN_NET_PROFIT", "0.0"))
     )
+    # Hard cap on pre-trade venue lookups (fee metadata, book depth) on the
+    # tick path. A timeout skips the trade (fail closed).
+    arb_pretrade_lookup_timeout_s: float = field(
+        default_factory=lambda: float(os.getenv("ARB_PRETRADE_LOOKUP_TIMEOUT_S", "2.0"))
+    )
     reconcile_every: int = field(
         default_factory=lambda: int(os.getenv("RECONCILE_EVERY", "5"))
     )

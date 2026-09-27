@@ -100,3 +100,45 @@ def test_min_net_profit_env(monkeypatch):
     assert RiskControlConfig().arb_min_net_profit == 0.25
     monkeypatch.delenv("ARB_MIN_NET_PROFIT")
     assert RiskControlConfig().arb_min_net_profit == 0.0
+
+
+async def test_slow_fee_lookup_times_out_without_trading(db):
+    import asyncio
+    import time
+
+    class _Slow(StaticMarketData):
+        async def fee_params(self, db, market_id):
+            await asyncio.sleep(10)
+            return kalshi_params()
+
+    set_market_data(_Slow())
+    matches = [_make_match("poly_A", "kal_A", 0.40, 0.50)]
+    await _seed_markets_for_engine(db, matches)
+    engine = ArbitrageEngine(
+        db,
+        matches,
+        min_spread=0.03,
+        risk_config=RiskControlConfig(arb_pretrade_lookup_timeout_s=0.05),
+    )
+    started = time.monotonic()
+    await engine.initial_sweep()
+    assert time.monotonic() - started < 1.0
+    assert engine.trades == []
+    assert engine.stats()["skipped_fee_unknown"] == 1
+
+
+async def test_warm_fee_cache_prefetches_all_pair_markets(db):
+    class _Recorder(StaticMarketData):
+        def __init__(self):
+            super().__init__()
+            self.prefetched: list[str] = []
+
+        async def prefetch_fees(self, db, market_ids):
+            self.prefetched.extend(market_ids)
+
+    md = _Recorder()
+    set_market_data(md)
+    matches = [_make_match("poly_A", "kal_A", 0.40, 0.50)]
+    engine = ArbitrageEngine(db, matches, min_spread=0.03)
+    await engine.warm_fee_cache()
+    assert sorted(md.prefetched) == ["kal_A", "poly_A"]

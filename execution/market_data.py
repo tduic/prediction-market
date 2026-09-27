@@ -11,6 +11,7 @@ and the caller must skip the trade rather than assume zero fees.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import time
@@ -37,6 +38,10 @@ class MarketData(Protocol):
     async def executable_depth(
         self, db: aiosqlite.Connection, leg: OrderLeg
     ) -> float | None: ...
+
+    async def prefetch_fees(
+        self, db: aiosqlite.Connection, market_ids: list[str]
+    ) -> None: ...
 
 
 async def _platform_id(
@@ -72,18 +77,61 @@ class LiveMarketData:
         ).rstrip("/")
         self._ttl_s = ttl_s
         self._fee_cache: dict[str, tuple[float, FeeParams]] = {}
+        # Kalshi events and series are shared by many markets; cache them too.
+        self._kalshi_events: dict[str, dict] = {}
+        self._kalshi_series: dict[str, dict] = {}
+        # In-flight background refreshes, keyed by market id.
+        self._refreshing: dict[str, asyncio.Task] = {}
 
     async def _get_json(self, url: str, params: dict | None = None) -> dict:
         response = await self._http.get(url, params=params)
         response.raise_for_status()
-        return response.json()
+        data = response.json()
+        if not isinstance(data, dict):
+            raise TypeError(f"expected a JSON object from {url}")
+        return data
 
     async def fee_params(
         self, db: aiosqlite.Connection, market_id: str
     ) -> FeeParams | None:
+        """Fee parameters for a market.
+
+        Serves a cached value immediately — even an expired one, refreshing it
+        in the background — so only a completely cold market pays for the
+        lookup on the tick path. Call ``prefetch_fees`` at startup to warm it.
+        """
         cached = self._fee_cache.get(market_id)
-        if cached is not None and time.monotonic() - cached[0] < self._ttl_s:
+        if cached is not None:
+            if (
+                time.monotonic() - cached[0] >= self._ttl_s
+                and market_id not in self._refreshing
+            ):
+                task = asyncio.create_task(self._fetch_fee_params(db, market_id))
+                self._refreshing[market_id] = task
+                task.add_done_callback(self._refresh_done)
             return cached[1]
+        return await self._fetch_fee_params(db, market_id)
+
+    def _refresh_done(self, task: asyncio.Task) -> None:
+        for market_id, pending in list(self._refreshing.items()):
+            if pending is task:
+                del self._refreshing[market_id]
+
+    async def prefetch_fees(
+        self, db: aiosqlite.Connection, market_ids: list[str], concurrency: int = 4
+    ) -> None:
+        """Warm the fee cache for many markets with bounded concurrency."""
+        semaphore = asyncio.Semaphore(concurrency)
+
+        async def _one(market_id: str) -> None:
+            async with semaphore:
+                await self._fetch_fee_params(db, market_id)
+
+        await asyncio.gather(*(_one(m) for m in dict.fromkeys(market_ids)))
+
+    async def _fetch_fee_params(
+        self, db: aiosqlite.Connection, market_id: str
+    ) -> FeeParams | None:
         ident = await _platform_id(db, market_id)
         if ident is None:
             logger.warning("fee_params: no platform_id for market %s", market_id)
@@ -97,7 +145,13 @@ class LiveMarketData:
                 params = await self._kalshi_fees(platform_id)
             else:
                 return None
-        except (httpx.HTTPError, ValueError, KeyError, TypeError) as exc:
+        except (
+            httpx.HTTPError,
+            ValueError,
+            KeyError,
+            TypeError,
+            AttributeError,
+        ) as exc:
             logger.warning(
                 "fee_params: lookup failed for %s (%s): %s",
                 market_id,
@@ -121,12 +175,20 @@ class LiveMarketData:
         market = (await self._get_json(f"{self._kalshi_base}/markets/{ticker}"))[
             "market"
         ]
-        event = (
-            await self._get_json(f"{self._kalshi_base}/events/{market['event_ticker']}")
-        )["event"]
-        series = (
-            await self._get_json(f"{self._kalshi_base}/series/{event['series_ticker']}")
-        )["series"]
+        event_ticker = market["event_ticker"]
+        event = self._kalshi_events.get(event_ticker)
+        if event is None:
+            event = (
+                await self._get_json(f"{self._kalshi_base}/events/{event_ticker}")
+            )["event"]
+            self._kalshi_events[event_ticker] = event
+        series_ticker = event["series_ticker"]
+        series = self._kalshi_series.get(series_ticker)
+        if series is None:
+            series = (
+                await self._get_json(f"{self._kalshi_base}/series/{series_ticker}")
+            )["series"]
+            self._kalshi_series[series_ticker] = series
         fee_type = event.get("fee_type_override") or series.get("fee_type")
         multiplier = event.get("fee_multiplier_override")
         if multiplier is None:
@@ -176,6 +238,11 @@ class StaticMarketData:
         self, db: aiosqlite.Connection, leg: OrderLeg | None
     ) -> float | None:
         return self._depth
+
+    async def prefetch_fees(
+        self, db: aiosqlite.Connection, market_ids: list[str]
+    ) -> None:
+        return None
 
 
 _market_data: MarketData | None = None

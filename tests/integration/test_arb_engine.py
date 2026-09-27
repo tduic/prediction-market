@@ -562,6 +562,7 @@ def _risk_config(**overrides):
         "strategy_killswitch_min_trades": 5,
         "pnl_sanity_cap_ratio": 0.10,
         "arb_min_net_profit": 0.0,
+        "arb_pretrade_lookup_timeout_s": 2.0,
         "reconcile_every": 5,
         "strategy_p2_min_root_len": 25,
     }

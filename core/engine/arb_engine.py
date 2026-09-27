@@ -374,6 +374,21 @@ class ArbitrageEngine:
                 return True
         return False
 
+    async def warm_fee_cache(self) -> None:
+        """Prefetch fee metadata for every paired market (run in background).
+
+        Keeps venue lookups off the tick path: after warm-up the fee gate is
+        served from cache.
+        """
+        market_ids = [
+            mid for m in self._pairs.values() for mid in (m["poly_id"], m["kalshi_id"])
+        ]
+        try:
+            await get_market_data().prefetch_fees(self.db, market_ids)
+            logger.info("Fee cache warmed for %d markets", len(set(market_ids)))
+        except Exception:
+            logger.exception("Fee cache warm-up failed; lookups will run on demand")
+
     async def initial_sweep(self) -> None:
         """Check all seeded pairs for opportunities at startup.
 
@@ -563,8 +578,16 @@ class ArbitrageEngine:
         # spread above min_spread can still lose money. Unknown fee metadata
         # fails closed.
         market_data = get_market_data()
-        buy_fees = await market_data.fee_params(self.db, buy_id)
-        sell_fees = await market_data.fee_params(self.db, sell_id)
+        try:
+            buy_fees, sell_fees = await asyncio.wait_for(
+                asyncio.gather(
+                    market_data.fee_params(self.db, buy_id),
+                    market_data.fee_params(self.db, sell_id),
+                ),
+                timeout=self._risk_config.arb_pretrade_lookup_timeout_s,
+            )
+        except asyncio.TimeoutError:
+            buy_fees = sell_fees = None
         if buy_fees is None or sell_fees is None:
             self._skipped_fee_unknown += 1
             logger.info("FEE_UNKNOWN pair=%s — skipping (fail closed)", pair_id)
