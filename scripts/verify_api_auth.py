@@ -18,6 +18,8 @@ from pathlib import Path
 import httpx
 from dotenv import load_dotenv
 
+from core.secrets import get_secret
+
 # Load .env
 load_dotenv()
 
@@ -36,8 +38,8 @@ async def verify_kalshi():
     from cryptography.hazmat.primitives import hashes, serialization
     from cryptography.hazmat.primitives.asymmetric import padding
 
-    api_key = os.getenv("KALSHI_API_KEY", "")
-    rsa_key_path = os.getenv("KALSHI_RSA_KEY_PATH", "")
+    api_key = get_secret("KALSHI_API_KEY", "") or ""
+    rsa_key_path = get_secret("KALSHI_RSA_KEY_PATH", "") or ""
     api_base = os.getenv(
         "KALSHI_API_BASE", "https://api.elections.kalshi.com/trade-api/v2"
     )
@@ -55,7 +57,7 @@ async def verify_kalshi():
     private_key = serialization.load_pem_private_key(
         key_path.read_bytes(), password=None
     )
-    logger.info("KALSHI: RSA key loaded from %s", key_path)
+    logger.info("KALSHI: RSA key loaded")
 
     def sign_request(method: str, path: str) -> dict:
         ts = str(int(time.time() * 1000))
@@ -88,9 +90,7 @@ async def verify_kalshi():
             balance_cents = data.get("balance", 0)
             logger.info("KALSHI: ✅ Auth OK — Balance: $%.2f", balance_cents / 100)
         else:
-            logger.error(
-                "KALSHI: ❌ Auth failed — HTTP %d: %s", resp.status_code, resp.text
-            )
+            logger.error("KALSHI: ❌ Auth failed — HTTP %d", resp.status_code)
             return False
 
         # 2. Fetch a few markets (public, but tests the connection)
@@ -120,8 +120,8 @@ async def verify_kalshi():
 
 async def verify_polymarket():
     """Test Polymarket API with a public market fetch and CLOB client auth."""
-    private_key = os.getenv("POLYMARKET_PRIVATE_KEY", "")
-    funder = os.getenv("POLYMARKET_WALLET_ADDRESS", "")
+    private_key = get_secret("POLYMARKET_PRIVATE_KEY", "") or ""
+    funder = get_secret("POLYMARKET_WALLET_ADDRESS", "") or ""
 
     # 1. Test public API (no auth needed)
     async with httpx.AsyncClient(timeout=15) as client:

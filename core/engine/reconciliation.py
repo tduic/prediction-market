@@ -26,7 +26,7 @@ from core.config import get_config
 logger = logging.getLogger(__name__)
 
 
-async def reconcile_internal_state(db: aiosqlite.Connection) -> dict[str, int]:
+async def reconcile_internal_state(db: aiosqlite.Connection, alert_manager=None) -> dict[str, int]:
     """Run all internal reconciliation checks.
 
     Returns a summary dict with the number of discrepancies found per
@@ -39,6 +39,7 @@ async def reconcile_internal_state(db: aiosqlite.Connection) -> dict[str, int]:
         "unbalanced_arb_pairs": 0,
         "closed_without_outcomes": 0,
         "signals_without_orders": 0,
+        "aged_open_positions": 0,
     }
 
     summary["orphaned_positions"] = await _check_orphaned_positions(db)
@@ -46,6 +47,7 @@ async def reconcile_internal_state(db: aiosqlite.Connection) -> dict[str, int]:
     summary["unbalanced_arb_pairs"] = await _check_unbalanced_arb_pairs(db)
     summary["closed_without_outcomes"] = await _check_closed_without_outcomes(db)
     summary["signals_without_orders"] = await _check_signals_without_orders(db)
+    summary["aged_open_positions"] = await _check_aged_open_positions(db, alert_manager)
 
     try:
         await db.commit()
@@ -58,7 +60,7 @@ async def reconcile_internal_state(db: aiosqlite.Connection) -> dict[str, int]:
         try:
             from core.alerting import Severity, get_alert_manager
 
-            get_alert_manager().send_nowait(
+            (alert_manager or get_alert_manager()).send_nowait(
                 title="Reconciliation discrepancies detected",
                 message=f"{total} discrepancies: {summary}",
                 severity=Severity.WARNING,
@@ -70,6 +72,50 @@ async def reconcile_internal_state(db: aiosqlite.Connection) -> dict[str, int]:
         logger.info("RECONCILIATION clean: no discrepancies")
 
     return summary
+
+
+async def _check_aged_open_positions(
+    db: aiosqlite.Connection, alert_manager=None
+) -> int:
+    """Record each open position past the configurable operational threshold."""
+    threshold_s = get_config().risk_controls.aged_position_alert_threshold_s
+    cutoff = (datetime.now(timezone.utc) - timedelta(seconds=threshold_s)).isoformat()
+    cursor = await db.execute(
+        """SELECT p.id, m.platform, p.market_id FROM positions p
+           LEFT JOIN markets m ON m.id = p.market_id
+           WHERE p.status = 'open' AND p.opened_at < ?""",
+        (cutoff,),
+    )
+    count = 0
+    for position_id, platform, market_id in await cursor.fetchall():
+        detail = f"position_id={position_id}"
+        if await _is_recently_logged(db, "aged_open_position", detail):
+            continue
+        await _log_discrepancy(
+            db, platform=platform or "unknown", check_type="aged_open_position",
+            local_value=float(threshold_s), exchange_value=None,
+            discrepancy=float(threshold_s), status="discrepancy", detail=detail,
+            action_taken=f"market_id={market_id} age_threshold_s={threshold_s}",
+        )
+        try:
+            from core.alerting import Severity, get_alert_manager
+
+            (alert_manager or get_alert_manager()).send_nowait(
+                # Position ID makes deduplication per-position while retaining
+                # enough non-secret context to investigate the alert.
+                title=f"Open position exceeded age threshold: {position_id}",
+                message=(
+                    "Open position remains past the configured age threshold "
+                    f"({threshold_s} seconds)"
+                ),
+                severity=Severity.WARNING,
+                context={"position_id": position_id, "threshold_s": threshold_s},
+                component="reconciliation",
+            )
+        except Exception as alert_error:
+            logger.error("Failed to send aged-position alert: %s", alert_error)
+        count += 1
+    return count
 
 
 async def _check_orphaned_positions(db: aiosqlite.Connection) -> int:

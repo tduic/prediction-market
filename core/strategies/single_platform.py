@@ -765,6 +765,10 @@ async def detect_single_platform_opportunities(
         result = await _clients[platform].submit_order(
             leg, signal_id=signal_id, strategy=strategy
         )
+        if circuit_breaker is not None:
+            await circuit_breaker.record_order_result(
+                success=result.filled_price is not None
+            )
 
         if result.filled_price is not None:
             # Phase 4: open position, NO synthetic exit price.

@@ -28,6 +28,9 @@ scikit-learn>=1.4.0
 # ── Cryptography (Kalshi RSA-PSS signing) ───────────────────────
 cryptography>=42.0.0
 
+# ── Production secrets backend ──────────────────────────────────
+google-cloud-secret-manager>=2.20.0
+
 # ── Polymarket CLOB client ──────────────────────────────────────
 py-clob-client>=0.5.0
 

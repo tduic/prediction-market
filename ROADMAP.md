@@ -20,7 +20,7 @@ React + FastAPI analytics dashboard served from the same process as the trading 
 `execution/clients/paper.py` executes against real market prices without placing orders. Writes identical DB rows to live mode so the full analytics pipeline (dashboard, snapshots, reconciliation) works in paper mode.
 
 ### Idempotent Migrations ✓
-SQLite migration runner with history tracking (`migration_history` table), duplicate-column-safe ALTER TABLE handling, and automatic migration discovery. 10 migrations to date; migration 010 dropped unused ML tables.
+SQLite migration runner with history tracking (`migration_history` table), duplicate-column-safe ALTER TABLE handling, and automatic migration discovery. 18 migrations to date; migration 010 dropped unused ML tables and later migrations add Polymarket book support and operational indexes.
 
 ## Go-Live Blockers (All Resolved)
 
@@ -52,10 +52,19 @@ _Required before the first real trade, but not architectural blockers._
 System deployed to GCE and running with ~49k Polymarket + ~26k Kalshi markets. Monitoring for: strategy firing cadence, PnL snapshot accumulation, dashboard accuracy, memory/DB growth stability, and websocket reconnection resilience.
 
 ### Credential Rotation and Secrets Management
-Production Polymarket and Kalshi API keys currently live in plaintext `.env`. Generate fresh credentials and move them to a secrets vault (GCP Secret Manager or HashiCorp Vault).
+Code hardening is complete: production uses strict GCP Secret Manager lookups
+and does not fall back to plaintext environment credentials. Remaining
+deployment prerequisites are for an authorized administrator to provision the
+required secrets, VM access, and protected Kalshi PEM path. Any deployed
+`.env` usage is limited to non-secret runtime configuration.
 
 ### Alerting (Partial)
-`core/alerting.py` ships an `AlertManager` with a Discord webhook transport (enabled via `ALERT_DISCORD_WEBHOOK_URL`; the deployed systemd unit already sets it). Wired to invariant-violation checks and reconciliation discrepancies. Remaining: paging rules for stuck positions (open >72h), execution failures (>3 in 10 minutes), and DB errors; optional second transport (PagerDuty or email) for severity tiering.
+`core/alerting.py` ships an `AlertManager` with Discord and Slack webhook
+transports, configured through the secrets backend. It is wired to
+invariant-violation checks, reconciliation discrepancies, and circuit-breaker
+events. Remaining: paging rules for stuck positions (open >72h), execution
+failures (>3 in 10 minutes), and material DB errors; optional second transport
+(PagerDuty or email) for severity tiering.
 
 ### Circuit Breaker ✓ (wiring pending live mode)
 `execution/circuit_breaker.py` halts trading on daily loss limit, consecutive order failures, or reconciliation discrepancy above threshold. Checked at the start of `ScheduledStrategyRunner.run_one_cycle`. Manual kill switch and on-call dashboard control still TODO.

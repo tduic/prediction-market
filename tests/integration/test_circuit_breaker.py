@@ -11,14 +11,17 @@ Covers:
   - Day rollover auto-resets the breaker
 """
 
+import asyncio
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
+from core.alerting import AlertManager, set_alert_manager
 from execution.circuit_breaker import DailyLossCircuitBreaker
 
 
@@ -153,6 +156,108 @@ async def test_consecutive_failures_trip(db):
     state = await breaker.get_state()
     assert state.tripped is True
     assert "consecutive" in (state.reason or "").lower()
+
+
+@pytest.mark.asyncio
+async def test_rolling_execution_failure_alert_uses_configured_threshold(db, monkeypatch):
+    manager = MagicMock()
+    monkeypatch.setattr("execution.circuit_breaker.get_alert_manager", lambda: manager)
+    breaker = DailyLossCircuitBreaker(
+        db=db, starting_capital=10_000, max_daily_loss_pct=0.02,
+        execution_failure_alert_count=3, execution_failure_alert_window_s=600,
+    )
+    for _ in range(3):
+        await breaker.record_order_result(success=False)
+    manager.send_nowait.assert_not_called()
+    await breaker.record_order_result(success=False)
+    manager.send_nowait.assert_called_once()
+    assert manager.send_nowait.call_args.kwargs["severity"].value == "critical"
+
+
+@pytest.mark.asyncio
+async def test_execution_failure_window_expires_old_failures(db, monkeypatch):
+    manager = MagicMock()
+    monotonic_values = iter([0, 1, 2, 700, 701, 702, 703])
+    monkeypatch.setattr("execution.circuit_breaker.get_alert_manager", lambda: manager)
+    breaker = DailyLossCircuitBreaker(
+        db=db,
+        starting_capital=10_000,
+        max_daily_loss_pct=0.02,
+        execution_failure_alert_count=3,
+        execution_failure_alert_window_s=600,
+        consecutive_failure_limit=99,
+    )
+    breaker._clock = lambda: next(monotonic_values)
+    for _ in range(3):
+        await breaker.record_order_result(success=False)
+    await breaker.record_order_result(success=False)  # old failures expired
+    assert manager.send_nowait.call_count == 0
+    for _ in range(3):
+        await breaker.record_order_result(success=False)
+    assert manager.send_nowait.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_execution_failure_custom_count_and_successes_do_not_alert(db, monkeypatch):
+    manager = MagicMock()
+    monkeypatch.setattr("execution.circuit_breaker.get_alert_manager", lambda: manager)
+    breaker = DailyLossCircuitBreaker(
+        db=db,
+        starting_capital=10_000,
+        max_daily_loss_pct=0.02,
+        execution_failure_alert_count=1,
+        execution_failure_alert_window_s=60,
+        consecutive_failure_limit=99,
+    )
+    await breaker.record_order_result(success=True)
+    await breaker.record_order_result(success=False)
+    assert manager.send_nowait.call_count == 0
+    await breaker.record_order_result(success=False)
+    assert manager.send_nowait.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_execution_failure_alert_dedup_and_new_window_incident(db, monkeypatch):
+    class CollectingTransport:
+        name = "collecting"
+
+        def __init__(self):
+            self.alerts = []
+
+        async def publish(self, alert):
+            self.alerts.append(alert)
+            return True
+
+    transport = CollectingTransport()
+    manager = AlertManager(
+        transports=[transport], dedup_window_s=60, critical_dedup_window_s=0.01
+    )
+    set_alert_manager(manager)
+    monotonic_values = iter([0, 1, 2, 3, 4, 5, 700, 701, 702, 703])
+    breaker = DailyLossCircuitBreaker(
+        db=db,
+        starting_capital=10_000,
+        max_daily_loss_pct=0.02,
+        execution_failure_alert_count=3,
+        execution_failure_alert_window_s=600,
+        consecutive_failure_limit=99,
+    )
+    breaker._clock = lambda: next(monotonic_values)
+    for _ in range(6):
+        await breaker.record_order_result(success=False)
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+    assert len(transport.alerts) == 1
+
+    # A later rolling-window incident must not be permanently suppressed by
+    # the short AlertManager critical-alert dedup window.
+    await asyncio.sleep(0.02)
+    for _ in range(4):
+        await breaker.record_order_result(success=False)
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+    assert len(transport.alerts) == 2
+    set_alert_manager(None)
 
 
 @pytest.mark.asyncio

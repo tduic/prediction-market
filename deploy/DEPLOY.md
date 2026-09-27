@@ -8,7 +8,8 @@ Deploys the trading system to a single GCE VM (e2-medium, Ubuntu 22.04). The VM 
 
 - `gcloud` CLI installed and authenticated (`gcloud auth login`)
 - A Google account with billing available to attach to a new project
-- Your `.env` file with API credentials (`cp config/settings.example.env .env` then fill it in)
+- Non-secret runtime configuration, if required by the deployment. Production
+  credentials are not stored in or transferred through `.env`.
 
 ---
 
@@ -20,6 +21,16 @@ cp config.env.example config.env
 ```
 
 Edit `deploy/config.env` and set a unique `PROJECT_ID` (e.g. `predictor-trading-2025`). Leave everything else as-is unless you have a preference on region.
+
+### Secrets prerequisite
+
+The production services use GCP Secret Manager in strict mode and will not
+fall back to plaintext environment variables. Before deploying, an authorized
+administrator must create the required exchange and alert secrets, grant the
+VM service account access, and securely provision the Kalshi PEM at the
+configured path with mode `0600`. The deployment workflow transfers only
+non-secret runtime configuration. It does not create, rotate, inspect, or
+copy secret values.
 
 ---
 
@@ -53,14 +64,23 @@ SSHes into the VM and installs everything: Python 3.12 (deadsnakes PPA), Node.js
 ## Step 4: Deploy the code (first time)
 
 ```bash
-bash deploy/push.sh --with-env
+bash deploy/push.sh
 ```
 
-The `--with-env` flag copies your local `.env` to the VM as `/data/predictor/.env` (mode 600, owned by `predictor`). Only needed on first deploy or when credentials change — leave it off for code-only updates.
+The current `deploy/push.sh --with-env` option is a legacy local-file
+bootstrap path that copies a complete `.env` to the VM. It is intentionally
+unchanged for compatibility, but must not be used for production credentials
+or production first deploys under the strict Secret Manager model. A separate
+deployment decision is required before retiring it or replacing it with an
+approved non-secret bootstrap path.
+
+Production first deploy is gated on the Secrets prerequisite above. An
+authorized administrator must provision Secret Manager access, the Kalshi PEM
+path, and any required non-secret runtime configuration before code deployment.
 
 This will:
 1. Rsync the project to `/data/predictor/prediction-market/` on the VM
-2. Copy `.env` to `/data/predictor/.env`
+2. Preserve or create only non-secret runtime configuration at `/data/predictor/.env`
 3. Create a Python venv at `/data/predictor/venv/` and install all requirements
 4. Build the React dashboard frontend (`npm install && npm run build`)
 5. Install and start the `predictor` systemd service
@@ -78,11 +98,10 @@ bash deploy/provision_proxy.sh
 # 2. Install Dante SOCKS5 proxy
 bash deploy/setup_proxy.sh
 
-# 3. Add to your .env
-echo "POLYMARKET_PROXY=socks5://PROXY_IP:1080" >> .env
+# 3. Add POLYMARKET_PROXY to the approved non-secret runtime configuration.
 
-# 4. Redeploy with updated .env
-bash deploy/push.sh --with-env
+# 4. Deploy code normally after that configuration is present.
+bash deploy/push.sh
 ```
 
 The Polymarket client reads `POLYMARKET_PROXY` from the environment and patches `py-clob-client`'s HTTP layer to route all CLOB API traffic through it. Kalshi traffic is unaffected.
@@ -126,18 +145,12 @@ sudo systemctl restart predictor
 
 The dashboard is bound to `0.0.0.0:8000` and protected by HTTP Basic Auth.
 
-### 1. Set credentials in `.env` on the VM
+### 1. Configure dashboard access
 
-```bash
-# Add to /data/predictor/.env
-DASHBOARD_USER=admin          # optional, defaults to "admin"
-DASHBOARD_PASSWORD=changeme   # required to enable auth
-```
-
-Then redeploy or restart the service:
-```bash
-bash deploy/push.sh --with-env
-```
+`DASHBOARD_USER` is non-secret runtime configuration. The dashboard password
+is a production secret and must be provisioned through GCP Secret Manager as
+`DASHBOARD_PASSWORD`; do not place it in `.env`. Restart through the approved
+deployment process after the authorized administrator has configured both.
 
 ### 2. Open the GCP firewall
 
@@ -217,7 +230,7 @@ gcloud compute disks delete predictor-data --zone=us-central1-a --project=YOUR_P
 
 ```
 /data/predictor/
-├── .env                          # Credentials (mode 600, never in git)
+├── .env                          # Non-secret runtime configuration (mode 600, never in git)
 ├── venv/                         # Python virtual environment
 └── prediction-market/            # Project code (rsynced from local)
     ├── prediction_market.db      # SQLite database (persistent disk)

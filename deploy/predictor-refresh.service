@@ -12,11 +12,8 @@ Group=predictor
 WorkingDirectory=/data/predictor/prediction-market
 
 EnvironmentFile=/data/predictor/.env
-# NOTE: the real ALERT_DISCORD_WEBHOOK_URL comes from /data/predictor/.env
-# (written by deploy.yml). Do NOT add an `Environment=` line for it here —
-# `Environment=` overrides `EnvironmentFile=` and would ship a dead webhook
-# URL to the running process, yielding 405 responses from Discord.
 Environment="SECRETS_BACKEND=gcp"
+Environment="SECRETS_STRICT=true"
 Environment="GCP_PROJECT_ID=predictor-trading-2026"
 
 # Re-fetch all markets, re-match, write to DB, then exit.

@@ -1,6 +1,7 @@
 # Polymarket No-Naked-Shorts: Inventory-Aware Book Resolution
 
-**Status:** Design approved, pending spec review.
+**Status:** B1 inventory-aware translation is implemented. B2 price-aware
+NO-book routing remains explicitly deferred; see follow-ups below.
 **Date:** 2026-04-18
 **Scope:** One implementation plan. Orthogonal to Kalshi and to settlement/P&L.
 

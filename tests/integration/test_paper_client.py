@@ -14,8 +14,18 @@ import pytest
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from execution.clients.paper import PaperExecutionClient
-from execution.models import OrderLeg
+from execution.clients.paper import PaperExecutionClient  # noqa: E402
+from execution.models import OrderLeg  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _disable_live_price_fetches_for_paper_tests(monkeypatch):
+    """Keep fill-simulation tests offline by using their seeded DB prices."""
+
+    async def _no_live_price(self, platform: str, platform_id: str) -> None:
+        return None
+
+    monkeypatch.setattr(PaperExecutionClient, "_fetch_live_price", _no_live_price)
 
 
 async def _seed_market_with_price(db, market_id, platform, price):

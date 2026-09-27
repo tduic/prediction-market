@@ -29,6 +29,7 @@ from core.alerting import (
     Severity,
     SlackWebhookTransport,
     get_alert_manager,
+    notify_database_failure,
     set_alert_manager,
 )
 
@@ -228,6 +229,44 @@ def test_send_nowait_outside_loop_is_safe():
     mgr = AlertManager(transports=[t], dedup_window_s=60)
     mgr.send_nowait(title="no-loop", message="m")  # should just log and return
     assert len(t.alerts) == 0
+
+
+@pytest.mark.asyncio
+async def test_database_failure_alert_is_sanitized_and_deduplicated():
+    """Database alerts retain only component and exception class."""
+    transport = CollectingTransport()
+    manager = AlertManager(transports=[transport], critical_dedup_window_s=60)
+    set_alert_manager(manager)
+    error = RuntimeError("SELECT token FROM orders WHERE password='unsafe'")
+
+    notify_database_failure("reconciliation", error)
+    notify_database_failure("reconciliation", error)
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    assert len(transport.alerts) == 1
+    alert = transport.alerts[0]
+    assert alert.severity == Severity.CRITICAL
+    assert alert.component == "reconciliation"
+    rendered = f"{alert.title} {alert.message} {alert.context or {}}"
+    assert "RuntimeError" in rendered
+    assert "SELECT" not in rendered
+    assert "token" not in rendered
+    assert "unsafe" not in rendered
+
+
+@pytest.mark.asyncio
+async def test_database_failure_alert_surfaces_distinct_incidents():
+    transport = CollectingTransport()
+    manager = AlertManager(transports=[transport], critical_dedup_window_s=60)
+    set_alert_manager(manager)
+
+    notify_database_failure("reconciliation", RuntimeError("first"))
+    notify_database_failure("reconciliation", OSError("second"))
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    assert len(transport.alerts) == 2
 
 
 @pytest.mark.asyncio

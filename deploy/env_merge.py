@@ -1,36 +1,61 @@
-"""Merge KEY=VALUE pairs from /tmp/predictor_updates.env into /data/predictor/.env.
+"""Atomically merge deployment configuration into the protected environment file.
 
-Updates existing keys in-place; appends new ones.
-Preserves keys not in the update file (e.g. EXECUTION_MODE set manually on VM).
+The update file contains deployment settings only. Runtime credentials belong in
+the configured secrets backend and are never copied by this helper.
 """
 
 import os
 import re
+import tempfile
+from pathlib import Path
 
-UPDATES_PATH = "/tmp/predictor_updates.env"
-ENV_PATH = "/data/predictor/.env"
+UPDATES_PATH = Path("/tmp/predictor_updates.env")
+ENV_PATH = Path("/data/predictor/.env")
 
-updates = {}
-with open(UPDATES_PATH) as f:
-    for line in f.read().splitlines():
+
+def merge_environment_file(updates_path: Path, env_path: Path) -> None:
+    """Merge updates and replace the destination atomically with mode 0600."""
+    updates: dict[str, str] = {}
+    for line in updates_path.read_text(encoding="utf-8").splitlines():
         line = line.strip()
         if line and "=" in line and not line.startswith("#"):
-            k, _, v = line.partition("=")
-            updates[k.strip()] = v.strip()
+            key, _, value = line.partition("=")
+            updates[key.strip()] = value.strip()
 
-existing = ""
-if os.path.exists(ENV_PATH):
-    with open(ENV_PATH) as f:
-        existing = f.read()
+    existing = env_path.read_text(encoding="utf-8") if env_path.exists() else ""
+    for key, value in updates.items():
+        pattern = re.compile(r"^" + re.escape(key) + r"=.*$", re.MULTILINE)
+        entry = f"{key}={value}"
+        if pattern.search(existing):
+            existing = pattern.sub(entry, existing)
+        else:
+            existing = existing.rstrip("\n") + "\n" + entry + "\n"
 
-for key, val in updates.items():
-    pat = re.compile(r"^" + re.escape(key) + r"=.*$", re.MULTILINE)
-    entry = key + "=" + val
-    if pat.search(existing):
-        existing = pat.sub(entry, existing)
-    else:
-        existing = existing.rstrip("\n") + "\n" + entry + "\n"
+    fd, temporary_path = tempfile.mkstemp(
+        dir=env_path.parent,
+        prefix=f".{env_path.name}.",
+        text=True,
+    )
+    try:
+        os.chmod(temporary_path, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as temporary_file:
+            temporary_file.write(existing)
+            temporary_file.flush()
+            os.fsync(temporary_file.fileno())
+        os.replace(temporary_path, env_path)
+    except OSError:
+        try:
+            os.unlink(temporary_path)
+        except FileNotFoundError:
+            pass
+        raise
 
-with open(ENV_PATH, "w") as f:
-    f.write(existing)
-os.remove(UPDATES_PATH)
+    updates_path.unlink()
+
+
+def main() -> None:
+    merge_environment_file(UPDATES_PATH, ENV_PATH)
+
+
+if __name__ == "__main__":
+    main()

@@ -87,14 +87,22 @@ class ScheduledStrategyRunner:
             from core.engine.resolution import close_resolved_positions
 
             await close_resolved_positions(self.db)
-        except Exception:
+        except Exception as exc:
             logger.exception("resolution pass failed")
+            from core.alerting import notify_database_failure
+            notify_database_failure("resolution", exc)
         # Mark-to-market pass: close expired open positions at current prices
-        await mark_and_close_positions(
-            self.db,
-            holding_period_s=self._risk_config.strategy_holding_period_s,
-            price_cache=self._price_cache,
-        )
+        try:
+            await mark_and_close_positions(
+                self.db,
+                holding_period_s=self._risk_config.strategy_holding_period_s,
+                price_cache=self._price_cache,
+            )
+        except Exception as exc:
+            logger.exception("position lifecycle pass failed")
+            from core.alerting import notify_database_failure
+
+            notify_database_failure("position_lifecycle", exc)
         # Reconciliation: every N cycles, check DB-level state consistency.
         # Catches orphaned positions, stuck pending orders, and unbalanced
         # arb legs — writes discrepancies to reconciliation_log.
@@ -103,9 +111,11 @@ class ScheduledStrategyRunner:
             try:
                 from core.engine.reconciliation import reconcile_internal_state
 
-                await reconcile_internal_state(self.db)
-            except Exception:
+                await reconcile_internal_state(self.db, alert_manager=self._alert_manager)
+            except Exception as exc:
                 logger.exception("reconciliation pass failed")
+                from core.alerting import notify_database_failure
+                notify_database_failure("reconciliation", exc)
         # Phase 7: run invariant checks before opening new positions.
         # alert_manager forwards violations to Discord when configured.
         from core.invariants import check_all_invariants

@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+from collections import deque
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
@@ -76,11 +77,19 @@ class DailyLossCircuitBreaker:
         starting_capital: float,
         max_daily_loss_pct: float,
         consecutive_failure_limit: int = 5,
+        execution_failure_alert_count: int = 3,
+        execution_failure_alert_window_s: int = 600,
     ) -> None:
         self.db = db
         self.starting_capital = starting_capital
         self.max_daily_loss_pct = max_daily_loss_pct
         self.consecutive_failure_limit = consecutive_failure_limit
+        self.execution_failure_alert_count = execution_failure_alert_count
+        self.execution_failure_alert_window_s = execution_failure_alert_window_s
+        self._recent_execution_failures: deque[float] = deque()
+        # Injectable for deterministic rolling-window tests; using an instance
+        # reference avoids changing the event loop's own monotonic clock.
+        self._clock = time.monotonic
 
         self._tripped: bool = False
         self._reason: str | None = None
@@ -192,6 +201,28 @@ class DailyLossCircuitBreaker:
             return
 
         self._consecutive_failures += 1
+        now = self._clock()
+        self._recent_execution_failures.append(now)
+        while (
+            self._recent_execution_failures
+            and now - self._recent_execution_failures[0]
+            > self.execution_failure_alert_window_s
+        ):
+            self._recent_execution_failures.popleft()
+        if len(self._recent_execution_failures) > self.execution_failure_alert_count:
+            get_alert_manager().send_nowait(
+                title="Execution failure threshold exceeded",
+                message=(
+                    f"More than {self.execution_failure_alert_count} execution "
+                    f"failures within {self.execution_failure_alert_window_s} seconds"
+                ),
+                severity=Severity.CRITICAL,
+                context={
+                    "failure_count": len(self._recent_execution_failures),
+                    "window_s": self.execution_failure_alert_window_s,
+                },
+                component="execution",
+            )
         logger.warning(
             "Circuit breaker consecutive failure %d/%d",
             self._consecutive_failures,

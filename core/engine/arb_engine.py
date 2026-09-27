@@ -604,11 +604,13 @@ class ArbitrageEngine:
                 ),
             )
             await self.db.commit()
-        except Exception:
+        except Exception as exc:
             logger.exception(
                 "Aborting arb trade for pair=%s: market_pair/violation insert failed",
                 pair_id,
             )
+            from core.alerting import notify_database_failure
+            notify_database_failure("arb_engine", exc)
             return None
 
         # Phase 2.2: run all risk checks before executing orders.
@@ -683,10 +685,12 @@ class ArbitrageEngine:
                 ),
             )
             await self.db.commit()
-        except Exception:
+        except Exception as exc:
             logger.exception(
                 "Aborting arb trade for pair=%s: signal insert failed", pair_id
             )
+            from core.alerting import notify_database_failure
+            notify_database_failure("arb_engine", exc)
             return None
 
         # Execute both legs

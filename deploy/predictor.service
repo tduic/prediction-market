@@ -14,12 +14,10 @@ WorkingDirectory=/data/predictor/prediction-market
 # Load all environment variables from .env file
 EnvironmentFile=/data/predictor/.env
 
-# Secrets backend
-# NOTE: the real ALERT_DISCORD_WEBHOOK_URL comes from /data/predictor/.env
-# (written by deploy.yml). Do NOT add an `Environment=` line for it here —
-# `Environment=` overrides `EnvironmentFile=` and would ship a dead webhook
-# URL to the running process, yielding 405 responses from Discord.
+# Secrets backend. Required secrets are loaded from GCP Secret Manager; do not
+# add credentials to this unit or its EnvironmentFile.
 Environment="SECRETS_BACKEND=gcp"
+Environment="SECRETS_STRICT=true"
 Environment="GCP_PROJECT_ID=predictor-trading-2026"
 
 # Python venv binary

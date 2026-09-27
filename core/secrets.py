@@ -15,6 +15,12 @@ Backends are selected via the ``SECRETS_BACKEND`` environment variable:
                     and GOOGLE_APPLICATION_CREDENTIALS (or VM service account).
                     GCP_PROJECT_ID must be set.
 
+Set SECRETS_STRICT=true with the GCP backend in production to disable the
+environment fallback. A missing or unavailable GCP secret then resolves to
+the supplied default (usually an empty string), allowing the existing live
+configuration validation to fail closed without ever reading a plaintext
+environment credential.
+
 Cascading lookup: the GCP backend falls through to ``os.getenv`` if a secret
 is not found in Secret Manager. This lets you keep low-risk config (poll
 intervals, log levels) in the environment and only promote sensitive values
@@ -40,6 +46,10 @@ from typing import Protocol
 
 logger = logging.getLogger(__name__)
 
+# Filesystem locations are configuration, not credential material. The Kalshi
+# PEM contents are provisioned separately with restrictive filesystem access.
+ENV_ONLY_NAMES = frozenset({"KALSHI_RSA_KEY_PATH"})
+
 
 class SecretsBackend(Protocol):
     """Interface that all secret backends must satisfy."""
@@ -60,7 +70,7 @@ class EnvBackend:
 
 class GCPSecretManagerBackend:
     """
-    Read secrets from GCP Secret Manager, with env fallback.
+    Read secrets from GCP Secret Manager, with optional env fallback.
 
     Requires:
         - google-cloud-secret-manager installed
@@ -70,8 +80,15 @@ class GCPSecretManagerBackend:
 
     name = "gcp"
 
-    def __init__(self, project_id: str | None = None) -> None:
+    def __init__(
+        self, project_id: str | None = None, strict: bool | None = None
+    ) -> None:
         self.project_id = project_id or os.getenv("GCP_PROJECT_ID", "")
+        self.strict = (
+            strict
+            if strict is not None
+            else os.getenv("SECRETS_STRICT", "false").lower() == "true"
+        )
         self._client = None
         self._cache: dict[str, str] = {}
         self._unavailable: set[str] = set()
@@ -79,8 +96,24 @@ class GCPSecretManagerBackend:
         if not self.project_id:
             logger.warning(
                 "GCP secrets backend selected but GCP_PROJECT_ID is empty — "
-                "all lookups will fall through to environment variables."
+                "GCP lookups cannot succeed."
             )
+
+    def _fallback(self, name: str, default: str | None, reason: str) -> str | None:
+        """Use env fallback only when explicitly permitted by configuration."""
+        if self.strict:
+            logger.error(
+                "Secret %s unavailable from GCP (%s); environment fallback disabled",
+                name,
+                reason,
+            )
+            return default
+        logger.warning(
+            "Secret %s unavailable from GCP (%s); falling back to environment",
+            name,
+            reason,
+        )
+        return os.getenv(name, default)
 
     def _get_client(self):
         if self._client is None:
@@ -96,7 +129,7 @@ class GCPSecretManagerBackend:
                     "Install with: pip install google-cloud-secret-manager"
                 )
                 return None
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - provider initialization errors vary by environment
                 logger.error("Failed to init GCP Secret Manager client: %s", e)
                 return None
         return self._client
@@ -109,16 +142,27 @@ class GCPSecretManagerBackend:
             return override
         return env_name.lower().replace("_", "-")
 
+    @staticmethod
+    def is_env_only_name(name: str) -> bool:
+        """Return whether a setting is explicitly allowed outside Secret Manager."""
+        return name in ENV_ONLY_NAMES
+
     def get(self, name: str, default: str | None = None) -> str | None:
+        if self.is_env_only_name(name):
+            return os.getenv(name, default)
         if name in self._cache:
             return self._cache[name]
 
-        if name in self._unavailable or not self.project_id:
-            return os.getenv(name, default)
+        if name in self._unavailable:
+            return default if self.strict else os.getenv(name, default)
+        if not self.project_id:
+            self._unavailable.add(name)
+            return self._fallback(name, default, "project_id_missing")
 
         client = self._get_client()
         if client is None:
-            return os.getenv(name, default)
+            self._unavailable.add(name)
+            return self._fallback(name, default, "client_unavailable")
 
         gcp_name = self._gcp_name(name)
         resource = f"projects/{self.project_id}/secrets/{gcp_name}/versions/latest"
@@ -129,16 +173,10 @@ class GCPSecretManagerBackend:
             self._cache[name] = value
             logger.debug("Loaded secret %s from GCP Secret Manager", name)
             return value
-        except Exception as e:
-            # Don't spam retries — remember that this secret is missing and
-            # fall through to env vars for the rest of the process lifetime.
-            logger.warning(
-                "Secret %s not found in GCP (%s); falling back to env var",
-                name,
-                type(e).__name__,
-            )
+        except Exception as e:  # noqa: BLE001 - normalize provider failures into configured fallback behavior
+            # Don't spam retries after a failed lookup for the process lifetime.
             self._unavailable.add(name)
-            return os.getenv(name, default)
+            return self._fallback(name, default, type(e).__name__)
 
 
 _backend: SecretsBackend | None = None

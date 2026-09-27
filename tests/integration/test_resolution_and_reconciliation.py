@@ -10,16 +10,18 @@ Covers:
 
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from core.engine.reconciliation import reconcile_internal_state
-from core.engine.resolution import close_resolved_positions
+from core.engine.reconciliation import reconcile_internal_state  # noqa: E402
+from core.engine.resolution import close_resolved_positions  # noqa: E402
 
 
 def _iso_now() -> str:
@@ -285,6 +287,92 @@ async def test_reconciliation_clean_when_everything_consistent(db):
     assert summary["orphaned_positions"] == 0
     assert summary["stuck_pending_orders"] == 0
     assert summary["unbalanced_arb_pairs"] == 0
+
+
+@pytest.mark.asyncio
+async def test_reconciliation_flags_and_deduplicates_aged_open_position(db, monkeypatch):
+    await _seed_market(db, "aged_market")
+    await _seed_signal(db, "aged_signal", "aged_market")
+    await _seed_position(db, "aged_position", signal_id="aged_signal", market_id="aged_market")
+    old = (datetime.now(timezone.utc) - timedelta(hours=73)).isoformat()
+    await db.execute("UPDATE positions SET opened_at = ? WHERE id = 'aged_position'", (old,))
+    await db.commit()
+    monkeypatch.setattr(
+        "core.engine.reconciliation.get_config",
+        lambda: SimpleNamespace(risk_controls=SimpleNamespace(
+            aged_position_alert_threshold_s=72 * 3600,
+            reconcile_stuck_pending_threshold_s=300,
+        )),
+    )
+    manager = MagicMock()
+    assert (await reconcile_internal_state(db, alert_manager=manager))["aged_open_positions"] == 1
+    assert manager.send_nowait.call_count == 2  # position alert + aggregate alert
+    assert (await reconcile_internal_state(db, alert_manager=manager))["aged_open_positions"] == 0
+    assert manager.send_nowait.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_aged_position_below_threshold_does_not_alert(db, monkeypatch):
+    await _seed_market(db, "fresh_aged_market")
+    await _seed_signal(db, "fresh_aged_signal", "fresh_aged_market")
+    await _seed_position(db, "fresh_aged_position", signal_id="fresh_aged_signal", market_id="fresh_aged_market")
+    await _seed_order(
+        db,
+        "fresh_aged_order",
+        signal_id="fresh_aged_signal",
+        market_id="fresh_aged_market",
+        status="filled",
+        filled_price=0.5,
+    )
+    recent = (datetime.now(timezone.utc) - timedelta(hours=71)).isoformat()
+    await db.execute(
+        "UPDATE positions SET opened_at = ? WHERE id = 'fresh_aged_position'", (recent,)
+    )
+    await db.commit()
+    monkeypatch.setattr(
+        "core.engine.reconciliation.get_config",
+        lambda: SimpleNamespace(risk_controls=SimpleNamespace(
+            aged_position_alert_threshold_s=72 * 3600,
+            reconcile_stuck_pending_threshold_s=300,
+        )),
+    )
+    manager = MagicMock()
+
+    assert (await reconcile_internal_state(db, alert_manager=manager))["aged_open_positions"] == 0
+    manager.send_nowait.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_multiple_aged_positions_alert_independently_with_configured_threshold(db, monkeypatch):
+    for suffix in ("one", "two"):
+        market_id = f"configured_aged_market_{suffix}"
+        signal_id = f"configured_aged_signal_{suffix}"
+        position_id = f"configured_aged_position_{suffix}"
+        await _seed_market(db, market_id)
+        await _seed_signal(db, signal_id, market_id)
+        await _seed_position(db, position_id, signal_id=signal_id, market_id=market_id)
+        old = (datetime.now(timezone.utc) - timedelta(seconds=121)).isoformat()
+        await db.execute("UPDATE positions SET opened_at = ? WHERE id = ?", (old, position_id))
+    await db.commit()
+    monkeypatch.setattr(
+        "core.engine.reconciliation.get_config",
+        lambda: SimpleNamespace(risk_controls=SimpleNamespace(
+            aged_position_alert_threshold_s=120,
+            reconcile_stuck_pending_threshold_s=300,
+        )),
+    )
+    manager = MagicMock()
+
+    summary = await reconcile_internal_state(db, alert_manager=manager)
+    position_alerts = [
+        call for call in manager.send_nowait.call_args_list
+        if call.kwargs["title"].startswith("Open position exceeded age threshold:")
+    ]
+    assert summary["aged_open_positions"] == 2
+    assert len(position_alerts) == 2
+    assert {call.kwargs["context"]["position_id"] for call in position_alerts} == {
+        "configured_aged_position_one", "configured_aged_position_two"
+    }
 
 
 @pytest.mark.asyncio

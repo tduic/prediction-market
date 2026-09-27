@@ -21,7 +21,18 @@ import pytest
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from core.engine import ArbitrageEngine
+from core.engine import ArbitrageEngine  # noqa: E402
+from execution.clients.paper import PaperExecutionClient  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _disable_live_price_fetches_for_snapshot_tests(monkeypatch):
+    """Keep telemetry tests on their seeded database-price path."""
+
+    async def _no_live_price(self, platform: str, platform_id: str) -> None:
+        return None
+
+    monkeypatch.setattr(PaperExecutionClient, "_fetch_live_price", _no_live_price)
 
 
 def _make_match(poly_id, kalshi_id, poly_price, kalshi_price, similarity=0.85):

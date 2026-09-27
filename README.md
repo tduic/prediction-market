@@ -53,8 +53,14 @@ cd dashboard && npm install && npm run build && cd ..
 
 # Configure
 cp config/settings.example.env .env
-# Edit .env with API credentials and EXECUTION_MODE
+# For local paper mode, add only non-secret runtime configuration.
+# Keep EXECUTION_MODE=paper. Do not put production credentials in .env.
 ```
+
+Production uses `SECRETS_BACKEND=gcp` with `SECRETS_STRICT=true`: exchange,
+webhook, and dashboard-password credentials are read from GCP Secret Manager,
+not from `.env`. The remaining `.env` file, when used by the deployment,
+contains non-secret runtime configuration only.
 
 ### Run
 
@@ -85,7 +91,7 @@ Market re-matching runs separately via `scripts/refresh_markets.py` (invoked ad-
 
 ```bash
 pytest tests/ -q
-# 540 tests, all self-contained (in-memory aiosqlite with real migration schema).
+# 669 tests, all self-contained (in-memory aiosqlite with real migration schema).
 # No external services required.
 ```
 
@@ -93,6 +99,16 @@ Type-check:
 ```bash
 mypy core/ execution/ scripts/
 ```
+
+### Paper-mode soak checks
+
+Keep `EXECUTION_MODE=paper`; paper clients simulate fills and do not submit
+exchange orders. Run the session with `--dashboard`, then inspect
+`/api/system-health` periodically. During a healthy soak the runtime section
+should show a fresh heartbeat (under 90 seconds), recent ticks for both
+platforms (under 60 seconds), and stable `process_rss_bytes` and
+`database_bytes` growth. The endpoint returns `warn` if its runtime heartbeat
+or either websocket feed is stale.
 
 ## Trading Strategies
 
@@ -165,7 +181,7 @@ FastAPI app embedded in the trading process. Serves the built React SPA and JSON
 Periodic PnL snapshots per strategy (`pnl_snapshots`, `strategy_pnl_snapshots`). `StrategyScorecard` produces summary/daily/comparison views for the dashboard.
 
 ### Invariants & alerting (`core/invariants.py`, `core/alerting.py`)
-Cross-table sanity checks (violations recorded to `invariant_violations`). Violations optionally forward to a Discord webhook via `core.alerting.AlertManager`.
+Cross-table sanity checks (violations recorded to `invariant_violations`). Violations optionally forward to Discord and/or Slack webhooks via `core.alerting.AlertManager`.
 
 ## Configuration
 
@@ -176,23 +192,27 @@ All settings load from environment variables. Key ones (see `core/config.py` for
 | `EXECUTION_MODE` | `paper` | `paper`, `shadow`, or `live`. Only `live` requires all platform credentials. |
 | `STARTING_CAPITAL` | `10000` | Baseline for portfolio-percentage risk limits. |
 | `DB_PATH` | `prediction_market.db` | SQLite location. |
-| `KALSHI_API_KEY` / `KALSHI_RSA_KEY_PATH` | — | Required in live mode. |
-| `POLYMARKET_PRIVATE_KEY` / `POLYMARKET_WALLET_ADDRESS` | — | Required in live mode. |
+| `KALSHI_API_KEY` / `KALSHI_RSA_KEY_PATH` | — | Production credential and PEM-path configuration; the credential is read from Secret Manager. |
+| `POLYMARKET_PRIVATE_KEY` / `POLYMARKET_WALLET_ADDRESS` | — | Production credentials read from Secret Manager. |
 | `POLYMARKET_PROXY` | — | `socks5://host:port` for EU routing. |
 | `SECRETS_BACKEND` | `env` | `env` or `gcp` (GCP Secret Manager). |
+| `SECRETS_STRICT` | `false` | Set `true` in production to fail closed instead of reading environment credentials. |
 | `GCP_PROJECT_ID` | — | Project for Secret Manager lookups. |
 | `MAX_POSITION_PCT` | `0.05` | See Risk Controls. |
 | `MAX_DAILY_LOSS_PCT` | `0.02` | See Risk Controls. |
+| `AGED_POSITION_ALERT_THRESHOLD_S` | `259200` | Warning threshold for an open position (72 hours); valid range is 60 seconds to 365 days. |
+| `EXECUTION_FAILURE_ALERT_COUNT` | `3` | Critical alert fires when more than this many submitted-order failures occur inside the rolling window (valid range 1–1000). |
+| `EXECUTION_FAILURE_ALERT_WINDOW_S` | `600` | Rolling window for execution-failure alerting (valid range 1 second to 24 hours). |
 | `MAX_PORTFOLIO_EXPOSURE_PCT` | `0.20` | See Risk Controls. |
 | `KELLY_FRACTION` | `0.25` | Fractional Kelly. |
 | `MIN_SPREAD_CROSS_PLATFORM` | `0.03` | Overrides `--min-spread`. Set to `99.0` to pause P1. |
 | `STRATEGY_P{2,3,4,5}_ENABLED` | `true` | Per-label kill. |
 | `LOG_FORMAT` | `text` | `json` for structured prod logging. |
-| `DASHBOARD_PASSWORD` | — | Set to enable HTTP Basic Auth on the dashboard. |
+| `DASHBOARD_PASSWORD` | — | Secret Manager value that enables HTTP Basic Auth on the dashboard in production. |
 
 ## Database
 
-SQLite with WAL mode. 19 live tables after `migrations/010`:
+SQLite with WAL mode. 19 live application tables after `migrations/018`:
 
 - **Market data:** `markets`, `market_prices`, `ingestor_runs`
 - **Pair analysis:** `market_pairs`, `pair_spread_history`
@@ -201,7 +221,7 @@ SQLite with WAL mode. 19 live tables after `migrations/010`:
 - **Analytics:** `pnl_snapshots`, `strategy_pnl_snapshots`, `trade_outcomes`
 - **Operational:** `system_events`, `reconciliation_log`, `invariant_violations`, `phase0_baseline`
 
-Schema lives in `core/storage/migrations/` (numbered `001`–`010`). The migration runner tracks applied files in `migration_history` and is idempotent.
+Schema lives in `core/storage/migrations/` (numbered `001`–`018`). The migration runner tracks applied files in the separate `migration_history` metadata table and is idempotent.
 
 ## Project Layout
 
@@ -214,7 +234,7 @@ prediction-market/
 │   ├── live_gate.py           # Live-mode guardrails
 │   ├── logging_config.py      # Structured JSON / text logging
 │   ├── secrets.py             # env or GCP Secret Manager
-│   ├── alerting.py            # Discord webhook alerts
+│   ├── alerting.py            # Discord and Slack webhook alerts
 │   ├── engine/                # Tick + scheduled lifecycle (arb, resolution, reconciliation)
 │   ├── ingestor/              # Polymarket + Kalshi REST/WS
 │   ├── matching/              # Market-pair discovery
@@ -235,7 +255,7 @@ prediction-market/
 │   ├── take_baseline.py       # Phase 0 baseline snapshot tool
 │   ├── verify_api_auth.py     # Auth smoke test
 │   └── verify_prod_config.py  # Production config smoke test
-├── tests/                     # 532 tests, all in-memory aiosqlite
+├── tests/                     # 669 self-contained tests
 ├── deploy/                    # GCE provisioning, systemd units, CI/CD
 ├── docs/
 │   └── archive/               # Phase 0–7 design docs (historical)

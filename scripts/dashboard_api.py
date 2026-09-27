@@ -30,6 +30,7 @@ from starlette.requests import Request
 from starlette.responses import Response
 
 from core.config import get_config
+from core.secrets import get_secret
 
 logger = logging.getLogger(__name__)
 
@@ -124,7 +125,10 @@ class _BasicAuthMiddleware(BaseHTTPMiddleware):
         )
 
 
-def _build_app(static_dir: str | None = None) -> FastAPI:
+def _build_app(
+    static_dir: str | None = None,
+    runtime_health: dict[str, Any] | None = None,
+) -> FastAPI:
     """
     Build the FastAPI application.
 
@@ -135,13 +139,16 @@ def _build_app(static_dir: str | None = None) -> FastAPI:
         frontend is served from the same process.
     """
     app = FastAPI(title="Prediction Market Dashboard API")
+    # The trading session owns this mutable snapshot and refreshes it from its
+    # status loop. Keeping it in app state avoids a second SQLite writer.
+    app.state.runtime_health = runtime_health
 
     # Security headers on every response.
     app.add_middleware(_SecurityHeadersMiddleware)
 
     # HTTP Basic Auth — enabled when DASHBOARD_PASSWORD env var is set.
     # Add before CORS so unauthenticated requests are rejected at the gate.
-    _dash_password = os.getenv("DASHBOARD_PASSWORD", "")
+    _dash_password = get_secret("DASHBOARD_PASSWORD", "") or ""
     if _dash_password:
         _dash_user = os.getenv("DASHBOARD_USER", "admin")
         app.add_middleware(
@@ -1359,6 +1366,42 @@ def _build_app(static_dir: str | None = None) -> FastAPI:
                 result["daily_loss_pct_used"] = None
                 issues.append("daily_loss_query_failed")
 
+            # Runtime liveness is populated only by the embedded trading
+            # session. A standalone dashboard cannot observe another process.
+            runtime = getattr(app.state, "runtime_health", None)
+            if runtime is None:
+                result["runtime"] = None
+            else:
+                runtime_copy = dict(runtime)
+                result["runtime"] = runtime_copy
+                updated_at = runtime_copy.get("updated_at")
+                if updated_at:
+                    try:
+                        runtime_updated = datetime.fromisoformat(updated_at)
+                        if runtime_updated.tzinfo is None:
+                            runtime_updated = runtime_updated.replace(
+                                tzinfo=timezone.utc
+                            )
+                        runtime_age = datetime.now(timezone.utc) - runtime_updated
+                        runtime_age_s = int(runtime_age.total_seconds())
+                        result["runtime_age_s"] = runtime_age_s
+                        if runtime_age_s > 90:
+                            issues.append(f"runtime_heartbeat_stale:{runtime_age_s}s")
+                    except (TypeError, ValueError):
+                        result["runtime_age_s"] = None
+                        issues.append("runtime_heartbeat_invalid")
+                else:
+                    result["runtime_age_s"] = None
+                    issues.append("runtime_heartbeat_missing")
+
+                ws_ages = runtime_copy.get("ws_last_tick_age_ms_by_platform", {})
+                if isinstance(ws_ages, dict):
+                    for platform, age_ms in ws_ages.items():
+                        if isinstance(age_ms, (int, float)) and age_ms > 60_000:
+                            issues.append(
+                                f"websocket_feed_stale:{platform}:{int(age_ms)}ms"
+                            )
+
             # Overall status
             if any("tripped" in i or "critical" in i for i in issues):
                 result["status"] = "critical"
@@ -1485,6 +1528,7 @@ def _build_app(static_dir: str | None = None) -> FastAPI:
 def create_dashboard_app(
     db_path: str,
     static_dir: str | None = None,
+    runtime_health: dict[str, Any] | None = None,
 ) -> FastAPI:
     """
     Public factory: create a fully configured dashboard app.
@@ -1496,9 +1540,12 @@ def create_dashboard_app(
     static_dir : str or None
         Path to the React build directory (dashboard/dist/).
         If provided, the SPA is served at "/".
+    runtime_health : dict or None
+        Mutable runtime telemetry supplied by an embedded trading session.
+        Standalone dashboard instances leave this as None.
     """
     configure(db_path)
-    return _build_app(static_dir=static_dir)
+    return _build_app(static_dir=static_dir, runtime_health=runtime_health)
 
 
 _LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}

@@ -3,12 +3,13 @@
 import hashlib
 import hmac
 import logging
-import os
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 import httpx
+
+from core.secrets import get_secret
 
 logger = logging.getLogger(__name__)
 
@@ -91,8 +92,10 @@ class PolymarketClient:
             api_key: API key (or from POLYMARKET_API_KEY env var)
             api_secret: API secret (or from POLYMARKET_API_SECRET env var)
         """
-        self.api_key: str = api_key or os.getenv("POLYMARKET_API_KEY") or ""
-        self.api_secret: str = api_secret or os.getenv("POLYMARKET_API_SECRET") or ""
+        self.api_key: str = api_key or get_secret("POLYMARKET_API_KEY", "") or ""
+        self.api_secret: str = (
+            api_secret or get_secret("POLYMARKET_API_SECRET", "") or ""
+        )
         self.rate_limiter = TokenBucket(capacity=10.0, refill_rate=10.0 / 1.0)
         self._client: httpx.AsyncClient | None = None
 

@@ -29,9 +29,9 @@ import pytest
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from core.config import RiskControlConfig
-from core.engine import ScheduledStrategyRunner
-from core.strategies.single_platform import (
+from core.config import RiskControlConfig  # noqa: E402
+from core.engine import ScheduledStrategyRunner  # noqa: E402
+from core.strategies.single_platform import (  # noqa: E402
     _cross_strategy_dedup,
     _get_strategy_rolling_pnl,
     _normalize_signal_strengths,
@@ -39,8 +39,18 @@ from core.strategies.single_platform import (
     detect_single_platform_opportunities,
     mark_and_close_positions,
 )
-from execution.clients.paper import PaperExecutionClient
-from execution.models import OrderLeg
+from execution.clients.paper import PaperExecutionClient  # noqa: E402
+from execution.models import OrderLeg  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _disable_live_price_fetches_for_single_platform_tests(monkeypatch):
+    """Keep seeded paper-fill tests independent of exchange availability."""
+
+    async def _no_live_price(self, platform: str, platform_id: str) -> None:
+        return None
+
+    monkeypatch.setattr(PaperExecutionClient, "_fetch_live_price", _no_live_price)
 
 
 def _risk_config(**overrides):

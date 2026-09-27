@@ -9,15 +9,13 @@ What it checks:
 
   1. Secrets backend
      - Reports which backend is active (env or gcp).
-     - For each required secret, fetches the value and reports whether it
-       came from GCP Secret Manager or fell through to an environment
-       variable. Actual values are masked to the first and last 4 chars so
-       this is safe to paste into a terminal log.
+     - For each required secret, reports only whether it is present and which
+       backend supplied it. Secret values are never printed or derived.
 
   2. Alerting
      - Reports which alert transports are configured.
-     - Sends one INFO-severity test alert through the AlertManager so you
-       can visually confirm the Discord (or Slack) channel receives it.
+     - Reports configured alert transports. Sending a test alert requires an
+       explicit command-line flag.
 
 Exit codes:
   0  everything OK
@@ -27,7 +25,7 @@ Exit codes:
 
 Usage:
     python scripts/verify_prod_config.py
-    python scripts/verify_prod_config.py --skip-alert      # config only
+    python scripts/verify_prod_config.py --send-test-alert # sends an INFO alert
     python scripts/verify_prod_config.py --require-gcp     # fail if env fallback
 """
 
@@ -59,13 +57,13 @@ if _env_file.exists():
                 _k, _, _v = _line.partition("=")
                 os.environ.setdefault(_k.strip(), _v.strip())
 
-from core.alerting import (
+from core.alerting import (  # noqa: E402 - imports intentionally follow local .env loading
     DiscordWebhookTransport,
     NullTransport,
     Severity,
     get_alert_manager,
 )
-from core.secrets import (
+from core.secrets import (  # noqa: E402 - imports intentionally follow local .env loading
     GCPSecretManagerBackend,
     get_backend,
     get_secret,
@@ -84,17 +82,9 @@ REQUIRED_SECRETS = [
 ENV_OK_SECRETS = {"KALSHI_RSA_KEY_PATH"}
 
 
-def _mask(value: str | None) -> str:
-    if not value:
-        return "<MISSING>"
-    if len(value) <= 10:
-        return "*" * len(value)
-    return f"{value[:4]}…{value[-4:]} ({len(value)} chars)"
-
-
-def _check_secrets(require_gcp: bool) -> tuple[bool, list[tuple[str, str, str]]]:
+def _check_secrets(require_gcp: bool) -> tuple[bool, list[tuple[str, str, bool]]]:
     """
-    Returns (all_ok, rows) where rows is a list of (name, source, masked).
+    Returns (all_ok, rows) where rows is a list of (name, source, present).
 
     Source is determined by asking the GCP backend's cache whether the value
     came from its internal store or fell through to os.getenv.
@@ -111,16 +101,16 @@ def _check_secrets(require_gcp: bool) -> tuple[bool, list[tuple[str, str, str]]]
             if name in backend._cache:
                 source = "gcp"
             elif name in backend._unavailable:
-                source = "env-fallback"
+                source = "gcp-unavailable" if backend.strict else "env-fallback"
             else:
-                # Wasn't looked up via GCP at all (no project id, no client)
-                source = "env-fallback"
+                source = "gcp-unavailable" if backend.strict else "env-fallback"
         else:
             source = "env"
 
-        rows.append((name, source, _mask(value)))
+        present = bool(value)
+        rows.append((name, source, present))
 
-        if not value:
+        if not present:
             all_ok = False
         if require_gcp and source != "gcp" and name not in ENV_OK_SECRETS:
             all_ok = False
@@ -128,7 +118,7 @@ def _check_secrets(require_gcp: bool) -> tuple[bool, list[tuple[str, str, str]]]
     return all_ok, rows
 
 
-async def _check_alerting(skip_alert: bool) -> int:
+async def _check_alerting(send_test_alert: bool) -> int:
     """Report transport config and optionally send a test alert."""
     mgr = get_alert_manager()
 
@@ -143,19 +133,14 @@ async def _check_alerting(skip_alert: bool) -> int:
     only_null = all(isinstance(t, NullTransport) for t in mgr.transports)
     if only_null:
         print("  ⚠ Only NullTransport configured — alerts will be dropped.")
-        print("    Set ALERT_DISCORD_WEBHOOK_URL in the environment.")
+        print("    Configure ALERT_DISCORD_WEBHOOK_URL through the secrets backend.")
 
     for t in mgr.transports:
         if isinstance(t, DiscordWebhookTransport):
-            # Don't print the full URL — the token portion is sensitive.
-            url = t.webhook_url
-            masked = f"{url[:32]}…{url[-6:]}" if len(url) > 40 else url
-            print(f"  Discord webhook: {masked}")
-            print(f"  Username: {t.username}")
-            print(f"  Timeout: {t.timeout_s}s")
+            print("  Discord webhook: configured")
 
-    if skip_alert:
-        print("  (skipping test alert — --skip-alert)")
+    if not send_test_alert:
+        print("  (test alert not sent; use --send-test-alert to dispatch one)")
         return 3 if only_null else 0
 
     print()
@@ -194,9 +179,9 @@ async def _check_alerting(skip_alert: bool) -> int:
 async def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--skip-alert",
+        "--send-test-alert",
         action="store_true",
-        help="Check config only, don't send a test alert",
+        help="Send an INFO alert after the configuration checks pass",
     )
     parser.add_argument(
         "--require-gcp",
@@ -222,7 +207,7 @@ async def main() -> int:
     if isinstance(backend, GCPSecretManagerBackend):
         print(f"  GCP project: {backend.project_id or '(not set)'}")
         if not backend.project_id:
-            print("  ⚠ GCP_PROJECT_ID is empty — all lookups will fall through to env")
+            print("  ⚠ GCP_PROJECT_ID is empty — GCP lookups cannot succeed")
 
     print()
     print("── Required secrets ───────────────────────────────────────")
@@ -230,9 +215,10 @@ async def main() -> int:
 
     name_w = max(len(r[0]) for r in rows)
     source_w = max(len(r[1]) for r in rows)
-    for name, source, masked in rows:
-        marker = "✓" if "<MISSING>" not in masked else "✗"
-        print(f"  {marker} {name.ljust(name_w)}  [{source.ljust(source_w)}]  {masked}")
+    for name, source, present in rows:
+        marker = "✓" if present else "✗"
+        status = "present" if present else "missing"
+        print(f"  {marker} {name.ljust(name_w)}  [{source.ljust(source_w)}]  {status}")
 
     if not secrets_ok:
         print()
@@ -242,7 +228,7 @@ async def main() -> int:
             print("  ✗ One or more required secrets are missing")
 
     # ── Alerting ──
-    alert_exit = await _check_alerting(skip_alert=args.skip_alert)
+    alert_exit = await _check_alerting(send_test_alert=args.send_test_alert)
 
     # ── Summary ──
     print()

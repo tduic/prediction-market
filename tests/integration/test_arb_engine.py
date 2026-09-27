@@ -18,8 +18,24 @@ import pytest
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from core.config import RiskControlConfig
-from core.engine import ArbitrageEngine, ScheduledStrategyRunner
+from core.config import RiskControlConfig  # noqa: E402
+from core.engine import ArbitrageEngine, ScheduledStrategyRunner  # noqa: E402
+from execution.clients.paper import PaperExecutionClient  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _disable_live_price_fetches_for_engine_tests(monkeypatch):
+    """Keep engine tests hermetic by using their seeded database prices.
+
+    PaperExecutionClient normally tries an exchange lookup before its database
+    fallback. These tests seed the fallback explicitly, so reaching an exchange
+    adds network-dependent delays without exercising engine behavior.
+    """
+
+    async def _no_live_price(self, platform: str, platform_id: str) -> None:
+        return None
+
+    monkeypatch.setattr(PaperExecutionClient, "_fetch_live_price", _no_live_price)
 
 
 def _make_match(poly_id, kalshi_id, poly_price, kalshi_price, similarity=0.85):
@@ -653,6 +669,21 @@ class TestCircuitBreakerHalt:
 
 @pytest.mark.asyncio
 class TestRiskChecksBlockTrades:
+    async def test_risk_rejection_does_not_count_as_execution_failure(self, db):
+        cb = MagicMock()
+        cb.should_halt = AsyncMock(return_value=False)
+        cb.record_order_result = AsyncMock()
+        cfg = _risk_config(min_edge=0.20)
+        matches = [_make_match("poly_A", "kal_A", _POLY_SEED, _KAL_SEED)]
+        await _seed_markets_p23(db, matches)
+        engine = ArbitrageEngine(
+            db, matches, min_spread=0.03, risk_config=cfg, circuit_breaker=cb
+        )
+
+        await _simulate_price_update(engine, db, "poly_A", _POLY_TRIGGER)
+
+        cb.record_order_result.assert_not_awaited()
+
     async def test_below_min_edge_blocked(self, db):
         cfg = _risk_config(min_edge=0.20)
         matches = [_make_match("poly_A", "kal_A", _POLY_SEED, _KAL_SEED)]
@@ -963,6 +994,31 @@ class TestRearmTrigger:
 
 @pytest.mark.asyncio
 class TestExceptionSafety:
+    async def test_material_arb_database_failure_uses_sanitized_notifier(
+        self, db, monkeypatch
+    ):
+        matches = [_make_match("poly_A", "kal_A", _POLY_SEED, _KAL_SEED)]
+        await _seed_markets_p23(db, matches)
+        engine = ArbitrageEngine(
+            db, matches, min_spread=0.03, risk_config=_risk_config()
+        )
+        original_execute = db.execute
+
+        async def fail_pair_insert(sql, *args, **kwargs):
+            if "INSERT OR IGNORE INTO market_pairs" in sql:
+                raise RuntimeError("database write failure")
+            return await original_execute(sql, *args, **kwargs)
+
+        notifier = MagicMock()
+        monkeypatch.setattr(db, "execute", fail_pair_insert)
+        monkeypatch.setattr("core.alerting.notify_database_failure", notifier)
+
+        await _simulate_price_update(engine, db, "poly_A", _POLY_TRIGGER)
+
+        notifier.assert_called_once()
+        assert notifier.call_args.args[0] == "arb_engine"
+        assert isinstance(notifier.call_args.args[1], RuntimeError)
+
     async def test_exception_rolls_back_fired_state(self, db):
         matches = [_make_match("poly_A", "kal_A", _POLY_SEED, _KAL_SEED)]
         await _seed_markets_p23(db, matches)

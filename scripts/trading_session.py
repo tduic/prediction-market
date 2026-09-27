@@ -19,6 +19,7 @@ import logging
 import os
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 print("[startup] Loading environment...", flush=True)
@@ -47,6 +48,27 @@ from core.logging_config import configure_from_env
 print("[startup] All imports complete.", flush=True)
 
 logger = logging.getLogger(__name__)
+
+
+def _process_rss_bytes() -> int | None:
+    """Return current resident memory on Linux, where soak tests are deployed."""
+    try:
+        resident_pages = int(Path("/proc/self/statm").read_text().split()[1])
+        return resident_pages * os.sysconf("SC_PAGE_SIZE")
+    except (FileNotFoundError, IndexError, OSError, ValueError):
+        return None
+
+
+def _database_size_bytes(db_path: str) -> int:
+    """Include SQLite's WAL and shared-memory sidecars in the soak footprint."""
+    total = 0
+    for path in (Path(db_path), Path(f"{db_path}-wal"), Path(f"{db_path}-shm")):
+        try:
+            total += path.stat().st_size
+        except FileNotFoundError:
+            # SQLite may checkpoint and remove a sidecar between iterations.
+            continue
+    return total
 
 
 async def refresh_markets_and_matches(db: aiosqlite.Connection, cfg) -> list[dict]:
@@ -305,6 +327,13 @@ async def main():
     )
     await db_wrapper.init()
     db = db_wrapper._conn
+    # Shared with the embedded dashboard only. It is intentionally in-memory:
+    # these are process observations, not trading records.
+    runtime_health: dict[str, object] = {
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "state": "starting",
+        "execution_mode": cfg.execution.execution_mode,
+    }
 
     try:
         # ── Dashboard (start FIRST so it's available during refresh) ──
@@ -326,6 +355,7 @@ async def main():
             dashboard_app = create_dashboard_app(
                 db_path=cfg.database.db_path,
                 static_dir=static_dir,
+                runtime_health=runtime_health,
             )
             dashboard_task = asyncio.create_task(
                 start_dashboard_server(
@@ -394,6 +424,8 @@ async def main():
             starting_capital=risk_config.starting_capital,
             max_daily_loss_pct=risk_config.max_daily_loss_pct,
             consecutive_failure_limit=risk_config.consecutive_failure_limit,
+            execution_failure_alert_count=risk_config.execution_failure_alert_count,
+            execution_failure_alert_window_s=risk_config.execution_failure_alert_window_s,
         )
         await circuit_breaker.load_state()
 
@@ -481,6 +513,25 @@ async def main():
                     break
                 except asyncio.TimeoutError:
                     stats = arb_engine.stats()
+                    runtime_health.update(
+                        {
+                            "updated_at": datetime.now(timezone.utc).isoformat(),
+                            "state": "running",
+                            "execution_mode": execution_mode,
+                            "process_rss_bytes": _process_rss_bytes(),
+                            "database_bytes": _database_size_bytes(
+                                cfg.database.db_path
+                            ),
+                            "pairs_monitored": stats["pairs_monitored"],
+                            "prices_tracked": stats["prices_tracked"],
+                            "stale_prices_count": stats["stale_prices_count"],
+                            "skipped_stale": stats["skipped_stale"],
+                            "scheduled_trades": scheduled.total_trades,
+                            "ws_last_tick_age_ms_by_platform": stats[
+                                "ws_last_tick_age_ms_by_platform"
+                            ],
+                        }
+                    )
                     _last_fire = (
                         f"{time.time() - stats['last_arb_fired_at']:.0f}s ago"
                         if stats["last_arb_fired_at"]

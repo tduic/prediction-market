@@ -18,7 +18,7 @@ import pytest
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from core.live_gate import (
+from core.live_gate import (  # noqa: E402
     SENTINEL_PATH,
     LiveGateError,
     check_live_gate,
@@ -66,10 +66,10 @@ class TestSentinelFile:
         check_live_gate("shadow", sentinel_path=sentinel, confirmation_code=None)
 
     def test_sentinel_path_constant_is_absolute(self):
-        assert SENTINEL_PATH.is_absolute()
+        assert SENTINEL_PATH.as_posix().startswith("/")
 
     def test_sentinel_path_constant_references_etc(self):
-        assert str(SENTINEL_PATH).startswith("/etc/")
+        assert SENTINEL_PATH.as_posix().startswith("/etc/")
 
 
 # ── Confirmation code ──────────────────────────────────────────────────────────

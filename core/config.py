@@ -15,6 +15,26 @@ from core.secrets import get_secret
 logger = logging.getLogger(__name__)
 
 
+def _bounded_positive_int_env(
+    name: str, default: int, *, minimum: int, maximum: int
+) -> int:
+    """Read a bounded positive integer, falling back safely on bad input.
+
+    Alert thresholds must never be disabled by an invalid deployment setting.
+    Do not log the supplied value: environment configuration may be sourced by
+    a wrapper that treats it as sensitive.
+    """
+    try:
+        value = int(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        logger.warning("Invalid %s; using documented default", name)
+        return default
+    if not minimum <= value <= maximum:
+        logger.warning("Out-of-range %s; using documented default", name)
+        return default
+    return value
+
+
 @dataclass
 class PlatformCredentials:
     """Platform-specific API credentials."""
@@ -176,6 +196,21 @@ class RiskControlConfig:
     )
     reconcile_stuck_pending_threshold_s: int = field(
         default_factory=lambda: int(os.getenv("STUCK_PENDING_THRESHOLD_S", "300"))
+    )
+    aged_position_alert_threshold_s: int = field(
+        default_factory=lambda: _bounded_positive_int_env(
+            "AGED_POSITION_ALERT_THRESHOLD_S", 259200, minimum=60, maximum=31536000
+        )
+    )
+    execution_failure_alert_count: int = field(
+        default_factory=lambda: _bounded_positive_int_env(
+            "EXECUTION_FAILURE_ALERT_COUNT", 3, minimum=1, maximum=1000
+        )
+    )
+    execution_failure_alert_window_s: int = field(
+        default_factory=lambda: _bounded_positive_int_env(
+            "EXECUTION_FAILURE_ALERT_WINDOW_S", 600, minimum=1, maximum=86400
+        )
     )
     # Minimum character length of a stripped title root before a market is
     # eligible for P2 series grouping. Lower values increase recall but risk

@@ -95,6 +95,28 @@ def test_gcp_backend_falls_through_to_env_without_project(monkeypatch):
     assert backend.get("MY_FALLBACK_KEY") == "env-value"
 
 
+def test_strict_gcp_backend_does_not_fall_through_to_env(monkeypatch):
+    monkeypatch.setenv("STRICT_SECRET", "env-value")
+    backend = GCPSecretManagerBackend(project_id="", strict=True)
+
+    assert backend.get("STRICT_SECRET", "default-value") == "default-value"
+
+
+def test_strict_gcp_backend_returns_default_when_client_unavailable(monkeypatch):
+    monkeypatch.setenv("STRICT_CLIENT_SECRET", "env-value")
+    backend = GCPSecretManagerBackend(project_id="test-project", strict=True)
+    monkeypatch.setattr(backend, "_get_client", lambda: None)
+
+    assert backend.get("STRICT_CLIENT_SECRET", "default-value") == "default-value"
+
+
+def test_strict_gcp_backend_allows_documented_nonsecret_path(monkeypatch):
+    monkeypatch.setenv("KALSHI_RSA_KEY_PATH", "/dummy/kalshi.pem")
+    backend = GCPSecretManagerBackend(project_id="", strict=True)
+
+    assert backend.get("KALSHI_RSA_KEY_PATH") == "/dummy/kalshi.pem"
+
+
 def test_gcp_backend_caches_unavailable_keys(monkeypatch):
     """After a missing lookup, subsequent calls should not retry the client."""
     monkeypatch.setenv("GCP_PROJECT_ID", "fake-project-id")

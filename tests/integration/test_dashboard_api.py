@@ -605,6 +605,40 @@ class TestSystemHealthEndpoint:
         data = resp.json()
         assert data["daily_loss_pct_used"] == 0.0
 
+    async def test_system_health_includes_fresh_runtime_telemetry(self, app_and_client):
+        app, client, _ = app_and_client
+        app.state.runtime_health = {
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "state": "running",
+            "execution_mode": "paper",
+            "process_rss_bytes": 123_456,
+            "database_bytes": 654_321,
+            "ws_last_tick_age_ms_by_platform": {
+                "polymarket": 100,
+                "kalshi": 200,
+            },
+        }
+
+        resp = await client.get("/api/system-health")
+        data = resp.json()
+        assert data["status"] == "ok"
+        assert data["runtime_age_s"] <= 1
+        assert data["runtime"]["execution_mode"] == "paper"
+        assert data["runtime"]["database_bytes"] == 654_321
+
+    async def test_system_health_warns_on_stale_websocket_feed(self, app_and_client):
+        app, client, _ = app_and_client
+        app.state.runtime_health = {
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "state": "running",
+            "ws_last_tick_age_ms_by_platform": {"kalshi": 60_001},
+        }
+
+        resp = await client.get("/api/system-health")
+        data = resp.json()
+        assert data["status"] == "warn"
+        assert "websocket_feed_stale:kalshi:60001ms" in data["issues"]
+
 
 # ── /api/signals ─────────────────────────────────────────────────────────────────────────────────────────
 

@@ -14,6 +14,7 @@ from cryptography.hazmat.primitives.asymmetric import padding
 from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey
 
 from core.ingestor.polymarket import MarketData, OrderBook, TokenBucket
+from core.secrets import get_secret
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +24,7 @@ _RATE_LIMIT_POLL_S = 0.1
 
 
 def _load_rsa_private_key(key_path: str) -> RSAPrivateKey | None:
-    """Load RSA private key from PEM file. Returns None if path missing, unreadable, or not RSA."""
+    """Load an RSA PEM key, returning None when it is unavailable or invalid."""
     try:
         expanded = Path(key_path).expanduser()
         if not expanded.exists():
@@ -53,7 +54,7 @@ class KalshiClient:
         rsa_key_path: str | None = None,
         api_base: str | None = None,
     ):
-        self.api_key: str = api_key or os.getenv("KALSHI_API_KEY") or ""
+        self.api_key: str = api_key or get_secret("KALSHI_API_KEY", "") or ""
         self.api_base: str = (
             api_base
             or os.getenv("KALSHI_API_BASE")
@@ -62,7 +63,7 @@ class KalshiClient:
         self.rate_limiter = TokenBucket(capacity=10.0, refill_rate=10.0 / 1.0)
         self._client: httpx.AsyncClient | None = None
 
-        key_path = rsa_key_path or os.getenv("KALSHI_RSA_KEY_PATH", "")
+        key_path = rsa_key_path or get_secret("KALSHI_RSA_KEY_PATH", "") or ""
         self._private_key = _load_rsa_private_key(key_path) if key_path else None
 
     async def _wait_for_token(self) -> bool:
