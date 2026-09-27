@@ -32,6 +32,10 @@ class OrderResult:
     fee_paid: float | None = None
     slippage: float | None = None
     error_message: str | None = None
+    # Polymarket book the order actually hit. "NO" means a SELL-YES intent was
+    # translated to BUY NO, so filled_price is in NO space (economic YES
+    # price = 1 - filled_price).
+    book: str = "YES"
 
 
 class BaseExecutionClient:

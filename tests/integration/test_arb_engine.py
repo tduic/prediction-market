@@ -1072,7 +1072,7 @@ async def test_arb_fire_with_sell_poly_leg_translates(db):
            (id, platform, platform_id, title, yes_token_id, no_token_id,
             last_price_no, status, created_at, updated_at)
            VALUES ('poly_arb', 'polymarket', '0xarb', 'Arb Test Market',
-                   'tok_yes_arb', 'tok_no_arb', 0.30, 'open', ?, ?)""",
+                   'tok_yes_arb', 'tok_no_arb', 0.38, 'open', ?, ?)""",
         (now, now),
     )
     await db.execute(
@@ -1085,7 +1085,7 @@ async def test_arb_fire_with_sell_poly_leg_translates(db):
     await db.execute(
         """INSERT INTO market_prices
            (market_id, yes_price, no_price, spread, liquidity, polled_at)
-           VALUES ('poly_arb', 0.70, 0.30, 0.02, 10000, ?)""",
+           VALUES ('poly_arb', 0.62, 0.38, 0.02, 10000, ?)""",
         (now,),
     )
     await db.execute(
@@ -1096,7 +1096,7 @@ async def test_arb_fire_with_sell_poly_leg_translates(db):
     )
     await db.commit()
 
-    match = _make_match("poly_arb", "kal_arb", 0.70, 0.55)
+    match = _make_match("poly_arb", "kal_arb", 0.62, 0.55)
     cfg = _risk_config(max_position_pct=0.10)
     engine = ArbitrageEngine(db, [match], min_spread=0.03, risk_config=cfg)
 
@@ -1115,8 +1115,11 @@ async def test_arb_fire_with_sell_poly_leg_translates(db):
     assert row[0] == "BUY", f"Expected side='BUY' (translated), got {row[0]!r}"
     assert row[1] == "NO", f"Expected book='NO' (translated), got {row[1]!r}"
     assert row[2] == pytest.approx(
-        0.30, abs=1e-4
-    ), f"Expected requested_price≈0.30, got {row[2]}"
+        0.38, abs=1e-4
+    ), f"Expected requested_price≈0.38, got {row[2]}"
+    # The NO-book fill is converted back to YES space for P&L, so a real
+    # 0.07 edge books a gain (it used to book 0.38 - 0.56 per contract).
+    assert engine.trades[0]["actual_pnl"] > 0
 
 
 @pytest.mark.asyncio

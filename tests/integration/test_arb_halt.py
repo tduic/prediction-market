@@ -181,3 +181,22 @@ async def test_balanced_fill_records_filled_size(db):
     cursor = await db.execute("SELECT entry_size, exit_size FROM positions")
     assert tuple(await cursor.fetchone()) == (10.0, 10.0)
     assert await is_halted(db) is False
+
+
+async def test_translated_polymarket_sell_pnl_in_yes_space(db):
+    # kalshi 0.55 < poly 0.70 → buy Kalshi, sell Polymarket. Without YES
+    # inventory the Polymarket sell executes as BUY NO; its fill price is in
+    # NO space and must be converted back (1 - p) for P&L.
+    matches = [_make_match("poly_A", "kal_A", 0.70, 0.55)]
+    await _seed_markets_for_engine(db, matches)
+    engine = ArbitrageEngine(db, matches, min_spread=0.03)
+    no_fill = _filled("polymarket", 0.36, 10.0)
+    no_fill.book = "NO"
+    engine._kalshi_client = FakeClient("kalshi", _filled("kalshi", 0.55, 10.0))
+    engine._poly_client = FakeClient("polymarket", no_fill)
+    await engine.initial_sweep()
+    assert len(engine.trades) == 1
+    # P&L on the 10 contracts that actually traded
+    assert engine.trades[0]["actual_pnl"] == pytest.approx((0.64 - 0.55) * 10.0)
+    cursor = await db.execute("SELECT exit_price FROM positions")
+    assert (await cursor.fetchone())[0] == pytest.approx(0.64)

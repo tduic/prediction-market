@@ -353,6 +353,7 @@ class PaperExecutionClient(BaseExecutionClient):
             filled_size=filled_size,
             fee_paid=fee_paid,
             slippage=round(slippage, 4),
+            book=effective_book.value,
         )
 
         await self.write_order(

@@ -875,7 +875,7 @@ class ArbitrageEngine:
             return None
 
         # Hedge exactly what was bought. Kalshi trades whole contracts.
-        bought = buy_result.filled_size or size
+        bought = buy_result.filled_size if buy_result.filled_size is not None else size
         hedge_size = math.floor(bought) if sell_platform == "kalshi" else bought
         sell_result: OrderResult | None = None
         if hedge_size > 0:
@@ -898,7 +898,11 @@ class ArbitrageEngine:
 
         sold = 0.0
         if sell_result is not None and sell_result.filled_price is not None:
-            sold = sell_result.filled_size or hedge_size
+            sold = (
+                sell_result.filled_size
+                if sell_result.filled_size is not None
+                else hedge_size
+            )
         if (
             sell_result is None
             or sell_result.filled_price is None
@@ -926,7 +930,11 @@ class ArbitrageEngine:
         # P&L and position rows use the size that actually traded.
         size = bought
 
-        actual_spread = sell_result.filled_price - buy_result.filled_price
+        sell_price_yes = sell_result.filled_price
+        if sell_result.book == "NO":
+            # Translated Polymarket sell: filled on the NO book.
+            sell_price_yes = round(1.0 - sell_price_yes, 6)
+        actual_spread = sell_price_yes - buy_result.filled_price
         total_fees = (buy_result.fee_paid or 0) + (sell_result.fee_paid or 0)
         actual_pnl = round(actual_spread * size - total_fees, 4)
 
@@ -952,8 +960,8 @@ class ArbitrageEngine:
                     entry_size, exit_price, exit_size, realized_pnl, fees_paid,
                     pnl_model, status, opened_at, closed_at, updated_at)
                    VALUES (?, ?, ?, ?, 'BUY', 'YES', ?, ?, ?, ?, ?, ?, 'realistic', 'closed', ?, ?, ?)""",
-                # TODO[no-naked-shorts]: when the translated-NO path becomes live
-                # for arbs, propagate the resolved book here instead of 'YES'.
+                # Recorded in YES-price space: a translated (NO-book) sell's
+                # fill is converted above, so book stays 'YES'.
                 (
                     pos_id,
                     signal_id,
@@ -961,7 +969,7 @@ class ArbitrageEngine:
                     strategy,
                     buy_result.filled_price,
                     size,
-                    sell_result.filled_price,
+                    sell_price_yes,
                     size,
                     actual_pnl,
                     total_fees,
@@ -1046,7 +1054,7 @@ class ArbitrageEngine:
             actual_pnl,
             total_fees,
             buy_result.filled_price,
-            sell_result.filled_price,
+            sell_price_yes,
         )
 
         return {
