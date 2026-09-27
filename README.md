@@ -29,7 +29,7 @@ A single async process drives everything: websocket-fed price streams, latency-s
                                  SQLite (WAL mode)
 ```
 
-**Tick path** (latency-sensitive): `core/engine/arb_engine.py` reacts to every websocket price update. It checks the matched-pair book for cross-platform violations, sizes with Kelly, runs risk checks, and submits orders with exponential-backoff retries.
+**Tick path** (latency-sensitive): `core/engine/arb_engine.py` reacts to every websocket price update. It checks the matched-pair book for cross-platform violations, looks up each leg's live taker-fee curve (`execution/market_data.py`, `core/engine/fees.py`), skips spreads that don't clear fees, sizes with Kelly on the net-of-fee edge, runs risk checks, and submits orders with exponential-backoff retries.
 
 **Scheduled path** (every `--interval` seconds): `core/engine/scheduler.py` runs position lifecycle work — settle resolved markets, mark-to-market close expired holdings, reconcile internal state (orphaned positions, stuck pending orders, unbalanced arb legs), check invariants, then scan for P2–P5 opportunities.
 
@@ -206,6 +206,8 @@ All settings load from environment variables. Key ones (see `core/config.py` for
 | `MAX_PORTFOLIO_EXPOSURE_PCT` | `0.20` | See Risk Controls. |
 | `KELLY_FRACTION` | `0.25` | Fractional Kelly. |
 | `MIN_SPREAD_CROSS_PLATFORM` | `0.03` | Overrides `--min-spread`. Set to `99.0` to pause P1. |
+| `ARB_MIN_NET_PROFIT` | `0.0` | Minimum expected P1 profit in dollars after both venues' taker fees. Net must always be strictly positive. |
+| `KALSHI_PUBLIC_API_BASE` | `https://api.elections.kalshi.com/trade-api/v2` | Host for public Kalshi reads (fee metadata, order books). |
 | `STRATEGY_P{2,3,4,5}_ENABLED` | `true` | Per-label kill. |
 | `LOG_FORMAT` | `text` | `json` for structured prod logging. |
 | `DASHBOARD_PASSWORD` | — | Secret Manager value that enables HTTP Basic Auth on the dashboard in production. |

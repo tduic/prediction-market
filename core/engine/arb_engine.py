@@ -16,9 +16,11 @@ from datetime import datetime, timezone
 import aiosqlite
 
 from core.config import RiskControlConfig, get_config
+from core.engine.fees import arb_economics, unit_net_edge
 from core.engine.fire_state import PairFireState, _RiskLeg, _RiskSignal
 from execution.clients.base import BaseExecutionClient, OrderResult
 from execution.enums import Side
+from execution.market_data import get_market_data
 from execution.models import OrderLeg
 
 logger = logging.getLogger(__name__)
@@ -80,6 +82,10 @@ class ArbitrageEngine:
         # Count of fires suppressed because one side's cached price was
         # older than risk_config.max_price_age_s. Surfaced in stats().
         self._skipped_stale: int = 0
+        # Fee gate counters: fee metadata unavailable (fail closed) and
+        # spreads that don't clear fees / the net-profit floor.
+        self._skipped_fee_unknown: int = 0
+        self._skipped_unprofitable: int = 0
 
         # Build pair indexes for O(1) lookup on price update
         # poly_id -> list of (kalshi_id, match_dict)
@@ -553,9 +559,32 @@ class ArbitrageEngine:
             )
             return None
 
-        edge = spread
+        # Fee gate: both venues charge price-dependent taker fees, so a raw
+        # spread above min_spread can still lose money. Unknown fee metadata
+        # fails closed.
+        market_data = get_market_data()
+        buy_fees = await market_data.fee_params(self.db, buy_id)
+        sell_fees = await market_data.fee_params(self.db, sell_id)
+        if buy_fees is None or sell_fees is None:
+            self._skipped_fee_unknown += 1
+            logger.info("FEE_UNKNOWN pair=%s — skipping (fail closed)", pair_id)
+            return None
+        try:
+            edge = unit_net_edge(buy_price, sell_price, buy_fees, sell_fees)
+        except ValueError:
+            logger.warning("Invalid prices for fee model on pair=%s", pair_id)
+            return None
+        if edge <= 0:
+            self._skipped_unprofitable += 1
+            logger.debug(
+                "FEES_EXCEED_SPREAD pair=%s spread=%.4f net_edge=%.4f",
+                pair_id,
+                spread,
+                edge,
+            )
+            return None
 
-        # Phase 2.3: Kelly-based position sizing (replaces hardcoded min(10, 100*edge)).
+        # Phase 2.3: Kelly-based position sizing on the net-of-fee edge.
         # Use live portfolio value so Kelly scales with account growth/drawdown.
         kelly_f = compute_kelly_fraction(edge, self._risk_config.kelly_fraction)
         bankroll = await get_portfolio_value(
@@ -566,6 +595,19 @@ class ArbitrageEngine:
         if size <= 0:
             logger.debug(
                 "Kelly sizing produced zero size for edge=%.4f — skipping", edge
+            )
+            return None
+
+        econ = arb_economics(buy_price, sell_price, size, buy_fees, sell_fees)
+        min_net = max(0.0, self._risk_config.arb_min_net_profit)
+        if econ is None or econ.net <= min_net:
+            self._skipped_unprofitable += 1
+            logger.debug(
+                "BELOW_NET_PROFIT_FLOOR pair=%s size=%.1f net=%s floor=%.2f",
+                pair_id,
+                size,
+                None if econ is None else round(econ.net, 4),
+                min_net,
             )
             return None
 
@@ -596,9 +638,9 @@ class ArbitrageEngine:
                     buy_price,
                     sell_price,
                     spread,
-                    spread - 0.02,
-                    buy_price * 0.02,
-                    sell_price * 0.02,
+                    econ.net_edge_per_contract,
+                    econ.buy_fee,
+                    econ.sell_fee,
                     now,
                     now,
                 ),
@@ -810,12 +852,12 @@ class ArbitrageEngine:
                         buy_id,
                         sell_id,
                         edge,
-                        round(edge * size, 4),
+                        round(econ.net, 4),
                         actual_pnl,
                         total_fees,
                         (
-                            round((actual_pnl / (edge * size)) * 100, 1)
-                            if edge * size > 0
+                            round((actual_pnl / econ.net) * 100, 1)
+                            if econ.net > 0
                             else 0
                         ),
                         _sell_done_ms - _trade_start_ms,
@@ -934,4 +976,6 @@ class ArbitrageEngine:
             ),
             "ws_last_tick_age_ms_by_platform": tick_age,
             "skipped_stale": self._skipped_stale,
+            "skipped_fee_unknown": self._skipped_fee_unknown,
+            "skipped_unprofitable": self._skipped_unprofitable,
         }

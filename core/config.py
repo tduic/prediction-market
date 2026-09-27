@@ -191,6 +191,11 @@ class RiskControlConfig:
     pnl_sanity_cap_ratio: float = field(
         default_factory=lambda: float(os.getenv("PNL_SANITY_CAP_RATIO", "0.10"))
     )
+    # P1 arb: minimum expected net profit (after venue taker fees) in dollars.
+    # A trade must clear max(0, this) — net must always be strictly positive.
+    arb_min_net_profit: float = field(
+        default_factory=lambda: float(os.getenv("ARB_MIN_NET_PROFIT", "0.0"))
+    )
     reconcile_every: int = field(
         default_factory=lambda: int(os.getenv("RECONCILE_EVERY", "5"))
     )
