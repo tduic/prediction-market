@@ -338,10 +338,65 @@ class TestLimitOrderRejection:
         assert "below limit" in result.error_message
 
 
+async def _fill(db, market_id, platform, price, size=10.0, **client_kwargs):
+    await _seed_market_with_price(db, market_id, platform, price)
+    await _create_signal(db, f"sig_{market_id}", market_id)
+    client = PaperExecutionClient(
+        db, platform_label=f"paper_{platform}", **client_kwargs
+    )
+    leg = OrderLeg(
+        market_id=market_id,
+        platform=platform,
+        side="BUY",
+        size=size,
+        limit_price=min(price + 0.05, 0.99),
+        order_type="LIMIT",
+    )
+    return await client.submit_order(leg, signal_id=f"sig_{market_id}")
+
+
+@pytest.mark.asyncio
+class TestVenueFeeCurves:
+    """Without an explicit fee_rate, paper fills use the venue fee curve."""
+
+    async def test_kalshi_quadratic_fee_rounded_up_to_cent(self, db):
+        from core.engine.fees import kalshi_params
+        from execution.market_data import StaticMarketData, set_market_data
+
+        set_market_data(StaticMarketData(fees={"kalshi": kalshi_params(1.0)}))
+        result = await _fill(db, "kal_curve", "kalshi", 0.50, size=100.0)
+        assert result.fee_paid == 1.75
+
+    async def test_polymarket_fd_fee(self, db):
+        from core.engine.fees import polymarket_params
+        from execution.market_data import StaticMarketData, set_market_data
+
+        set_market_data(
+            StaticMarketData(fees={"polymarket": polymarket_params(0.05, 1.0)})
+        )
+        result = await _fill(db, "poly_curve", "polymarket", 0.40)
+        assert result.fee_paid == 0.12
+
+    async def test_unknown_fee_metadata_falls_back_to_flat_rate(self, db):
+        from execution.market_data import StaticMarketData, set_market_data
+
+        class _NoFees(StaticMarketData):
+            async def fee_params(self, db, market_id):
+                return None
+
+        set_market_data(_NoFees())
+        result = await _fill(db, "kal_flat", "kalshi", 0.50)
+        assert result.fee_paid == round(10.0 * 0.50 * 0.07, 4)
+
+    async def test_explicit_fee_rate_override_stays_flat(self, db):
+        result = await _fill(db, "kal_override", "kalshi", 0.50, fee_rate=0.01)
+        assert result.fee_paid == round(10.0 * 0.50 * 0.01, 4)
+
+
 @pytest.mark.asyncio
 class TestFeeCalculation:
     async def test_polymarket_fee_rate(self, db):
-        """Polymarket uses 2% fee rate."""
+        """Polymarket fee follows the fd curve (test stub: r=0.03, e=1)."""
         await _seed_market_with_price(db, "mkt_fee_pm", "polymarket", 0.50)
         signal_id = "sig_fee_pm"
         await _create_signal(db, signal_id, "mkt_fee_pm")
@@ -358,11 +413,11 @@ class TestFeeCalculation:
         result = await client.submit_order(leg, signal_id=signal_id)
         await db.commit()
 
-        expected_fee = round(10.0 * 0.50 * 0.02, 4)
+        expected_fee = 0.075  # 10 * 0.03 * 0.5 * 0.5
         assert result.fee_paid == expected_fee
 
     async def test_kalshi_fee_rate(self, db):
-        """Kalshi uses 7% fee rate."""
+        """Kalshi fee is 0.07 * C * P(1-P), rounded up to the cent."""
         await _seed_market_with_price(db, "mkt_fee_ka", "kalshi", 0.50)
         signal_id = "sig_fee_ka"
         await _create_signal(db, signal_id, "mkt_fee_ka")
@@ -379,7 +434,7 @@ class TestFeeCalculation:
         result = await client.submit_order(leg, signal_id=signal_id)
         await db.commit()
 
-        expected_fee = round(10.0 * 0.50 * 0.07, 4)
+        expected_fee = 0.18  # ceil(0.07 * 10 * 0.25 = 0.175)
         assert result.fee_paid == expected_fee
 
 

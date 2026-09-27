@@ -15,9 +15,11 @@ import uuid
 
 import aiosqlite
 
+from core.engine.fees import taker_fee
 from execution.clients.base import BaseExecutionClient, OrderResult
 from execution.clients.polymarket_book import BookResolver, ResolvedOrder
 from execution.enums import Book, Side
+from execution.market_data import get_market_data
 from execution.models import OrderLeg
 
 logger = logging.getLogger(__name__)
@@ -83,6 +85,25 @@ class PaperExecutionClient(BaseExecutionClient):
         # Stats
         self.total_submitted = 0
         self.total_filled = 0
+
+    async def _fee_for_fill(self, market_id: str, size: float, price: float) -> float:
+        """Venue taker fee for a simulated fill.
+
+        An explicit ``fee_rate`` keeps the legacy flat model. Otherwise use the
+        market's live fee curve (Kalshi quadratic / Polymarket fd), falling
+        back to the flat platform rate when metadata is unavailable — paper
+        fills never block on fee discovery.
+        """
+        if self._fee_rate_override is not None:
+            return round(size * price * self._fee_rate_override, 4)
+        try:
+            params = await get_market_data().fee_params(self.db, market_id)
+            if params is not None:
+                return taker_fee(params, size, price)
+        except (ValueError, aiosqlite.Error) as e:
+            logger.debug("[PAPER] fee curve unavailable for %s: %s", market_id, e)
+        base_platform = self.platform_label.replace("paper_", "")
+        return round(size * price * FEE_RATES.get(base_platform, 0.02), 4)
 
     async def _get_current_price(
         self, market_id: str, book: Book = Book.YES
@@ -315,13 +336,7 @@ class PaperExecutionClient(BaseExecutionClient):
         )
         slippage = abs(filled_price - reference_price)
 
-        # Use override fee rate if provided, else platform default
-        if self._fee_rate_override is not None:
-            fee_rate = self._fee_rate_override
-        else:
-            base_platform = self.platform_label.replace("paper_", "")
-            fee_rate = FEE_RATES.get(base_platform, 0.02)
-        fee_paid = round(filled_size * filled_price * fee_rate, 4)
+        fee_paid = await self._fee_for_fill(leg.market_id, filled_size, filled_price)
 
         self.total_filled += 1
 
