@@ -141,12 +141,21 @@ Every risk check result is logged to `risk_check_log` for audit. Enforced inline
 | Max position size | `MAX_POSITION_PCT` | 5% | $500 per trade |
 | Daily loss limit | `MAX_DAILY_LOSS_PCT` | 2% | $200/day |
 | Portfolio exposure cap | `MAX_PORTFOLIO_EXPOSURE_PCT` | 20% | $2,000 total deployed |
-| Minimum edge | `MIN_EDGE_TO_TRADE` | 2% | Signal must clear 2% edge |
+| Minimum edge | `MIN_EDGE_TO_TRADE` | 2% | Gross spread must clear 2% (fees are enforced separately by the P1 fee gate) |
 | Duplicate window | `DUPLICATE_SIGNAL_WINDOW_S` | 300s | No repeat trades within 5 min |
 | Kelly fraction | `KELLY_FRACTION` | 0.25 | Quarter-Kelly sizing |
 | Consecutive failures | `CONSECUTIVE_FAILURE_LIMIT` | 5 | Halt after N back-to-back order failures |
 
 A daily-loss circuit breaker (`execution/circuit_breaker.py`) halts the whole process — both the tick engine and the scheduled runner — when the daily loss limit is breached. Halt is sticky; it clears at the next UTC midnight.
+
+**P1 pre-trade gates** (`core/engine/arb_engine.py`), in order: live taker-fee curves for both legs (`execution/market_data.py`, `core/engine/fees.py`) — the net-of-fee edge must be positive and Kelly sizes on it; size is capped to what both order books can fill at our limits and floored to whole contracts; the exact net profit at that size must exceed `ARB_MIN_NET_PROFIT`. Unknown fees or depth, or a lookup slower than `ARB_PRETRADE_LOOKUP_TIMEOUT_S`, skip the trade.
+
+**Execution halt** (`core/engine/execution_control.py`): a second, persistent halt that never clears itself. It trips when the engine can't be sure what it holds — an order whose fill state is unknown (`status=pending`, never retried) or an arb whose hedge leg didn't fully fill. The hedge leg is only sent after the buy fills, sized to the actual fill. While halted no strategy sends orders, `/api/system-health` reports `critical`, and a CRITICAL alert fires. After reconciling both venues:
+
+```bash
+python scripts/clear_halt.py --status
+python scripts/clear_halt.py --reason "flattened the Kalshi leg manually"
+```
 
 ## Key Components
 
@@ -159,7 +168,7 @@ A daily-loss circuit breaker (`execution/circuit_breaker.py`) halts the whole pr
 Pairs related markets across platforms using title normalization plus an inverted-index blocking strategy: tokenize every title, build a Kalshi token → market index, then score each Polymarket market against only the Kalshi candidates that share ≥2 meaningful tokens. Scoring combines Jaccard (0.50), `SequenceMatcher` ratio (0.30), and number-consistency (0.20), with semantic guards that hard-reject O/U-vs-N+ and threshold-mismatch false positives. Matched pairs persist in `market_pairs` and are loaded on restart — the heavy matching pass only runs when you explicitly call `scripts/refresh_markets.py` (and is trivially picked up by the running process via the 30-minute pair-refresh loop).
 
 ### Engine (`core/engine/`)
-- `arb_engine.py` — tick-driven P1 cross-platform arb. Retries on transient failures with exponential backoff, logs `UNBALANCED_ARB` when exactly one leg fills. `update_pairs()` supports hot-swapping the pair index while the engine is running (used by the weekly refresh loop).
+- `arb_engine.py` — tick-driven P1 cross-platform arb with the fee/depth gates above. Retries clean failures with exponential backoff (never unknown fills); halts execution on an unknown fill or incomplete hedge. `update_pairs()` supports hot-swapping the pair index while the engine is running (used by the weekly refresh loop).
 - `scheduler.py` — `ScheduledStrategyRunner.run_one_cycle()`: resolution → mark-to-market → reconciliation (every 5th) → invariants → P2–P5 scan.
 - `resolution.py` — closes positions for markets that settled (`markets.status IN ('resolved','closed')`), computes PnL at settlement price, sets `resolution_outcome`.
 - `reconciliation.py` — DB-level consistency: orphaned positions, stuck pending orders (>5 min), unbalanced arb pairs. Writes to `reconciliation_log`.
