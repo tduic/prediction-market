@@ -39,6 +39,10 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 _DB_PATH: str = "./data/prediction_market.db"
 
+# /api/system-health staleness thresholds (seconds)
+_GLOBAL_SIGNAL_STALE_S: int = 3600   # 1 h  — alert if no signal at all in this window
+_STRAT_SIGNAL_STALE_S: int = 3 * 3600  # 3 h  — alert if an individual strategy goes silent
+
 
 def configure(db_path: str) -> None:
     """Set the database path for all endpoints. Call before starting server."""
@@ -170,7 +174,7 @@ def _build_app(
         allow_headers=["*"],
     )
 
-    # ── helpers ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+    # ── helpers ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
     async def get_db() -> aiosqlite.Connection:
         db = await aiosqlite.connect(_DB_PATH)
@@ -197,7 +201,7 @@ def _build_app(
             if own_db:
                 await close_db(db)
 
-    # ── endpoints ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+    # ── endpoints ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
     @app.get("/api/overview")
     async def get_overview() -> dict[str, Any]:
@@ -1302,7 +1306,7 @@ def _build_app(
                         (datetime.now(timezone.utc) - last_sig).total_seconds()
                     )
                     result["last_signal_age_s"] = sig_age_s
-                    if sig_age_s > 3600:
+                    if sig_age_s > _GLOBAL_SIGNAL_STALE_S:
                         issues.append(f"signal_stale:{sig_age_s}s")
                 else:
                     result["last_signal_age_s"] = None
@@ -1343,7 +1347,6 @@ def _build_app(
                 )
                 strat_age_rows = await strat_age_cursor.fetchall()
                 strat_ages: dict[str, int | None] = {}
-                _STRAT_STALE_S = 3 * 3600  # 3 hours
                 for _row in strat_age_rows:
                     _strat = _row["strategy"]
                     _last = _row["last_at"]
@@ -1355,7 +1358,7 @@ def _build_app(
                             (datetime.now(timezone.utc) - _last_dt).total_seconds()
                         )
                         strat_ages[_strat] = _age_s
-                        if _age_s > _STRAT_STALE_S:
+                        if _age_s > _STRAT_SIGNAL_STALE_S:
                             issues.append(f"signal_stale:{_strat}:{_age_s}s")
                     else:
                         strat_ages[_strat] = None
@@ -1529,7 +1532,7 @@ def _build_app(
             if db is not None:
                 await close_db(db)
 
-    # ── Serve React frontend if static_dir provided ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+    # ── Serve React frontend if static_dir provided ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
     if static_dir and Path(static_dir).is_dir():
         app.mount(
             "/",
