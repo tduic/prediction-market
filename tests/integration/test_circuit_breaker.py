@@ -455,3 +455,36 @@ async def test_trip_logged_to_system_events(db):
     assert rows[0][0] == "CIRCUIT_BREAKER_TRIPPED"
     assert rows[0][1] == "critical"
     assert rows[0][2] == "circuit_breaker"
+
+
+@pytest.mark.asyncio
+async def test_daily_loss_cache_ttl_uses_injectable_clock(db):
+    """_get_daily_loss_cached must use self._clock() so TTL is controllable in tests.
+
+    Regression test for the bug where time.monotonic() was called directly,
+    bypassing the injectable clock and making the cache TTL non-deterministic.
+    """
+    breaker = DailyLossCircuitBreaker(
+        db=db, starting_capital=10_000, max_daily_loss_pct=0.02
+    )
+    fake_time = 0.0
+    breaker._clock = lambda: fake_time
+
+    # First call: no loss, caches 0.0 at t=0.
+    assert await breaker.should_halt() is False
+
+    # Seed a loss that exceeds the limit, but within the cache TTL window.
+    await _seed_loss(db, 300.0)
+
+    # Clock hasn't advanced — cached value (0.0) should still be served.
+    assert (
+        await breaker.should_halt() is False
+    ), "Cache should mask the new loss while TTL has not expired"
+
+    # Advance clock past the 5-second TTL.
+    fake_time = DailyLossCircuitBreaker._DAILY_LOSS_CACHE_TTL_S + 1.0
+
+    # Now the cache is stale; fresh DB query should find the $300 loss and trip.
+    assert (
+        await breaker.should_halt() is True
+    ), "Breaker must trip after cache TTL expires and fresh DB query finds the loss"

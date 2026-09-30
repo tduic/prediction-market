@@ -117,14 +117,11 @@ def compute_risk_adjusted_sizing(
         volatility_multiplier = 1.0 - (volatility * 0.5)  # Up to 50% reduction
         base_size *= volatility_multiplier
 
-    # Apply confidence adjustment (lower confidence = smaller position)
+    # Apply confidence adjustment (lower confidence = smaller position;
+    # floor at 0.5 so low-confidence signals are halved but not zeroed)
     if confidence is not None:
         confidence = float(min(max(confidence, 0), 1))
-        # Confidence should be > 0.5 to justify position
-        if confidence < 0.5:
-            base_size *= 0.5  # 50% reduction if confidence < 0.5
-        else:
-            base_size *= confidence
+        base_size *= max(0.5, confidence)
 
     # Final cap
     base_size = min(base_size, max_size)
