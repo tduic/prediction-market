@@ -250,10 +250,10 @@ class StrategyScorecard:
         Returns:
             Dict mapping strategy names to their summary metrics
         """
-        from core.strategies.assignment import STRATEGIES as strategies
+        from core.strategies.assignment import STRATEGIES
 
         comparison = {}
-        for strat in strategies:
+        for strat in STRATEGIES:
             try:
                 summary = await self.get_strategy_summary(strategy=strat, days=days)
                 if summary["total_trades"] > 0:  # Only include active strategies

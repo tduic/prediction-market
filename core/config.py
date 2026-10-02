@@ -82,19 +82,29 @@ class IngestorConfig:
     """Market data ingestor settings."""
 
     poll_interval_polymarket_s: int = field(
-        default_factory=lambda: int(os.getenv("POLL_INTERVAL_POLYMARKET_S", "30"))
+        default_factory=lambda: _bounded_positive_int_env(
+            "POLL_INTERVAL_POLYMARKET_S", 30, minimum=1, maximum=86400
+        )
     )
     poll_interval_kalshi_s: int = field(
-        default_factory=lambda: int(os.getenv("POLL_INTERVAL_KALSHI_S", "30"))
+        default_factory=lambda: _bounded_positive_int_env(
+            "POLL_INTERVAL_KALSHI_S", 30, minimum=1, maximum=86400
+        )
     )
     poll_interval_external_s: int = field(
-        default_factory=lambda: int(os.getenv("POLL_INTERVAL_EXTERNAL_S", "300"))
+        default_factory=lambda: _bounded_positive_int_env(
+            "POLL_INTERVAL_EXTERNAL_S", 300, minimum=1, maximum=86400
+        )
     )
     max_markets_per_poll: int = field(
-        default_factory=lambda: int(os.getenv("MAX_MARKETS_PER_POLL", "500"))
+        default_factory=lambda: _bounded_positive_int_env(
+            "MAX_MARKETS_PER_POLL", 500, minimum=1, maximum=100000
+        )
     )
     pair_refresh_interval_s: int = field(
-        default_factory=lambda: int(os.getenv("PAIR_REFRESH_INTERVAL_S", "1800"))
+        default_factory=lambda: _bounded_positive_int_env(
+            "PAIR_REFRESH_INTERVAL_S", 1800, minimum=1, maximum=86400
+        )
     )
 
 

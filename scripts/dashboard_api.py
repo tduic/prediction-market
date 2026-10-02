@@ -39,9 +39,19 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 _DB_PATH: str = "./data/prediction_market.db"
 
-# /api/system-health staleness thresholds (seconds)
-_GLOBAL_SIGNAL_STALE_S: int = 3600   # 1 h  — alert if no signal at all in this window
-_STRAT_SIGNAL_STALE_S: int = 3 * 3600  # 3 h  — alert if an individual strategy goes silent
+
+def _safe_int_env(name: str, default: int) -> int:
+    """Read an integer env var, falling back to default on invalid input."""
+    try:
+        return int(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        logger.warning("Invalid %s; using default %d", name, default)
+        return default
+
+
+# /api/system-health staleness thresholds (seconds) — tunable via env vars
+_GLOBAL_SIGNAL_STALE_S: int = _safe_int_env("DASHBOARD_GLOBAL_SIGNAL_STALE_S", 3600)
+_STRAT_SIGNAL_STALE_S: int = _safe_int_env("DASHBOARD_STRAT_SIGNAL_STALE_S", 10800)
 
 
 def configure(db_path: str) -> None:

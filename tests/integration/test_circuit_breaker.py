@@ -367,9 +367,9 @@ async def test_load_state_respects_reset_after_trip(db):
     await breaker.load_state()
 
     state = await breaker.get_state()
-    assert (
-        state.tripped is False
-    ), "load_state should NOT restore tripped when the most recent event today is a RESET"
+    assert state.tripped is False, (
+        "load_state should NOT restore tripped when the most recent event today is a RESET"
+    )
 
 
 @pytest.mark.asyncio
@@ -477,14 +477,14 @@ async def test_daily_loss_cache_ttl_uses_injectable_clock(db):
     await _seed_loss(db, 300.0)
 
     # Clock hasn't advanced — cached value (0.0) should still be served.
-    assert (
-        await breaker.should_halt() is False
-    ), "Cache should mask the new loss while TTL has not expired"
+    assert await breaker.should_halt() is False, (
+        "Cache should mask the new loss while TTL has not expired"
+    )
 
     # Advance clock past the 5-second TTL.
     fake_time = DailyLossCircuitBreaker._DAILY_LOSS_CACHE_TTL_S + 1.0
 
     # Now the cache is stale; fresh DB query should find the $300 loss and trip.
-    assert (
-        await breaker.should_halt() is True
-    ), "Breaker must trip after cache TTL expires and fresh DB query finds the loss"
+    assert await breaker.should_halt() is True, (
+        "Breaker must trip after cache TTL expires and fresh DB query finds the loss"
+    )
