@@ -377,7 +377,7 @@ class TestP5InformationLatency:
 class TestP2StructuredEvent:
     async def test_over_sum_triggers_sell(self, db):
         for i, (month, price) in enumerate(
-            zip(["January", "March", "June"], [0.42, 0.40, 0.38])
+            zip(["January", "March", "June"], [0.42, 0.40, 0.38], strict=True)
         ):
             await _seed_market(
                 db,
@@ -393,7 +393,7 @@ class TestP2StructuredEvent:
 
     async def test_sum_below_threshold_no_p2(self, db):
         for i, (quarter, price) in enumerate(
-            zip(["Q1", "Q2", "Q3"], [0.30, 0.28, 0.30])
+            zip(["Q1", "Q2", "Q3"], [0.30, 0.28, 0.30], strict=True)
         ):
             await _seed_market(
                 db,
@@ -441,7 +441,7 @@ class TestP2StructuredEvent:
     async def test_most_overpriced_selected(self, db):
         prices = [0.55, 0.38, 0.32]
         mids = []
-        for i, (month, price) in enumerate(zip(["January", "March", "June"], prices)):
+        for i, (month, price) in enumerate(zip(["January", "March", "June"], prices, strict=True)):
             mid = f"kal_unemp_{i}"
             mids.append(mid)
             await _seed_market(

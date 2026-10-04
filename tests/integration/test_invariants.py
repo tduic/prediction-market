@@ -22,7 +22,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from core.invariants import (
     InvariantResult,
-    InvariantViolation,
+    InvariantViolationError,
     check_all_invariants,
     check_engine_state,
     check_fee_ratio,
@@ -329,7 +329,7 @@ class TestCheckAllInvariants:
     async def test_halt_mode_raises_on_violation(self, db):
         await _seed_signal(db, "sig1")
         await _seed_closed_position(db, signal_id="sig1", realized_pnl=9999.0)
-        with pytest.raises(InvariantViolation):
+        with pytest.raises(InvariantViolationError):
             await check_all_invariants(db, mode="halt")
 
     async def test_halt_mode_passes_on_clean_db(self, db):

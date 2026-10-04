@@ -7,7 +7,7 @@ sites. Failures are:
   - Logged at WARNING level
   - Persisted to the invariant_violations table
   - Sent to Discord (if an alert_manager is provided)
-  - Raised as InvariantViolation when mode="halt" (requires human restart)
+  - Raised as InvariantViolationError when mode="halt" (requires human restart)
 
 Usage::
 
@@ -43,7 +43,7 @@ class InvariantResult:
     severity: str = "critical"
 
 
-class InvariantViolation(RuntimeError):
+class InvariantViolationError(RuntimeError):
     """Raised by check_all_invariants when mode='halt' and any check fails."""
 
 
@@ -245,14 +245,14 @@ async def check_all_invariants(
         db: Active aiosqlite connection with the full schema applied.
         arb_engine: Optional ArbitrageEngine for in-memory state checks.
         mode: "warn" -- log and return results without raising.
-              "halt" -- raise InvariantViolation on the first failure.
+              "halt" -- raise InvariantViolationError on the first failure.
         alert_manager: Optional AlertManager to send Discord alerts on failure.
 
     Returns:
         List of InvariantResult, one per check run.
 
     Raises:
-        InvariantViolation: If mode="halt" and any check fails.
+        InvariantViolationError: If mode="halt" and any check fails.
     """
     async_checks = [
         check_pnl_sanity(db),
@@ -319,7 +319,7 @@ async def check_all_invariants(
             first_failure = result
 
     if mode == "halt" and first_failure is not None:
-        raise InvariantViolation(
+        raise InvariantViolationError(
             f"Invariant '{first_failure.name}' violated: {first_failure.message}. "
             "System halted -- human intervention required."
         )

@@ -96,7 +96,7 @@ class StrategyScorecard:
             # Parse trades
             trades = []
             for row in rows:
-                trade_dict = dict(zip(cols, row))
+                trade_dict = dict(zip(cols, row, strict=True))
                 trades.append(trade_dict)
 
             # Compute metrics
