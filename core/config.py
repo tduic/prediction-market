@@ -402,6 +402,21 @@ class Config:
                 f"STRATEGY_REPLAY_MIN_MOVE must be > 0, "
                 f"got {self.risk_controls.strategy_replay_min_move}"
             )
+        if self.risk_controls.strategy_replay_cooldown_s < 0:
+            raise ValueError(
+                f"STRATEGY_REPLAY_COOLDOWN_S must be >= 0, "
+                f"got {self.risk_controls.strategy_replay_cooldown_s}"
+            )
+        if self.risk_controls.arb_pretrade_lookup_timeout_s <= 0:
+            raise ValueError(
+                f"ARB_PRETRADE_LOOKUP_TIMEOUT_S must be > 0, "
+                f"got {self.risk_controls.arb_pretrade_lookup_timeout_s}"
+            )
+        if self.risk_controls.arb_min_fill_size <= 0:
+            raise ValueError(
+                f"ARB_MIN_FILL_SIZE must be > 0, "
+                f"got {self.risk_controls.arb_min_fill_size}"
+            )
 
         if (
             self.risk_controls.max_position_pct
