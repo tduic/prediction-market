@@ -6,7 +6,7 @@ exercised here is guaranteed to match the production DB.
 """
 
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timezone, UTC
 from pathlib import Path
 
 import aiosqlite
@@ -61,7 +61,7 @@ async def db():
 @pytest_asyncio.fixture
 async def db_with_markets(db):
     """DB pre-loaded with a small set of Polymarket + Kalshi markets and prices."""
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
 
     poly_markets = [
         (

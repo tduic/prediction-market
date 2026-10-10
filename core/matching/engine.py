@@ -18,7 +18,7 @@ import logging
 import re
 import time
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timezone, UTC
 from difflib import SequenceMatcher
 
 import aiosqlite
@@ -356,7 +356,7 @@ async def persist_matches(db: aiosqlite.Connection, matches: list[dict]) -> int:
     notes='pending_review' so they never flow into the arb engine until a
     human (or automated review) verifies the match.
     """
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     rows = []
     for m in matches:
         pair_id = f"{m['poly_id']}_{m['kalshi_id']}"

@@ -6,7 +6,7 @@ limit order rejection, fee calculation, and DB writes.
 """
 
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timezone, UTC
 from pathlib import Path
 
 import pytest
@@ -29,7 +29,7 @@ def _disable_live_price_fetches_for_paper_tests(monkeypatch):
 
 
 async def _seed_market_with_price(db, market_id, platform, price):
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     await db.execute(
         """INSERT OR IGNORE INTO markets
            (id, platform, platform_id, title, status, created_at, updated_at)
@@ -47,7 +47,7 @@ async def _seed_market_with_price(db, market_id, platform, price):
 
 async def _create_signal(db, signal_id, market_id):
     """Create a minimal valid signal record for FK constraints."""
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     await db.execute(
         """INSERT INTO signals
            (id, violation_id, strategy, signal_type, market_id_a,
@@ -112,7 +112,7 @@ class TestPaperOrderSubmission:
 
     async def test_no_price_with_limit_uses_limit(self, db):
         """When no DB price exists, fills at limit price."""
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         await db.execute(
             """INSERT INTO markets
                (id, platform, platform_id, title, status, created_at, updated_at)
@@ -140,7 +140,7 @@ class TestPaperOrderSubmission:
 
     async def test_no_price_no_limit_fails(self, db):
         """When no DB price and no limit price, order fails."""
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         await db.execute(
             """INSERT INTO markets
                (id, platform, platform_id, title, status, created_at, updated_at)
@@ -217,7 +217,7 @@ class TestInvalidPriceFallback:
 
     async def test_db_zero_price_falls_back_to_limit(self, db, monkeypatch):
         """A stale 0.0 row in market_prices is treated as 'no price'."""
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         await db.execute(
             """INSERT INTO markets
                (id, platform, platform_id, title, status, created_at, updated_at)
@@ -259,7 +259,7 @@ class TestInvalidPriceFallback:
 
     async def test_invalid_price_no_limit_fails(self, db, monkeypatch):
         """No valid price and no limit → order fails (not filled at 0)."""
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         await db.execute(
             """INSERT INTO markets
                (id, platform, platform_id, title, status, created_at, updated_at)

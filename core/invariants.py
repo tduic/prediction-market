@@ -23,7 +23,7 @@ from __future__ import annotations
 import logging
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, UTC
 
 import aiosqlite
 
@@ -266,7 +266,7 @@ async def check_all_invariants(
     results: list[InvariantResult] = list(await asyncio.gather(*async_checks))
     results.append(check_engine_state(arb_engine))
 
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     first_failure: InvariantResult | None = None
 
     for result in results:
@@ -278,7 +278,7 @@ async def check_all_invariants(
         # Persist to DB -- deduplicate within 1-hour window so the same
         # persistent failure doesn't generate a new row every scheduler cycle.
         try:
-            dedup_cutoff = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+            dedup_cutoff = (datetime.now(UTC) - timedelta(hours=1)).isoformat()
             dup_cursor = await db.execute(
                 "SELECT 1 FROM invariant_violations "
                 "WHERE name = ? AND violated_at > ? LIMIT 1",

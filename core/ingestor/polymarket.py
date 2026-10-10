@@ -5,7 +5,7 @@ import hmac
 import logging
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timezone, UTC
 
 import httpx
 
@@ -22,7 +22,7 @@ class OrderBook:
     bids: list[dict] = field(default_factory=list)
     asks: list[dict] = field(default_factory=list)
     mid_price: float | None = None
-    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
 
     def compute_mid_price(self) -> None:
         """Compute mid price from top bid/ask."""
@@ -45,8 +45,8 @@ class MarketData:
     last_price: float
     last_price_no: float | None = None
     order_book: OrderBook | None = None
-    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     is_active: bool = True
     metadata: dict = field(default_factory=dict)
 

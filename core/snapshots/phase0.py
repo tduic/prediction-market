@@ -6,7 +6,7 @@ that subsequent phases can compare against as a reference point.
 """
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, UTC
 
 import aiosqlite
 
@@ -20,7 +20,7 @@ async def take_phase0_baseline_snapshot(db: aiosqlite.Connection) -> None:
     can compare against this reference. Safe to call multiple times — each
     call appends a new point-in-time row.
     """
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
 
     cursor = await db.execute("SELECT COUNT(*) FROM market_pairs")
     row = await cursor.fetchone()

@@ -1,6 +1,6 @@
 """LiveMarketData.executable_depth — quantity fillable within a leg's limit."""
 
-from datetime import datetime, timezone
+from datetime import datetime, timezone, UTC
 
 import httpx
 import pytest
@@ -38,7 +38,7 @@ KALSHI_BOOK = {
 
 
 async def _seed(db, market_id, platform, platform_id, yes_tok=None, no_tok=None):
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     await db.execute(
         "INSERT INTO markets (id, platform, platform_id, title, yes_token_id,"
         " no_token_id, created_at, updated_at) VALUES (?, ?, ?, 't', ?, ?, ?, ?)",

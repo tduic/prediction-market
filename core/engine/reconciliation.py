@@ -17,7 +17,7 @@ cycles). It commits its own writes.
 
 import logging
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, UTC
 
 import aiosqlite
 
@@ -81,7 +81,7 @@ async def _check_aged_open_positions(
 ) -> int:
     """Record each open position past the configurable operational threshold."""
     threshold_s = get_config().risk_controls.aged_position_alert_threshold_s
-    cutoff = (datetime.now(timezone.utc) - timedelta(seconds=threshold_s)).isoformat()
+    cutoff = (datetime.now(UTC) - timedelta(seconds=threshold_s)).isoformat()
     cursor = await db.execute(
         """SELECT p.id, m.platform, p.market_id FROM positions p
            LEFT JOIN markets m ON m.id = p.market_id
@@ -312,7 +312,7 @@ async def _is_recently_logged(
     This prevents the same orphaned/stuck/unbalanced discrepancy from being
     logged on every reconciliation cycle when reconcile_every is small.
     """
-    cutoff = (datetime.now(timezone.utc) - timedelta(seconds=window_s)).isoformat()
+    cutoff = (datetime.now(UTC) - timedelta(seconds=window_s)).isoformat()
     cursor = await db.execute(
         "SELECT COUNT(*) FROM reconciliation_log "
         "WHERE check_type = ? AND detail = ? AND checked_at >= ?",
@@ -352,7 +352,7 @@ async def _log_discrepancy(
                 status,
                 detail,
                 action_taken,
-                datetime.now(timezone.utc).isoformat(),
+                datetime.now(UTC).isoformat(),
             ),
         )
     except Exception as e:
@@ -375,8 +375,8 @@ async def _check_signals_without_orders(db: aiosqlite.Connection) -> int:
     whose order rows haven't been written yet. Bounded to the last 30 days
     to avoid a full-table scan as the signals table grows.
     """
-    cutoff_30d = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
-    grace_period = (datetime.now(timezone.utc) - timedelta(seconds=60)).isoformat()
+    cutoff_30d = (datetime.now(UTC) - timedelta(days=30)).isoformat()
+    grace_period = (datetime.now(UTC) - timedelta(seconds=60)).isoformat()
     cursor = await db.execute(
         """
         SELECT s.id, s.strategy, s.fired_at
@@ -417,7 +417,7 @@ async def _check_closed_without_outcomes(db: aiosqlite.Connection) -> int:
     Bounded to the last 30 days via updated_at to avoid false positives from
     legacy positions written before this relationship was enforced.
     """
-    cutoff_30d = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+    cutoff_30d = (datetime.now(UTC) - timedelta(days=30)).isoformat()
     cursor = await db.execute(
         """
         SELECT p.id, p.signal_id, p.market_id, p.closed_at

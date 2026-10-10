@@ -6,7 +6,7 @@ import json
 import sqlite3
 from collections.abc import Generator
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timezone, UTC
 from pathlib import Path
 from typing import Any
 
@@ -85,7 +85,7 @@ class EventBus:
         event = {
             "type": event_type,
             "data": data,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         }
         self.events.append(event)
 

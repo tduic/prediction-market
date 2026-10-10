@@ -24,7 +24,7 @@ import logging
 import time
 from collections import deque
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone, UTC
 from typing import Any
 
 import aiosqlite
@@ -303,7 +303,7 @@ class DailyLossCircuitBreaker:
 
     @staticmethod
     def _today() -> str:
-        return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        return datetime.now(UTC).strftime("%Y-%m-%d")
 
     def _daily_loss_limit(self) -> float:
         return self.starting_capital * self.max_daily_loss_pct
@@ -414,7 +414,7 @@ class DailyLossCircuitBreaker:
             return
         self._tripped = True
         self._reason = reason
-        self._tripped_at = datetime.now(timezone.utc).isoformat()
+        self._tripped_at = datetime.now(UTC).isoformat()
         logger.error("CIRCUIT BREAKER TRIPPED: %s", reason)
         await self._log_event(
             "CIRCUIT_BREAKER_TRIPPED",
@@ -453,7 +453,7 @@ class DailyLossCircuitBreaker:
                     "circuit_breaker",
                     detail,
                     json.dumps(context) if context else None,
-                    datetime.now(timezone.utc).isoformat(),
+                    datetime.now(UTC).isoformat(),
                 ),
             )
             await self.db.commit()

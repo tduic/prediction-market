@@ -13,7 +13,7 @@ Every check result is logged to the risk_check_log table for audit.
 import asyncio
 import logging
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone, UTC
 from typing import Any
 
 import aiosqlite
@@ -141,7 +141,7 @@ async def check_daily_loss_limit(
         )
 
     try:
-        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        today = datetime.now(UTC).strftime("%Y-%m-%d")
         tomorrow = (date.fromisoformat(today) + timedelta(days=1)).isoformat()
         # Match circuit_breaker._compute_daily_loss() exactly: net = pnl - fees,
         # loss = max(0, -net). Range comparison allows index on created_at.
@@ -272,11 +272,7 @@ async def check_duplicate_signal(
         # computing CAST on every row (same pattern as
         # reconciliation._check_stuck_pending_orders).
         cutoff_str = str(
-            int(
-                (
-                    datetime.now(timezone.utc) - timedelta(seconds=duplicate_window_s)
-                ).timestamp()
-            )
+            int((datetime.now(UTC) - timedelta(seconds=duplicate_window_s)).timestamp())
         )
         cursor = await db.execute(
             f"SELECT COUNT(*) FROM orders "
@@ -415,7 +411,7 @@ async def _log_risk_checks(
     """
     signal_id = None
     violation_id = getattr(signal, "violation_id", None)
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
 
     try:
         await db.executemany(

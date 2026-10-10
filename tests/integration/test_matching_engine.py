@@ -19,7 +19,7 @@ Covers:
 """
 
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timezone, UTC
 from pathlib import Path
 
 import pytest
@@ -43,7 +43,7 @@ from core.matching.engine import (
 
 
 async def _seed_market(db, mid, platform, title, yes_price=0.50):
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     await db.execute(
         "INSERT OR IGNORE INTO markets "
         "(id, platform, platform_id, title, status, created_at, updated_at) "
@@ -59,7 +59,7 @@ async def _seed_market(db, mid, platform, title, yes_price=0.50):
 
 
 async def _seed_pair(db, pair_id, poly_id, kalshi_id, active=1, notes=None):
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     await db.execute(
         "INSERT OR IGNORE INTO market_pairs "
         "(id, market_id_a, market_id_b, pair_type, similarity_score, match_method, "
@@ -453,7 +453,7 @@ class TestFindMatches:
 @pytest.mark.asyncio
 class TestPersistMatchesSpreadCap:
     async def test_high_spread_pair_marked_pending_review(self, db):
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         for mid, platform in [("p1", "polymarket"), ("k1", "kalshi")]:
             await db.execute(
                 "INSERT OR IGNORE INTO markets (id, platform, platform_id, title, status, "
@@ -484,7 +484,7 @@ class TestPersistMatchesSpreadCap:
         assert row[1] == "pending_review"
 
     async def test_low_spread_pair_is_active(self, db):
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         for mid, platform in [("p2", "polymarket"), ("k2", "kalshi")]:
             await db.execute(
                 "INSERT OR IGNORE INTO markets (id, platform, platform_id, title, status, "
@@ -514,7 +514,7 @@ class TestPersistMatchesSpreadCap:
         assert row[0] == 1
 
     async def test_exactly_at_boundary_is_active(self, db):
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         for mid, platform in [("p3", "polymarket"), ("k3", "kalshi")]:
             await db.execute(
                 "INSERT OR IGNORE INTO markets (id, platform, platform_id, title, status, "
@@ -547,7 +547,7 @@ class TestPersistMatchesSpreadCap:
 @pytest.mark.asyncio
 class TestMarkExistingPairsPending:
     async def test_unreviewed_pairs_deactivated(self, db):
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         for i in range(3):
             for mid, platform in [(f"p{i}", "polymarket"), (f"k{i}", "kalshi")]:
                 await db.execute(
@@ -568,7 +568,7 @@ class TestMarkExistingPairsPending:
         assert row[0] == 3
 
     async def test_already_reviewed_pairs_unchanged(self, db):
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         for mid, platform in [("p_ok", "polymarket"), ("k_ok", "kalshi")]:
             await db.execute(
                 "INSERT OR IGNORE INTO markets (id, platform, platform_id, title, status, "
@@ -590,7 +590,7 @@ class TestMarkExistingPairsPending:
         assert row[1] == 1
 
     async def test_load_cached_excludes_pending_review(self, db):
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         for mid, platform, price in [
             ("p_pend", "polymarket", 0.50),
             ("k_pend", "kalshi", 0.52),
@@ -615,7 +615,7 @@ class TestMarkExistingPairsPending:
         assert ("p_pend", "k_pend") not in ids
 
     async def test_returns_count_of_deactivated(self, db):
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         for i in range(5):
             for mid, platform in [(f"px{i}", "polymarket"), (f"kx{i}", "kalshi")]:
                 await db.execute(

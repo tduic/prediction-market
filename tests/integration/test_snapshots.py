@@ -12,7 +12,7 @@ Covers:
 import subprocess
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone, UTC
 from pathlib import Path
 from unittest.mock import patch
 
@@ -48,7 +48,7 @@ def _make_match(poly_id, kalshi_id, poly_price, kalshi_price, similarity=0.85):
 
 
 async def _seed_markets(db, matches):
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     for m in matches:
         for mid, platform, price in [
             (m["poly_id"], "polymarket", m["poly_price"]),
@@ -79,7 +79,7 @@ async def _seed_markets(db, matches):
 
 
 async def _trigger_trade(engine, db, market_id, new_price):
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     await db.execute(
         """INSERT INTO market_prices
            (market_id, yes_price, no_price, spread, liquidity, polled_at)
@@ -295,7 +295,7 @@ class TestPhase0BaselineSnapshot:
     async def test_baseline_snapshot_captures_pair_count(self, db):
         from core.snapshots.phase0 import take_phase0_baseline_snapshot
 
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         for i in range(2):
             await db.execute(
                 "INSERT OR IGNORE INTO markets (id, platform, platform_id, title, status, created_at, updated_at) VALUES (?, 'polymarket', ?, 'T', 'open', ?, ?)",
@@ -327,7 +327,7 @@ class TestPhase0BaselineSnapshot:
     async def test_baseline_captures_strategy_pnl(self, db):
         from core.snapshots.phase0 import take_phase0_baseline_snapshot
 
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         await db.execute(
             "INSERT OR IGNORE INTO markets (id, platform, platform_id, title, status, created_at, updated_at) VALUES ('tm', 'polymarket', 'tm', 'T', 'open', ?, ?)",
             (now, now),

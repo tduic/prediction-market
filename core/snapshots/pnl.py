@@ -6,7 +6,7 @@ trading performance metrics and printing strategy-level analytics reports.
 """
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, UTC
 
 import aiosqlite
 
@@ -24,7 +24,7 @@ async def take_trading_snapshot(db: aiosqlite.Connection) -> int | None:
     This feeds the dashboard's overview cards, equity curve, strategy PnL chart,
     and risk metrics.
     """
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     starting_capital = get_config().risk_controls.starting_capital
 
     try:
@@ -51,7 +51,7 @@ async def take_trading_snapshot(db: aiosqlite.Connection) -> int | None:
         # ── Compute today's realized PnL and fees ──
         from datetime import date as _date
 
-        _today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        _today = datetime.now(UTC).strftime("%Y-%m-%d")
         _tomorrow = (_date.fromisoformat(_today) + timedelta(days=1)).isoformat()
         today_cursor = await db.execute(
             "SELECT COALESCE(SUM(actual_pnl),0), COALESCE(SUM(fees_total),0) "

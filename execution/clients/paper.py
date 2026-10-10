@@ -103,7 +103,7 @@ class PaperExecutionClient(BaseExecutionClient):
             )
             if params is not None:
                 return taker_fee(params, size, price)
-        except (ValueError, aiosqlite.Error, asyncio.TimeoutError) as e:
+        except (TimeoutError, ValueError, aiosqlite.Error) as e:
             logger.debug("[PAPER] fee curve unavailable for %s: %s", market_id, e)
         base_platform = self.platform_label.replace("paper_", "")
         return round(size * price * FEE_RATES.get(base_platform, 0.02), 4)

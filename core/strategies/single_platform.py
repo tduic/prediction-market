@@ -11,7 +11,7 @@ import re
 import statistics
 import uuid
 from collections import defaultdict
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, UTC
 
 import aiosqlite
 
@@ -93,7 +93,7 @@ async def _get_strategy_rolling_pnl(
     Only counts realistic-model closed positions (pnl_model='realistic').
     Used by the per-strategy kill-switch (5.6).
     """
-    cutoff = (datetime.now(timezone.utc) - timedelta(seconds=window_s)).isoformat()
+    cutoff = (datetime.now(UTC) - timedelta(seconds=window_s)).isoformat()
     cursor = await db.execute(
         "SELECT COUNT(*), COALESCE(SUM(realized_pnl), 0.0) "
         "FROM positions "
@@ -119,7 +119,7 @@ async def mark_and_close_positions(
 
     Returns the number of positions closed.
     """
-    now_dt = datetime.now(timezone.utc)
+    now_dt = datetime.now(UTC)
     cutoff = (now_dt - timedelta(seconds=holding_period_s)).isoformat()
     now = now_dt.isoformat()
 
@@ -239,7 +239,7 @@ async def mark_and_close_positions(
                 try:
                     opened_dt = datetime.fromisoformat(opened_at)
                     if opened_dt.tzinfo is None:
-                        opened_dt = opened_dt.replace(tzinfo=timezone.utc)
+                        opened_dt = opened_dt.replace(tzinfo=UTC)
                     holding_period_ms = int((now_dt - opened_dt).total_seconds() * 1000)
                 except Exception as e:
                     logger.debug(
@@ -275,10 +275,10 @@ async def mark_and_close_positions(
                         try:
                             fired_dt = datetime.fromisoformat(sig_fired_at)
                             if fired_dt.tzinfo is None:
-                                fired_dt = fired_dt.replace(tzinfo=timezone.utc)
+                                fired_dt = fired_dt.replace(tzinfo=UTC)
                             opened_dt = datetime.fromisoformat(opened_at)
                             if opened_dt.tzinfo is None:
-                                opened_dt = opened_dt.replace(tzinfo=timezone.utc)
+                                opened_dt = opened_dt.replace(tzinfo=UTC)
                             delta_ms = int(
                                 (opened_dt - fired_dt).total_seconds() * 1000
                             )
@@ -529,7 +529,7 @@ async def detect_single_platform_opportunities(
     _cooldown = _risk_cfg.strategy_replay_cooldown_s
     _min_move = _risk_cfg.strategy_replay_min_move
 
-    _cutoff = (datetime.now(timezone.utc) - timedelta(seconds=_cooldown)).isoformat()
+    _cutoff = (datetime.now(UTC) - timedelta(seconds=_cooldown)).isoformat()
     _recent_cursor = await db.execute(
         "SELECT market_id, entry_price FROM positions "
         "WHERE (status='open' OR (status='closed' AND closed_at >= ?)) "
@@ -622,7 +622,7 @@ async def detect_single_platform_opportunities(
     _bankroll = await get_portfolio_value(db, _risk_cfg.starting_capital)
 
     for opp in opportunities:
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         m = opp["market"]
         strategy = opp["strategy"]
         side = opp["side"]

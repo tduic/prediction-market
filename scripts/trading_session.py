@@ -19,7 +19,7 @@ import logging
 import os
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone, UTC
 from pathlib import Path
 
 print("[startup] Loading environment...", flush=True)
@@ -202,7 +202,7 @@ async def _pair_refresh_loop(
         try:
             await asyncio.wait_for(stop_event.wait(), timeout=interval)
             return
-        except asyncio.TimeoutError:
+        except TimeoutError:
             pass
 
         try:
@@ -331,7 +331,7 @@ async def main():
     # Shared with the embedded dashboard only. It is intentionally in-memory:
     # these are process observations, not trading records.
     runtime_health: dict[str, object] = {
-        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": datetime.now(UTC).isoformat(),
         "state": "starting",
         "execution_mode": cfg.execution.execution_mode,
     }
@@ -516,11 +516,11 @@ async def main():
                 try:
                     await asyncio.wait_for(stop_event.wait(), timeout=30)
                     break
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     stats = arb_engine.stats()
                     runtime_health.update(
                         {
-                            "updated_at": datetime.now(timezone.utc).isoformat(),
+                            "updated_at": datetime.now(UTC).isoformat(),
                             "state": "running",
                             "execution_mode": execution_mode,
                             "process_rss_bytes": _process_rss_bytes(),
@@ -588,7 +588,7 @@ async def main():
                 try:
                     await asyncio.wait_for(stop_event.wait(), timeout=60)
                     break
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     try:
                         await arb_engine.periodic_scan()
                     except Exception as scan_err:

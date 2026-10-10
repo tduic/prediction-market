@@ -9,7 +9,7 @@ execution_mode wiring.
 
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone, UTC
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
@@ -60,7 +60,7 @@ def matches():
 
 
 async def _seed_markets_for_engine(db, matches):
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     for m in matches:
         for mid, platform, plat_id, price in [
             (m["poly_id"], "polymarket", m["poly_id"], m["poly_price"]),
@@ -99,7 +99,7 @@ async def _seed_markets_for_engine(db, matches):
 
 
 async def _simulate_price_update(engine, db, market_id: str, new_price: float):
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     await db.execute(
         """INSERT INTO market_prices
            (market_id, yes_price, no_price, spread, liquidity, polled_at)
@@ -575,7 +575,7 @@ def _risk_config(**overrides):
 
 
 async def _seed_markets_p23(db, matches):
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     for m in matches:
         for mid, platform, price in [
             (m["poly_id"], "polymarket", m["poly_price"]),
@@ -1065,7 +1065,7 @@ class TestStatsWithFireState:
 
 @pytest.mark.asyncio
 async def test_arb_fire_with_sell_poly_leg_translates(db):
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
 
     await db.execute(
         """INSERT INTO markets

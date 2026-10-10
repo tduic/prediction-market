@@ -8,7 +8,7 @@ DB tables in the same format. This base class enforces that contract.
 import logging
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timezone, UTC
 
 import aiosqlite
 
@@ -169,7 +169,7 @@ class BaseExecutionClient:
         if result.filled_price is None:
             return
 
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         event_type = "filled" if result.status == "filled" else "partially_filled"
         try:
             await self.db.execute(

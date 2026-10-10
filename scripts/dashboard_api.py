@@ -16,7 +16,7 @@ import math
 import os
 import secrets
 import sqlite3
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone, UTC
 from pathlib import Path
 from typing import Any
 
@@ -74,7 +74,7 @@ async def _compute_daily_loss_today(db: aiosqlite.Connection) -> float:
     Uses a UTC-date range comparison so the query planner can use the
     index on created_at.  Returns 0.0 when today is profitable.
     """
-    _today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    _today = datetime.now(UTC).strftime("%Y-%m-%d")
     _tomorrow = (date.fromisoformat(_today) + timedelta(days=1)).isoformat()
     cursor = await db.execute(
         "SELECT COALESCE(SUM(actual_pnl - COALESCE(fees_total, 0)), 0) "
@@ -255,7 +255,7 @@ def _build_app(
 
             signals_24h = 0
             violations_24h = 0
-            _cutoff_24h = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+            _cutoff_24h = (datetime.now(UTC) - timedelta(hours=24)).isoformat()
             try:
                 _sig_cursor = await db.execute(
                     "SELECT COUNT(*) FROM signals WHERE fired_at >= ?",
@@ -312,7 +312,7 @@ def _build_app(
     ) -> list[dict[str, Any]]:
         db = await get_db()
         try:
-            cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
+            cutoff_date = datetime.now(UTC) - timedelta(days=days)
             cursor = await db.execute(
                 """
                 SELECT
@@ -337,7 +337,7 @@ def _build_app(
             )
             rows = await cursor.fetchall()
 
-            cutoff_24h = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+            cutoff_24h = (datetime.now(UTC) - timedelta(hours=24)).isoformat()
             signals_cursor = await db.execute(
                 "SELECT strategy, "
                 "SUM(CASE WHEN fired_at >= ? THEN 1 ELSE 0 END) AS cnt_24h, "
@@ -453,7 +453,7 @@ def _build_app(
     ) -> list[dict[str, Any]]:
         db = await get_db()
         try:
-            cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
+            cutoff_date = datetime.now(UTC) - timedelta(days=days)
             cursor = await db.execute(
                 """
                 SELECT
@@ -492,7 +492,7 @@ def _build_app(
     ) -> list[dict[str, Any]]:
         db = await get_db()
         try:
-            cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
+            cutoff_date = datetime.now(UTC) - timedelta(days=days)
             cursor = await db.execute(
                 """
                 SELECT snapshotted_at, total_capital, unrealized_pnl,
@@ -525,7 +525,7 @@ def _build_app(
     ) -> list[dict[str, Any]]:
         db = await get_db()
         try:
-            cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
+            cutoff_date = datetime.now(UTC) - timedelta(days=days)
             if strategy:
                 cursor = await db.execute(
                     "SELECT * FROM trade_outcomes WHERE created_at >= ? AND strategy = ? ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
@@ -582,7 +582,7 @@ def _build_app(
         """
         db = await get_db()
         try:
-            cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
+            cutoff_date = datetime.now(UTC) - timedelta(days=days)
             if strategy:
                 cursor = await db.execute(
                     "SELECT COUNT(*) FROM trade_outcomes WHERE created_at >= ? AND strategy = ?",
@@ -618,7 +618,7 @@ def _build_app(
                     else PAPER_CAPITAL
                 )
 
-            _cutoff_90d = (datetime.now(timezone.utc) - timedelta(days=90)).isoformat()
+            _cutoff_90d = (datetime.now(UTC) - timedelta(days=90)).isoformat()
             cursor = await db.execute(
                 """
                 SELECT total_capital
@@ -800,7 +800,7 @@ def _build_app(
         """
         db = await get_db()
         try:
-            cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
+            cutoff_date = datetime.now(UTC) - timedelta(days=days)
             cursor = await db.execute(
                 """
                 SELECT
@@ -846,7 +846,7 @@ def _build_app(
     ) -> list[dict[str, Any]]:
         db = await get_db()
         try:
-            cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
+            cutoff_date = datetime.now(UTC) - timedelta(days=days)
             if strategy:
                 cursor = await db.execute(
                     "SELECT id, violation_id, strategy, signal_type, market_id_a, market_id_b, "
@@ -903,7 +903,7 @@ def _build_app(
         """
         db = await get_db()
         try:
-            cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
+            cutoff_date = datetime.now(UTC) - timedelta(days=days)
             if strategy:
                 cursor = await db.execute(
                     "SELECT COUNT(*) FROM signals WHERE fired_at >= ? AND strategy = ?",
@@ -936,7 +936,7 @@ def _build_app(
         """
         db = await get_db()
         try:
-            cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
+            cutoff_date = datetime.now(UTC) - timedelta(days=days)
             params: list[Any] = [cutoff_date.isoformat()]
             where_extra = ""
             if passed is not None:
@@ -1146,9 +1146,7 @@ def _build_app(
 
             discrepancy_count_24h = 0
             try:
-                _cutoff_24h = (
-                    datetime.now(timezone.utc) - timedelta(hours=24)
-                ).isoformat()
+                _cutoff_24h = (datetime.now(UTC) - timedelta(hours=24)).isoformat()
                 d24h_cursor = await db.execute(
                     "SELECT COUNT(*) FROM reconciliation_log "
                     "WHERE status = 'discrepancy' AND checked_at >= ?",
@@ -1192,7 +1190,7 @@ def _build_app(
         result: dict[str, Any] = {}
 
         try:
-            _cutoff_24h = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+            _cutoff_24h = (datetime.now(UTC) - timedelta(hours=24)).isoformat()
 
             # Circuit breaker
             try:
@@ -1249,10 +1247,8 @@ def _build_app(
                 if last_rec is not None:
                     last_rec_dt = datetime.fromisoformat(last_rec)
                     if last_rec_dt.tzinfo is None:
-                        last_rec_dt = last_rec_dt.replace(tzinfo=timezone.utc)
-                    rec_age_s = int(
-                        (datetime.now(timezone.utc) - last_rec_dt).total_seconds()
-                    )
+                        last_rec_dt = last_rec_dt.replace(tzinfo=UTC)
+                    rec_age_s = int((datetime.now(UTC) - last_rec_dt).total_seconds())
                     result["last_reconciliation_age_s"] = rec_age_s
                     if rec_age_s > 3600:
                         issues.append(f"reconciliation_stale:{rec_age_s}s")
@@ -1289,10 +1285,8 @@ def _build_app(
                 if snap_row and snap_row[0]:
                     last_snap = datetime.fromisoformat(snap_row[0])
                     if last_snap.tzinfo is None:
-                        last_snap = last_snap.replace(tzinfo=timezone.utc)
-                    age_s = int(
-                        (datetime.now(timezone.utc) - last_snap).total_seconds()
-                    )
+                        last_snap = last_snap.replace(tzinfo=UTC)
+                    age_s = int((datetime.now(UTC) - last_snap).total_seconds())
                     result["last_snapshot_age_s"] = age_s
                     if age_s > 4 * get_config().observability.pnl_snapshot_interval_s:
                         issues.append(f"snapshot_stale:{age_s}s")
@@ -1311,10 +1305,8 @@ def _build_app(
                 if sig_row and sig_row[0]:
                     last_sig = datetime.fromisoformat(sig_row[0])
                     if last_sig.tzinfo is None:
-                        last_sig = last_sig.replace(tzinfo=timezone.utc)
-                    sig_age_s = int(
-                        (datetime.now(timezone.utc) - last_sig).total_seconds()
-                    )
+                        last_sig = last_sig.replace(tzinfo=UTC)
+                    sig_age_s = int((datetime.now(UTC) - last_sig).total_seconds())
                     result["last_signal_age_s"] = sig_age_s
                     if sig_age_s > _GLOBAL_SIGNAL_STALE_S:
                         issues.append(f"signal_stale:{sig_age_s}s")
@@ -1363,10 +1355,8 @@ def _build_app(
                     if _last:
                         _last_dt = datetime.fromisoformat(_last)
                         if _last_dt.tzinfo is None:
-                            _last_dt = _last_dt.replace(tzinfo=timezone.utc)
-                        _age_s = int(
-                            (datetime.now(timezone.utc) - _last_dt).total_seconds()
-                        )
+                            _last_dt = _last_dt.replace(tzinfo=UTC)
+                        _age_s = int((datetime.now(UTC) - _last_dt).total_seconds())
                         strat_ages[_strat] = _age_s
                         if _age_s > _STRAT_SIGNAL_STALE_S:
                             issues.append(f"signal_stale:{_strat}:{_age_s}s")
@@ -1404,10 +1394,8 @@ def _build_app(
                     try:
                         runtime_updated = datetime.fromisoformat(updated_at)
                         if runtime_updated.tzinfo is None:
-                            runtime_updated = runtime_updated.replace(
-                                tzinfo=timezone.utc
-                            )
-                        runtime_age = datetime.now(timezone.utc) - runtime_updated
+                            runtime_updated = runtime_updated.replace(tzinfo=UTC)
+                        runtime_age = datetime.now(UTC) - runtime_updated
                         runtime_age_s = int(runtime_age.total_seconds())
                         result["runtime_age_s"] = runtime_age_s
                         if runtime_age_s > 90:
@@ -1458,9 +1446,9 @@ def _build_app(
                 if row and row[0]:
                     last_snap = datetime.fromisoformat(row[0])
                     if last_snap.tzinfo is None:
-                        last_snap = last_snap.replace(tzinfo=timezone.utc)
+                        last_snap = last_snap.replace(tzinfo=UTC)
                     result["last_snapshot_age_s"] = int(
-                        (datetime.now(timezone.utc) - last_snap).total_seconds()
+                        (datetime.now(UTC) - last_snap).total_seconds()
                     )
                 else:
                     result["last_snapshot_age_s"] = None
@@ -1474,18 +1462,16 @@ def _build_app(
                 if sig_row and sig_row[0]:
                     last_sig = datetime.fromisoformat(sig_row[0])
                     if last_sig.tzinfo is None:
-                        last_sig = last_sig.replace(tzinfo=timezone.utc)
+                        last_sig = last_sig.replace(tzinfo=UTC)
                     result["last_signal_age_s"] = int(
-                        (datetime.now(timezone.utc) - last_sig).total_seconds()
+                        (datetime.now(UTC) - last_sig).total_seconds()
                     )
                 else:
                     result["last_signal_age_s"] = None
             except Exception as e:
                 logger.debug("health: last_signal_age_s query failed: %s", e)
             try:
-                _cutoff_24h = (
-                    datetime.now(timezone.utc) - timedelta(hours=24)
-                ).isoformat()
+                _cutoff_24h = (datetime.now(UTC) - timedelta(hours=24)).isoformat()
                 sig_count_cursor = await db.execute(
                     "SELECT COUNT(*) FROM signals WHERE fired_at >= ?",
                     (_cutoff_24h,),
@@ -1503,9 +1489,9 @@ def _build_app(
                 if _last_rec:
                     _last_rec_dt = datetime.fromisoformat(_last_rec)
                     if _last_rec_dt.tzinfo is None:
-                        _last_rec_dt = _last_rec_dt.replace(tzinfo=timezone.utc)
+                        _last_rec_dt = _last_rec_dt.replace(tzinfo=UTC)
                     result["last_reconciliation_age_s"] = int(
-                        (datetime.now(timezone.utc) - _last_rec_dt).total_seconds()
+                        (datetime.now(UTC) - _last_rec_dt).total_seconds()
                     )
                 else:
                     result["last_reconciliation_age_s"] = None

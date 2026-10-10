@@ -23,7 +23,7 @@ import logging
 import os
 import sys
 import tempfile
-from datetime import datetime, timezone
+from datetime import datetime, timezone, UTC
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -94,7 +94,7 @@ async def main() -> int:
     db = database._conn
     if db is None:
         raise RuntimeError("database failed to open")
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     cid = poly_market["conditionId"]
     yes_tok, no_tok = json.loads(poly_market["clobTokenIds"])[:2]
     ticker = kalshi_market["ticker"]

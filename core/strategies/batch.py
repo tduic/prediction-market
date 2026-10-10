@@ -9,7 +9,7 @@ import logging
 import os
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timezone, UTC
 
 import aiosqlite
 
@@ -41,7 +41,7 @@ async def detect_violations_and_trade(
 
     try:
         for match in matches:
-            now = datetime.now(timezone.utc).isoformat()
+            now = datetime.now(UTC).isoformat()
             p_price = match["poly_price"]
             k_price = match["kalshi_price"]
             spread = abs(p_price - k_price)

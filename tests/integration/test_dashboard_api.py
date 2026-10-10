@@ -7,7 +7,7 @@ All endpoints are tested for shape, type, and sensible defaults.
 """
 
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timezone, UTC
 from pathlib import Path
 
 import pytest
@@ -23,7 +23,7 @@ from scripts.dashboard_api import create_dashboard_app
 
 
 async def _seed_trade_outcome(db, strategy="P1_cross_market_arb", pnl=5.0, fees=0.10):
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     sig_id = f"sig_{abs(pnl):.0f}_{strategy[:6]}"
     # Seed a minimal market row so trade_outcomes FK is satisfied
     await db.execute(
@@ -57,7 +57,7 @@ async def _seed_trade_outcome(db, strategy="P1_cross_market_arb", pnl=5.0, fees=
 
 
 async def _seed_pnl_snapshot(db, realized_pnl=100.0, capital=10100.0, fees=5.0):
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     await db.execute(
         """INSERT INTO pnl_snapshots
            (total_capital, cash, open_positions_count, unrealized_pnl,
@@ -632,7 +632,7 @@ class TestSystemHealthEndpoint:
     async def test_system_health_includes_fresh_runtime_telemetry(self, app_and_client):
         app, client, _ = app_and_client
         app.state.runtime_health = {
-            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(UTC).isoformat(),
             "state": "running",
             "execution_mode": "paper",
             "process_rss_bytes": 123_456,
@@ -653,7 +653,7 @@ class TestSystemHealthEndpoint:
     async def test_system_health_warns_on_stale_websocket_feed(self, app_and_client):
         app, client, _ = app_and_client
         app.state.runtime_health = {
-            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(UTC).isoformat(),
             "state": "running",
             "ws_last_tick_age_ms_by_platform": {"kalshi": 60_001},
         }
@@ -972,7 +972,7 @@ class TestDailyPnlEndpoint:
 
 async def _seed_signal_only(db, strategy="P3_calibration_bias"):
     """Insert a signal with no corresponding trade_outcome (risk-rejected)."""
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     sig_id = f"sig_only_{strategy[:8]}"
     await db.execute(
         "INSERT OR IGNORE INTO markets (id, platform, platform_id, title, status, created_at, updated_at) "
@@ -1018,7 +1018,7 @@ class TestStrategiesSignalOnlyStubs:
 
 async def _seed_position(db, pos_id: str, strategy: str = "P1_cross_market_arb"):
     """Insert a minimal open position row."""
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     sig_id = f"sig_{pos_id}"
     await db.execute(
         "INSERT OR IGNORE INTO markets (id, platform, platform_id, title, status, created_at, updated_at) "
@@ -1114,7 +1114,7 @@ class TestStrategiesPnlSeriesEndpoint:
 
         async with aiosqlite.connect(db_path) as file_db:
             file_db.row_factory = aiosqlite.Row
-            now = datetime.now(timezone.utc).isoformat()
+            now = datetime.now(UTC).isoformat()
             await file_db.execute(
                 """INSERT INTO pnl_snapshots
                    (total_capital, cash, open_positions_count, unrealized_pnl,
@@ -1158,7 +1158,7 @@ class TestStrategiesPnlSeriesEndpoint:
 
         async with aiosqlite.connect(db_path) as file_db:
             file_db.row_factory = aiosqlite.Row
-            now = datetime.now(timezone.utc).isoformat()
+            now = datetime.now(UTC).isoformat()
             await file_db.execute(
                 """INSERT INTO pnl_snapshots
                    (total_capital, cash, open_positions_count, unrealized_pnl,

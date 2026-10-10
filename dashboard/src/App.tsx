@@ -25,6 +25,7 @@ import { TradeLog } from './components/TradeLog'
 
 const REFRESH_INTERVAL = 30000 // 30 seconds
 const CB_REFRESH_INTERVAL = 5000 // 5 seconds for safety-critical circuit-breaker status
+const HEALTH_REFRESH_INTERVAL = 10000 // 10 seconds for system health badge (signal staleness, reconciliation)
 
 type TimeRange = '1h' | '6h' | '24h' | '7d' | '30d'
 
@@ -52,7 +53,7 @@ function App() {
   const feeResult = useApi<FeeBreakdown>('/api/fees', REFRESH_INTERVAL)
   const riskResult = useApi<RiskMetrics>('/api/risk', REFRESH_INTERVAL)
   const circuitBreakerResult = useApi<CircuitBreakerStatus>('/api/circuit-breaker', CB_REFRESH_INTERVAL)
-  const systemHealthResult = useApi<SystemHealth>('/api/system-health', REFRESH_INTERVAL)
+  const systemHealthResult = useApi<SystemHealth>('/api/system-health', HEALTH_REFRESH_INTERVAL)
   const dailyPnlResult = useApi<DailyPnlPoint[]>('/api/daily-pnl', REFRESH_INTERVAL, { days: 30 })
 
   const refreshAll = () => {

@@ -162,5 +162,5 @@ class ScheduledStrategyRunner:
                 await asyncio.wait_for(stop_event.wait(), timeout=self.interval)
                 logger.info("ScheduledStrategyRunner stopped gracefully")
                 break  # stop_event was set
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 pass  # interval elapsed, run again

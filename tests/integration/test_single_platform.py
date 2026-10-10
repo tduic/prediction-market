@@ -21,7 +21,7 @@ Covers:
 """
 
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, UTC
 from pathlib import Path
 
 import pytest
@@ -113,7 +113,7 @@ async def _seed_market(
     spread=0.02,
     liquidity=10000.0,
 ):
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     await db.execute(
         "INSERT OR IGNORE INTO markets "
         "(id, platform, platform_id, title, status, created_at, updated_at) "
@@ -144,8 +144,8 @@ async def _insert_open_position(
     pnl_model="realistic",
 ):
     if opened_at is None:
-        opened_at = datetime.now(timezone.utc).isoformat()
-    now = datetime.now(timezone.utc).isoformat()
+        opened_at = datetime.now(UTC).isoformat()
+    now = datetime.now(UTC).isoformat()
     sig_id = f"sig_{pos_id}"
     await db.execute(
         """INSERT OR IGNORE INTO signals
@@ -175,7 +175,7 @@ async def _seed_closed_position(
     closed_at=None,
     entry_price_override=None,
 ):
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     if closed_at is None:
         closed_at = now
     entry_price = entry_price_override if entry_price_override is not None else 0.40
@@ -211,7 +211,7 @@ async def _seed_closed_position(
 
 
 async def _seed_open_position(db, pos_id, market_id, strategy, entry_price):
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     sig_id = f"sig_{pos_id}"
     await db.execute(
         "INSERT OR IGNORE INTO signals "
@@ -441,7 +441,9 @@ class TestP2StructuredEvent:
     async def test_most_overpriced_selected(self, db):
         prices = [0.55, 0.38, 0.32]
         mids = []
-        for i, (month, price) in enumerate(zip(["January", "March", "June"], prices, strict=True)):
+        for i, (month, price) in enumerate(
+            zip(["January", "March", "June"], prices, strict=True)
+        ):
             mid = f"kal_unemp_{i}"
             mids.append(mid)
             await _seed_market(
@@ -579,7 +581,7 @@ class TestPositionOpensAsOpen:
 @pytest.mark.asyncio
 class TestMarkToMarket:
     async def test_expired_position_gets_closed(self, db):
-        now_dt = datetime.now(timezone.utc)
+        now_dt = datetime.now(UTC)
         old_opened = (now_dt - timedelta(seconds=400)).isoformat()
         now = now_dt.isoformat()
         await db.execute(
@@ -597,7 +599,7 @@ class TestMarkToMarket:
         assert (await cursor.fetchone())[0] == "closed"
 
     async def test_expired_position_has_realized_pnl(self, db):
-        now_dt = datetime.now(timezone.utc)
+        now_dt = datetime.now(UTC)
         old_opened = (now_dt - timedelta(seconds=400)).isoformat()
         now = now_dt.isoformat()
         await db.execute(
@@ -626,7 +628,7 @@ class TestMarkToMarket:
         assert row[1] is not None
 
     async def test_recent_position_stays_open(self, db):
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         await db.execute(
             "INSERT INTO markets (id, platform, platform_id, title, status, created_at, updated_at) VALUES ('mkt3', 'polymarket', 'p3', 'T3', 'open', ?, ?)",
             (now, now),
@@ -640,7 +642,7 @@ class TestMarkToMarket:
         assert closed == 0
 
     async def test_no_price_data_skips_close(self, db):
-        now_dt = datetime.now(timezone.utc)
+        now_dt = datetime.now(UTC)
         old_opened = (now_dt - timedelta(seconds=400)).isoformat()
         now = now_dt.isoformat()
         await db.execute(
@@ -652,7 +654,7 @@ class TestMarkToMarket:
         assert closed == 0
 
     async def test_buy_realized_pnl_correct(self, db):
-        now_dt = datetime.now(timezone.utc)
+        now_dt = datetime.now(UTC)
         old_opened = (now_dt - timedelta(seconds=400)).isoformat()
         now = now_dt.isoformat()
         await db.execute(
@@ -683,7 +685,7 @@ class TestMarkToMarket:
 @pytest.mark.asyncio
 class TestSlippageModel:
     async def _seed_market_price(self, db, market_id, price):
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         await db.execute(
             "INSERT OR IGNORE INTO markets (id, platform, platform_id, title, status, created_at, updated_at) VALUES (?, 'polymarket', ?, 'T', 'open', ?, ?)",
             (market_id, market_id, now, now),
@@ -753,7 +755,7 @@ class TestSlippageModel:
 @pytest.mark.asyncio
 class TestFeeRates:
     async def _seed_market_price(self, db, market_id, price):
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         await db.execute(
             "INSERT OR IGNORE INTO markets (id, platform, platform_id, title, status, created_at, updated_at) VALUES (?, 'polymarket', ?, 'T', 'open', ?, ?)",
             (market_id, market_id, now, now),
@@ -815,7 +817,7 @@ class TestPnlModelColumn:
 @pytest.mark.asyncio
 class TestScheduledRunnerMarkToMarket:
     async def test_run_one_cycle_closes_expired_positions(self, db):
-        now_dt = datetime.now(timezone.utc)
+        now_dt = datetime.now(UTC)
         old_opened = (now_dt - timedelta(seconds=400)).isoformat()
         now = now_dt.isoformat()
         await db.execute(
@@ -1011,7 +1013,7 @@ class TestConsecutiveCycleDedup:
     async def test_recently_closed_market_without_price_move_skipped(self, db):
         entry_price = 0.25
         await _seed_market(db, "mkt_recent", yes_price=entry_price)
-        closed_at = (datetime.now(timezone.utc) - timedelta(seconds=60)).isoformat()
+        closed_at = (datetime.now(UTC) - timedelta(seconds=60)).isoformat()
         await _seed_closed_position(
             db,
             "pos_recent",
@@ -1035,7 +1037,7 @@ class TestConsecutiveCycleDedup:
 
     async def test_recently_closed_with_price_move_allowed(self, db):
         await _seed_market(db, "mkt_moved", yes_price=0.20)
-        closed_at = (datetime.now(timezone.utc) - timedelta(seconds=60)).isoformat()
+        closed_at = (datetime.now(UTC) - timedelta(seconds=60)).isoformat()
         await _seed_closed_position(
             db,
             "pos_moved",
@@ -1059,7 +1061,7 @@ class TestConsecutiveCycleDedup:
 
     async def test_market_outside_cooldown_window_allowed(self, db):
         await _seed_market(db, "mkt_old", yes_price=0.25)
-        closed_at = (datetime.now(timezone.utc) - timedelta(seconds=600)).isoformat()
+        closed_at = (datetime.now(UTC) - timedelta(seconds=600)).isoformat()
         await _seed_closed_position(
             db, "pos_old", "mkt_old", "P3_calibration_bias", 0.05, closed_at=closed_at
         )

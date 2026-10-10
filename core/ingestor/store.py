@@ -8,7 +8,7 @@ for pulling market data from exchanges and persisting to the database.
 import json as _json
 import logging
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone, UTC
 from pathlib import Path
 
 import aiosqlite
@@ -257,7 +257,7 @@ async def store_markets(
     db: aiosqlite.Connection, poly_markets: list, kalshi_markets: list
 ):
     """Write fetched markets and prices to DB using batch inserts."""
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     t_start = time.time()
 
     # ── Prepare Polymarket rows in-memory ────────────────────────────────

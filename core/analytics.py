@@ -9,7 +9,7 @@ All methods are async and work directly with aiosqlite.Connection.
 
 import logging
 import statistics
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, UTC
 from typing import Any
 
 import aiosqlite
@@ -59,7 +59,7 @@ class StrategyScorecard:
             - avg_edge_captured_pct: Average edge capture
             - avg_execution_latency_ms: Average signal-to-fill latency
         """
-        lookback = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        lookback = (datetime.now(UTC) - timedelta(days=days)).isoformat()
 
         try:
             # Build query
@@ -187,7 +187,7 @@ class StrategyScorecard:
             - cumulative_pnl: Running cumulative P&L
             - num_trades: Number of closed trades that day
         """
-        lookback = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        lookback = (datetime.now(UTC) - timedelta(days=days)).isoformat()
 
         try:
             cursor = await self.db.execute(

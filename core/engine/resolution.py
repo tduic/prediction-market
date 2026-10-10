@@ -12,7 +12,7 @@ Call `close_resolved_positions(db)` periodically. It commits its own writes.
 
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timezone, UTC
 
 import aiosqlite
 
@@ -42,7 +42,7 @@ async def close_resolved_positions(db: aiosqlite.Connection) -> dict[str, float]
     if not rows:
         return summary
 
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     closed = 0
     total_pnl = 0.0
 
@@ -129,7 +129,7 @@ async def close_resolved_positions(db: aiosqlite.Connection) -> dict[str, float]
                         now_dt = datetime.fromisoformat(now)
                         opened_dt = datetime.fromisoformat(opened_at)
                         if opened_dt.tzinfo is None:
-                            opened_dt = opened_dt.replace(tzinfo=timezone.utc)
+                            opened_dt = opened_dt.replace(tzinfo=UTC)
                         holding_period_ms = int(
                             (now_dt - opened_dt).total_seconds() * 1000
                         )

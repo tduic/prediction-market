@@ -13,7 +13,7 @@ order FK to signals failed → all trades silently dropped.
 
 import sys
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timezone, UTC
 from pathlib import Path
 
 import aiosqlite
@@ -24,7 +24,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 
 async def _insert_market(db, market_id, platform="polymarket"):
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     await db.execute(
         """INSERT OR IGNORE INTO markets
            (id, platform, platform_id, title, status, created_at, updated_at)
@@ -43,7 +43,7 @@ async def _insert_market(db, market_id, platform="polymarket"):
 class TestMarketPairsInsert:
     async def test_insert_market_pair(self, db):
         """market_pairs INSERT matches schema."""
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         await _insert_market(db, "mkt_a")
         await _insert_market(db, "mkt_b", "kalshi")
 
@@ -66,7 +66,7 @@ class TestMarketPairsInsert:
 class TestViolationsInsert:
     async def test_insert_violation(self, db):
         """violations INSERT uses correct column names (price_a_at_detect, not price_a)."""
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         await _insert_market(db, "v_a")
         await _insert_market(db, "v_b", "kalshi")
 
@@ -98,7 +98,7 @@ class TestViolationsInsert:
 
     async def test_violation_fk_to_market_pairs(self, db):
         """violations.pair_id must reference a valid market_pairs.id."""
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
 
         # Insert violation with non-existent pair_id should fail FK
         with pytest.raises(aiosqlite.IntegrityError):
@@ -115,7 +115,7 @@ class TestViolationsInsert:
 class TestSignalsInsert:
     async def test_insert_signal(self, db):
         """signals INSERT includes all NOT NULL columns."""
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         await _insert_market(db, "s_a")
         await _insert_market(db, "s_b", "kalshi")
 
@@ -137,7 +137,7 @@ class TestSignalsInsert:
 
     async def test_signal_fk_to_markets(self, db):
         """signals.market_id_a must reference markets.id."""
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
 
         with pytest.raises(aiosqlite.IntegrityError):
             await db.execute(
@@ -154,7 +154,7 @@ class TestSignalsInsert:
 class TestOrdersInsert:
     async def test_insert_order(self, db):
         """orders INSERT matches schema with all required fields."""
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         await _insert_market(db, "o_mkt")
 
         signal_id = f"sig_{uuid.uuid4().hex[:12]}"
@@ -195,7 +195,7 @@ class TestOrdersInsert:
 
     async def test_order_strategy_column(self, db):
         """orders.strategy column stores and retrieves correctly."""
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         await _insert_market(db, "strat_mkt")
 
         signal_id = f"sig_{uuid.uuid4().hex[:12]}"
@@ -228,7 +228,7 @@ class TestOrdersInsert:
 
     async def test_order_strategy_nullable(self, db):
         """orders.strategy is nullable for backward compat."""
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         await _insert_market(db, "null_mkt")
 
         signal_id = f"sig_{uuid.uuid4().hex[:12]}"
@@ -260,7 +260,7 @@ class TestOrdersInsert:
 
     async def test_order_fk_to_signal(self, db):
         """orders.signal_id must reference signals.id."""
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         await _insert_market(db, "fk_mkt")
 
         with pytest.raises(aiosqlite.IntegrityError):
@@ -277,7 +277,7 @@ class TestOrdersInsert:
 class TestPositionsInsert:
     async def test_insert_position(self, db):
         """positions INSERT matches schema."""
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         await _insert_market(db, "pos_mkt")
 
         signal_id = f"sig_{uuid.uuid4().hex[:12]}"
@@ -312,7 +312,7 @@ class TestPositionsInsert:
 class TestTradeOutcomesInsert:
     async def test_insert_trade_outcome(self, db):
         """trade_outcomes INSERT with actual_pnl (not realized_pnl)."""
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         await _insert_market(db, "to_a")
         await _insert_market(db, "to_b", "kalshi")
 
@@ -354,7 +354,7 @@ class TestStrategyPnlSnapshotsInsert:
 
     async def test_insert_strategy_pnl_snapshot(self, db):
         """strategy_pnl_snapshots INSERT matches schema."""
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
 
         # Create parent pnl_snapshot
         cursor = await db.execute(
@@ -399,7 +399,7 @@ class TestStrategyPnlSnapshotsInsert:
 
     async def test_strategy_pnl_query_by_strategy(self, db):
         """Can query strategy_pnl_snapshots filtered by strategy."""
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
 
         cursor = await db.execute(
             """INSERT INTO pnl_snapshots
@@ -438,7 +438,7 @@ class TestFullCascade:
 
     async def test_full_chain_succeeds(self, db):
         """All 4 levels of the FK chain insert successfully, with strategy on orders."""
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         await _insert_market(db, "chain_a")
         await _insert_market(db, "chain_b", "kalshi")
 
@@ -524,7 +524,7 @@ class TestOrderEventsInsert:
         """
         import json
 
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
 
         # Set up FK chain
         await _insert_market(db, "evt_mkt_a")

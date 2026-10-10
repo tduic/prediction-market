@@ -11,7 +11,7 @@ Covers:
 
 import sys
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, UTC
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
@@ -35,11 +35,11 @@ from core.invariants import (
 
 
 def _now():
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _ago(seconds: float) -> str:
-    return (datetime.now(timezone.utc) - timedelta(seconds=seconds)).isoformat()
+    return (datetime.now(UTC) - timedelta(seconds=seconds)).isoformat()
 
 
 async def _seed_signal(db, signal_id: str, market_id: str = "m1") -> None:

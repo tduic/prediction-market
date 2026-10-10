@@ -12,7 +12,7 @@ import random
 import time
 import uuid
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timezone, UTC
 
 import aiosqlite
 
@@ -528,7 +528,7 @@ class ArbitrageEngine:
                                 f"attempt={attempt} status={result.status} "
                                 f"err={result.error_message or ''}"
                             ),
-                            datetime.now(timezone.utc).isoformat(),
+                            datetime.now(UTC).isoformat(),
                         ),
                     )
                     await self.db.commit()
@@ -582,7 +582,7 @@ class ArbitrageEngine:
         from core.signals.risk import get_portfolio_value, run_all_checks
         from core.signals.sizing import compute_kelly_fraction, compute_position_size
 
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         strategy = "P1_cross_market_arb"
         signal_id = f"sig_{uuid.uuid4().hex[:12]}"
         violation_id = f"viol_{uuid.uuid4().hex[:12]}"
@@ -627,7 +627,7 @@ class ArbitrageEngine:
                 ),
                 timeout=self._risk_config.arb_pretrade_lookup_timeout_s,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             buy_fees = sell_fees = None
         if buy_fees is None or sell_fees is None:
             self._skipped_fee_unknown += 1
@@ -689,7 +689,7 @@ class ArbitrageEngine:
                 ),
                 timeout=self._risk_config.arb_pretrade_lookup_timeout_s,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             buy_depth = sell_depth = None
         if buy_depth is None or sell_depth is None:
             self._skipped_depth_unknown += 1
@@ -796,7 +796,7 @@ class ArbitrageEngine:
             try:
                 await self.db.execute(
                     "UPDATE violations SET status = 'risk_rejected', updated_at = ? WHERE id = ?",
-                    (datetime.now(timezone.utc).isoformat(), violation_id),
+                    (datetime.now(UTC).isoformat(), violation_id),
                 )
                 await self.db.commit()
             except Exception:

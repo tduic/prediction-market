@@ -1,6 +1,6 @@
 """PolymarketExecutionClientV2 against a fake py-clob-client-v2 SDK client."""
 
-from datetime import datetime, timezone
+from datetime import datetime, timezone, UTC
 
 import httpx
 import pytest
@@ -47,7 +47,7 @@ def _order(status, matched, price="0.40"):
 
 
 async def _seed(db, market_id="poly_0xabc"):
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     await db.execute(
         "INSERT INTO markets (id, platform, platform_id, title, yes_token_id,"
         " no_token_id, created_at, updated_at)"
@@ -194,7 +194,7 @@ async def test_unknown_fee_keeps_the_fill(db):
 
 
 async def test_unresolvable_market_never_reaches_sdk(db):
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     await db.execute(
         "INSERT INTO markets (id, platform, platform_id, title, created_at, updated_at)"
         " VALUES ('poly_0xabc', 'polymarket', '0xabc', 't', ?, ?)",

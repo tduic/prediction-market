@@ -9,7 +9,7 @@ Tests all risk control implementations:
 - Duplicate signal suppression
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, UTC
 
 # ============================================================================
 # Risk Management Classes (Mock Implementations)
@@ -33,7 +33,7 @@ class RiskSignal:
         self.size_usd = size_usd
         self.kelly_fraction = kelly_fraction
         self.expected_edge = expected_edge
-        self.created_at = created_at or datetime.now(timezone.utc)
+        self.created_at = created_at or datetime.now(UTC)
 
 
 class RiskManager:
@@ -131,7 +131,7 @@ class RiskManager:
         Returns:
             True if signal is new, False if duplicate
         """
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         window = timedelta(seconds=self.config.DUPLICATE_SIGNAL_WINDOW_S)
 
         # Check for existing signal
@@ -450,7 +450,7 @@ class TestDuplicateSignalSuppression:
             size_usd=1000.0,
             kelly_fraction=0.25,
             expected_edge=0.05,
-            created_at=datetime.now(timezone.utc) - timedelta(seconds=window + 1),
+            created_at=datetime.now(UTC) - timedelta(seconds=window + 1),
         )
 
         # First occurrence

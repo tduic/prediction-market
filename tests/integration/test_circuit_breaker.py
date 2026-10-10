@@ -13,7 +13,7 @@ Covers:
 
 import asyncio
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timezone, UTC
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -29,7 +29,7 @@ async def _seed_loss(db, amount: float, days_ago: int = 0) -> None:
     """Insert a trade_outcomes row with a negative pnl."""
     # Use foreign_keys OFF to avoid needing parent markets/signals rows.
     await db.execute("PRAGMA foreign_keys = OFF")
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     if days_ago == 0:
         created_at = now.isoformat()
     else:
@@ -288,7 +288,7 @@ async def test_success_resets_consecutive_failures(db):
 async def test_load_state_restores_today_trip(db):
     """A trip logged earlier today should be restored on load_state()."""
     # Write a trip event directly to system_events with today's date.
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     await db.execute(
         """
         INSERT INTO system_events
@@ -316,7 +316,7 @@ async def test_load_state_ignores_yesterday_trip(db):
     # 2 days ago
     from datetime import timedelta
 
-    old = (datetime.now(timezone.utc) - timedelta(days=2)).isoformat()
+    old = (datetime.now(UTC) - timedelta(days=2)).isoformat()
     await db.execute(
         """
         INSERT INTO system_events
@@ -339,7 +339,7 @@ async def test_load_state_ignores_yesterday_trip(db):
 @pytest.mark.asyncio
 async def test_load_state_respects_reset_after_trip(db):
     """A RESET event written after a TRIP today must prevent trip restoration on restart."""
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     # Write a trip event, then a reset event (simulating operator clearing the breaker).
     await db.execute(
         """

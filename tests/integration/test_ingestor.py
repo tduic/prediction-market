@@ -8,7 +8,7 @@ Tests data ingestion pipeline:
 - Tracking ingestor runs
 """
 
-from datetime import datetime, timezone
+from datetime import datetime, timezone, UTC
 
 import pytest
 
@@ -92,7 +92,7 @@ class MarketIngestor:
         cursor = self.db.execute(
             """INSERT INTO ingestor_runs (started_at, status)
                VALUES (?, ?)""",
-            (datetime.now(timezone.utc), "running"),
+            (datetime.now(UTC), "running"),
         )
         run_id = cursor.lastrowid
         self.db.commit()
@@ -126,7 +126,7 @@ class MarketIngestor:
                         (
                             market["yes_price"],
                             market["no_price"],
-                            datetime.now(timezone.utc),
+                            datetime.now(UTC),
                             market["id"],
                         ),
                     )
@@ -162,7 +162,7 @@ class MarketIngestor:
                        markets_fetched = ?, markets_inserted = ?, markets_updated = ?
                    WHERE id = ?""",
                 (
-                    datetime.now(timezone.utc),
+                    datetime.now(UTC),
                     "completed",
                     markets_fetched,
                     inserted,
@@ -186,7 +186,7 @@ class MarketIngestor:
                    SET completed_at = ?, status = ?, errors = ?
                    WHERE id = ?""",
                 (
-                    datetime.now(timezone.utc),
+                    datetime.now(UTC),
                     "rate_limited",
                     str(e),
                     run_id,
@@ -222,7 +222,7 @@ class MarketIngestor:
         self.db.execute(
             """INSERT INTO market_prices (market_id, yes_price, no_price, timestamp)
                VALUES (?, ?, ?, ?)""",
-            (market_id, yes_price, no_price, datetime.now(timezone.utc)),
+            (market_id, yes_price, no_price, datetime.now(UTC)),
         )
         self.db.commit()
 

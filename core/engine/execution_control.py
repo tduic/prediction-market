@@ -10,7 +10,7 @@ reconciling positions on both venues.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, UTC
 
 import aiosqlite
 
@@ -41,7 +41,7 @@ async def is_halted(db: aiosqlite.Connection) -> bool:
 
 async def halt(db: aiosqlite.Connection, reason: str, component: str) -> None:
     """Set the halt (idempotent — the first reason is kept) and alert."""
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     cursor = await db.execute(
         """UPDATE execution_control
            SET halted = 1, reason = ?, component = ?, halted_at = ?,
@@ -75,7 +75,7 @@ async def halt(db: aiosqlite.Connection, reason: str, component: str) -> None:
 
 
 async def clear_halt(db: aiosqlite.Connection, reason: str) -> None:
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     await db.execute(
         """UPDATE execution_control
            SET halted = 0, cleared_at = ?, updated_at = ?

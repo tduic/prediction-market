@@ -1,6 +1,6 @@
 """Tests for LiveMarketData.fee_params — public fee-metadata discovery."""
 
-from datetime import datetime, timezone
+from datetime import datetime, timezone, UTC
 
 import httpx
 
@@ -12,7 +12,7 @@ KALSHI = "https://kalshi.test/trade-api/v2"
 
 
 async def _seed(db, market_id, platform, platform_id):
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     await db.execute(
         "INSERT INTO markets (id, platform, platform_id, title, created_at, updated_at)"
         " VALUES (?, ?, ?, ?, ?, ?)",

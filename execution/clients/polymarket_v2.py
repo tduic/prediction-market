@@ -374,7 +374,7 @@ class PolymarketExecutionClientV2(BaseExecutionClient):
             if params is None:
                 raise ValueError("fee metadata unavailable")
             fee = taker_fee(params, matched, price)
-        except (ValueError, asyncio.TimeoutError) as exc:
+        except (TimeoutError, ValueError) as exc:
             fee_error = str(exc) or type(exc).__name__
             logger.error(
                 "Polymarket V2 fill %s confirmed but fee unverified: %s",

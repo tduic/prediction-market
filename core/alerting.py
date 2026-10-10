@@ -46,6 +46,7 @@ from typing import Protocol
 import httpx
 
 from core.secrets import get_secret
+from datetime import UTC
 
 logger = logging.getLogger(__name__)
 
@@ -192,7 +193,7 @@ class DiscordWebhookTransport:
 def _iso(ts: float) -> str:
     from datetime import datetime, timezone
 
-    return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat()
+    return datetime.fromtimestamp(ts, tz=UTC).isoformat()
 
 
 class SlackWebhookTransport:

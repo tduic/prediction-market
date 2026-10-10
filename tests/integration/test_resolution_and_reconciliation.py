@@ -10,7 +10,7 @@ Covers:
 
 import sys
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, UTC
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -25,7 +25,7 @@ from core.engine.resolution import close_resolved_positions
 
 
 def _iso_now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 async def _seed_market(
@@ -298,7 +298,7 @@ async def test_reconciliation_flags_and_deduplicates_aged_open_position(
     await _seed_position(
         db, "aged_position", signal_id="aged_signal", market_id="aged_market"
     )
-    old = (datetime.now(timezone.utc) - timedelta(hours=73)).isoformat()
+    old = (datetime.now(UTC) - timedelta(hours=73)).isoformat()
     await db.execute(
         "UPDATE positions SET opened_at = ? WHERE id = 'aged_position'", (old,)
     )
@@ -341,7 +341,7 @@ async def test_aged_position_below_threshold_does_not_alert(db, monkeypatch):
         status="filled",
         filled_price=0.5,
     )
-    recent = (datetime.now(timezone.utc) - timedelta(hours=71)).isoformat()
+    recent = (datetime.now(UTC) - timedelta(hours=71)).isoformat()
     await db.execute(
         "UPDATE positions SET opened_at = ? WHERE id = 'fresh_aged_position'", (recent,)
     )
@@ -374,7 +374,7 @@ async def test_multiple_aged_positions_alert_independently_with_configured_thres
         await _seed_market(db, market_id)
         await _seed_signal(db, signal_id, market_id)
         await _seed_position(db, position_id, signal_id=signal_id, market_id=market_id)
-        old = (datetime.now(timezone.utc) - timedelta(seconds=121)).isoformat()
+        old = (datetime.now(UTC) - timedelta(seconds=121)).isoformat()
         await db.execute(
             "UPDATE positions SET opened_at = ? WHERE id = ?", (old, position_id)
         )
@@ -553,7 +553,7 @@ async def _seed_signal_aged(db, signal_id: str, market_id: str, age_s: int) -> N
     """Seed a signal with fired_at set to `age_s` seconds in the past."""
     from datetime import timedelta
 
-    fired_at = (datetime.now(timezone.utc) - timedelta(seconds=age_s)).isoformat()
+    fired_at = (datetime.now(UTC) - timedelta(seconds=age_s)).isoformat()
     await db.execute(
         """INSERT INTO signals
            (id, strategy, signal_type, market_id_a, model_edge,
