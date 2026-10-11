@@ -192,31 +192,23 @@ class StrategyScorecard:
         try:
             cursor = await self.db.execute(
                 """
-                SELECT DATE(created_at) as date, actual_pnl
+                SELECT DATE(created_at) AS date,
+                       SUM(actual_pnl) AS daily_pnl,
+                       COUNT(*) AS num_trades
                 FROM trade_outcomes
-                WHERE created_at > ?
+                WHERE created_at >= ?
+                GROUP BY DATE(created_at)
                 ORDER BY date ASC
                 """,
                 (lookback,),
             )
             rows = await cursor.fetchall()
 
-            # Aggregate by date
-            daily_dict = {}
-            for date_str, pnl in rows:
-                if date_str not in daily_dict:
-                    daily_dict[date_str] = {"pnl": 0.0, "trades": 0}
-                daily_dict[date_str]["pnl"] += pnl or 0.0
-                daily_dict[date_str]["trades"] += 1
-
-            # Build series with cumulative
             series = []
             cumulative = 0.0
-            for date_str in sorted(daily_dict.keys()):
-                daily_pnl = daily_dict[date_str]["pnl"]
-                num_trades = daily_dict[date_str]["trades"]
+            for date_str, daily_pnl_raw, num_trades in rows:
+                daily_pnl = float(daily_pnl_raw or 0.0)
                 cumulative += daily_pnl
-
                 series.append(
                     {
                         "date": date_str,

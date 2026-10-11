@@ -40,6 +40,7 @@ import logging
 import os
 import time
 from dataclasses import dataclass, field
+from datetime import UTC
 from enum import Enum
 from typing import Protocol
 
@@ -191,7 +192,7 @@ class DiscordWebhookTransport:
 
 
 def _iso(ts: float) -> str:
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     return datetime.fromtimestamp(ts, tz=UTC).isoformat()
 
