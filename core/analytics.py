@@ -9,7 +9,7 @@ All methods are async and work directly with aiosqlite.Connection.
 
 import logging
 import statistics
-from datetime import datetime, timedelta, timezone, UTC
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import aiosqlite

@@ -9,7 +9,7 @@ Tests all risk control implementations:
 - Duplicate signal suppression
 """
 
-from datetime import datetime, timedelta, timezone, UTC
+from datetime import UTC, datetime, timedelta
 
 # ============================================================================
 # Risk Management Classes (Mock Implementations)

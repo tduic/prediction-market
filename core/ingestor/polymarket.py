@@ -5,7 +5,7 @@ import hmac
 import logging
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone, UTC
+from datetime import UTC, datetime
 
 import httpx
 

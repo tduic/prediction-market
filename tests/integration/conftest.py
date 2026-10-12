@@ -6,7 +6,7 @@ exercised here is guaranteed to match the production DB.
 """
 
 import sys
-from datetime import datetime, timezone, UTC
+from datetime import UTC, datetime
 from pathlib import Path
 
 import aiosqlite

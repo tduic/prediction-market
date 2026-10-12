@@ -6,7 +6,7 @@ trading performance metrics and printing strategy-level analytics reports.
 """
 
 import logging
-from datetime import datetime, timedelta, timezone, UTC
+from datetime import UTC, datetime, timedelta
 
 import aiosqlite
 

@@ -47,7 +47,6 @@ from typing import Protocol
 import httpx
 
 from core.secrets import get_secret
-from datetime import UTC
 
 logger = logging.getLogger(__name__)
 

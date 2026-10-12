@@ -12,7 +12,7 @@ import random
 import time
 import uuid
 from collections import defaultdict
-from datetime import datetime, timezone, UTC
+from datetime import UTC, datetime
 
 import aiosqlite
 

@@ -10,7 +10,7 @@ reconciling positions on both venues.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone, UTC
+from datetime import UTC, datetime
 
 import aiosqlite
 

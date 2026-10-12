@@ -9,7 +9,7 @@ import logging
 import os
 import time
 import uuid
-from datetime import datetime, timezone, UTC
+from datetime import UTC, datetime
 
 import aiosqlite
 

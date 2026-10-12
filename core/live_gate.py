@@ -14,7 +14,7 @@ Usage at startup::
 """
 
 import os
-from datetime import datetime, timezone, UTC
+from datetime import UTC, datetime
 from pathlib import Path
 
 from core.config import RiskControlConfig

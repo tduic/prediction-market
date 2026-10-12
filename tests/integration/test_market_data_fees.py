@@ -1,6 +1,6 @@
 """Tests for LiveMarketData.fee_params — public fee-metadata discovery."""
 
-from datetime import datetime, timezone, UTC
+from datetime import UTC, datetime
 
 import httpx
 

@@ -6,7 +6,7 @@ import json
 import sqlite3
 from collections.abc import Generator
 from dataclasses import dataclass
-from datetime import datetime, timezone, UTC
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 

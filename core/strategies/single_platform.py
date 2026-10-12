@@ -11,7 +11,7 @@ import re
 import statistics
 import uuid
 from collections import defaultdict
-from datetime import datetime, timedelta, timezone, UTC
+from datetime import UTC, datetime, timedelta
 
 import aiosqlite
 

@@ -12,7 +12,7 @@ Call `close_resolved_positions(db)` periodically. It commits its own writes.
 
 import logging
 import uuid
-from datetime import datetime, timezone, UTC
+from datetime import UTC, datetime
 
 import aiosqlite
 

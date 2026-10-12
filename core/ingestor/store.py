@@ -8,7 +8,7 @@ for pulling market data from exchanges and persisting to the database.
 import json as _json
 import logging
 import time
-from datetime import datetime, timezone, UTC
+from datetime import UTC, datetime
 from pathlib import Path
 
 import aiosqlite

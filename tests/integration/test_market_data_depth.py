@@ -1,6 +1,6 @@
 """LiveMarketData.executable_depth — quantity fillable within a leg's limit."""
 
-from datetime import datetime, timezone, UTC
+from datetime import UTC, datetime
 
 import httpx
 import pytest

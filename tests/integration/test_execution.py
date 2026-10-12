@@ -10,7 +10,7 @@ Tests order execution pipeline:
 
 import asyncio
 import sqlite3
-from datetime import datetime, timedelta, timezone, UTC
+from datetime import UTC, datetime, timedelta
 from enum import Enum
 
 import pytest

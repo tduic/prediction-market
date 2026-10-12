@@ -1,6 +1,6 @@
 """PolymarketExecutionClientV2 against a fake py-clob-client-v2 SDK client."""
 
-from datetime import datetime, timezone, UTC
+from datetime import UTC, datetime
 
 import httpx
 import pytest

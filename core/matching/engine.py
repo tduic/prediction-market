@@ -18,7 +18,7 @@ import logging
 import re
 import time
 from collections import defaultdict
-from datetime import datetime, timezone, UTC
+from datetime import UTC, datetime
 from difflib import SequenceMatcher
 
 import aiosqlite

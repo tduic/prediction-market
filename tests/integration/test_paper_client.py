@@ -6,7 +6,7 @@ limit order rejection, fee calculation, and DB writes.
 """
 
 import sys
-from datetime import datetime, timezone, UTC
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest

@@ -6,7 +6,7 @@ that subsequent phases can compare against as a reference point.
 """
 
 import logging
-from datetime import datetime, timezone, UTC
+from datetime import UTC, datetime
 
 import aiosqlite
 

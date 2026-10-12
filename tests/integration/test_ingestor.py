@@ -8,7 +8,7 @@ Tests data ingestion pipeline:
 - Tracking ingestor runs
 """
 
-from datetime import datetime, timezone, UTC
+from datetime import UTC, datetime
 
 import pytest
 

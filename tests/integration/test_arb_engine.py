@@ -9,7 +9,7 @@ execution_mode wiring.
 
 import sys
 import time
-from datetime import datetime, timezone, UTC
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 

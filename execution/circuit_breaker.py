@@ -24,7 +24,7 @@ import logging
 import time
 from collections import deque
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta, timezone, UTC
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 import aiosqlite

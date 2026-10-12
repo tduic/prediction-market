@@ -16,7 +16,7 @@ import math
 import os
 import secrets
 import sqlite3
-from datetime import date, datetime, timedelta, timezone, UTC
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 

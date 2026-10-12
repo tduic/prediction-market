@@ -13,7 +13,7 @@ order FK to signals failed → all trades silently dropped.
 
 import sys
 import uuid
-from datetime import datetime, timezone, UTC
+from datetime import UTC, datetime
 from pathlib import Path
 
 import aiosqlite
