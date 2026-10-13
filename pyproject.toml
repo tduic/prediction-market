@@ -16,3 +16,13 @@ explicit_package_bases = true
 #
 # Goal state: this overrides block is empty, and the root [tool.mypy]
 # section above is the only config.
+
+[tool.ruff.lint]
+# Ruff's classic default rule set, pinned so a ruff release that widens its
+# defaults (0.17 added blind-except and others) doesn't change what CI enforces.
+select = ["E4", "E7", "E9", "F"]
+
+[tool.ruff.lint.per-file-ignores]
+# Scripts and tests put the project root on sys.path before importing it.
+"scripts/*" = ["E402"]
+"tests/*" = ["E402"]

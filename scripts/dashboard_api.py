@@ -685,11 +685,12 @@ def _build_app(
                 (_cutoff_90d,),
             )
             _agg = await cursor.fetchone()
+            assert _agg is not None  # aggregate query always returns one row
             pnl_count = int(_agg[0] or 0)
             _mean_pnl = float(_agg[1] or 0)
             _sum_pnl_sq = float(_agg[2] or 0)
 
-            overall_sharpe = 0
+            overall_sharpe: float = 0
             if pnl_count > 1:
                 _variance = max(
                     0.0, (_sum_pnl_sq - pnl_count * _mean_pnl**2) / (pnl_count - 1)
@@ -1205,7 +1206,7 @@ def _build_app(
                 )
                 result["circuit_breaker"] = {
                     "tripped": cb_tripped,
-                    "reason": cb_row[1] if cb_tripped else None,
+                    "reason": cb_row[1] if cb_row is not None and cb_tripped else None,
                 }
                 if cb_tripped:
                     issues.append("circuit_breaker_tripped")
@@ -1523,7 +1524,10 @@ def _build_app(
         except Exception as e:
             from fastapi.responses import JSONResponse
 
-            return JSONResponse({"status": "error", "detail": str(e)}, status_code=503)
+            # FastAPI returns Response objects as-is, bypassing the response model.
+            return JSONResponse(  # type: ignore[return-value]
+                {"status": "error", "detail": str(e)}, status_code=503
+            )
         finally:
             if db is not None:
                 await close_db(db)

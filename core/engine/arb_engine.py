@@ -123,11 +123,12 @@ class ArbitrageEngine:
                 self._last_tick_at[m["kalshi_id"]] = seed_ts
 
         # Execution clients (live or paper depending on EXECUTION_MODE)
-        execution_mode = execution_mode or os.getenv("EXECUTION_MODE", "paper")
+        env_mode = os.getenv("EXECUTION_MODE", "paper")
+        resolved_mode = execution_mode or env_mode
         from execution.factory import _make_execution_clients
 
         self._poly_client, self._kalshi_client = _make_execution_clients(
-            db, execution_mode
+            db, resolved_mode
         )
 
         # Track pairs that need an initial sweep (prices seeded from match data)

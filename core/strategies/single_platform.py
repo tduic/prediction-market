@@ -12,6 +12,7 @@ import statistics
 import uuid
 from collections import defaultdict
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import aiosqlite
 
@@ -150,7 +151,7 @@ async def mark_and_close_positions(
 
     # Batch-fetch signal metadata for all closing positions that have a signal_id.
     _signal_ids = list({r[6] for r in rows if r[6]})
-    _signal_meta: dict[str, tuple] = {}
+    _signal_meta: dict[str, Any] = {}
     if _signal_ids:
         _sig_ph = ",".join("?" for _ in _signal_ids)
         _sig_cur = await db.execute(

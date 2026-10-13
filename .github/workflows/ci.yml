@@ -9,23 +9,29 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.14 is what the VM runs. On 3.15 py-clob-client's ckzg dependency
+        # has no wheel yet and is built from source.
+        python-version: ["3.14", "3.15"]
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python 3.14
+      - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
         with:
-          python-version: "3.14"
-          allow-prereleases: true
+          python-version: ${{ matrix.python-version }}
 
       - name: Cache pip dependencies
         uses: actions/cache@v4
         with:
           path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+          key: ${{ runner.os }}-py${{ matrix.python-version }}-pip-${{ hashFiles('requirements.txt') }}
           restore-keys: |
-            ${{ runner.os }}-pip-
+            ${{ runner.os }}-py${{ matrix.python-version }}-pip-
 
       - name: Install dependencies
         run: |
@@ -46,6 +52,7 @@ jobs:
 
   lint:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
       - uses: actions/checkout@v4
@@ -54,11 +61,12 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.14"
-          allow-prereleases: true
 
       - name: Install linters
+        # Black's style changes once a year; keep it on one major release.
+        # Ruff's rule set is pinned in pyproject.toml [tool.ruff.lint].
         run: |
-          pip install ruff black
+          pip install ruff "black>=26,<27"
 
       - name: Check formatting
         run: |
@@ -70,6 +78,7 @@ jobs:
 
   dashboard-typecheck:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     defaults:
       run:
         working-directory: dashboard

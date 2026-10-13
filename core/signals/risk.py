@@ -65,6 +65,7 @@ async def get_portfolio_value(
                 (snap_at,),
             )
             row = await cursor.fetchone()
+            assert row is not None  # aggregate query always returns one row
             return base + float(row[0] or 0) - float(row[1] or 0)
 
         # No snapshot yet — full scan
