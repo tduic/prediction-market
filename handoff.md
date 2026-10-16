@@ -1,8 +1,14 @@
 # Handoff
 
-_Last updated: 2026-09-27_
+_Last updated: 2026-10-16_
 
 ## State
+- 2026-10-16 toolchain upgrade: CI tests Python 3.15 (and 3.14), lint on
+  3.15, mypy `python_version = "3.15"`; dashboard on Node 24 and
+  TypeScript 7.0 (added `src/vite-env.d.ts` so TS 7's checked side-effect
+  imports accept `./index.css`). The GCP VM's Python was not touched
+  (`deploy/vm_init_remote.sh` still installs 3.12); moving it is a separate,
+  deliberate step.
 - Fork `sandsthebrand/prediction-market` `main` (4 commits) merged 2026-09-27,
   plus a breaker fix: resting (`pending`) single-platform orders don't count
   as failures.

@@ -35,6 +35,11 @@ jobs:
           project_id: ${{ env.PROJECT_ID }}
 
       # ── 3. Build dashboard in CI (avoids Node.js on the VM) ─────────
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
       - name: Build dashboard
         run: |
           cd dashboard

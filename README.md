@@ -38,8 +38,9 @@ A single async process drives everything: websocket-fed price streams, latency-s
 ## Quick Start
 
 ### Prerequisites
-- Python 3.12+ (3.12 on the VM; 3.14 works locally)
-- Node.js 18+ (to build the dashboard frontend)
+- Python 3.15 (local dev and CI; CI also tests 3.14). The GCP VM's interpreter is not
+  upgraded by a deploy: `deploy/vm_init_remote.sh` provisions 3.12.
+- Node.js 24 LTS (to build the dashboard frontend; TypeScript 7)
 
 ### Setup
 ```bash
