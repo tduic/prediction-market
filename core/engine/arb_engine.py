@@ -860,6 +860,11 @@ class ArbitrageEngine:
             limit_price=buy_price,
             order_type="LIMIT",
         )
+        # Re-check: the fee/depth/risk awaits above can take seconds, during
+        # which another pair may have halted execution.
+        if await is_halted(self.db):
+            self._skipped_halted += 1
+            return None
         _trade_start_ms = int(time.time() * 1000)
         buy_result = await self._submit_with_retry(
             buy_client, buy_leg, signal_id=signal_id, strategy=strategy
@@ -875,172 +880,164 @@ class ArbitrageEngine:
                 await self._circuit_breaker.record_order_result(success=False)
             return None
 
-        # Hedge exactly what was bought. Kalshi trades whole contracts.
-        bought = buy_result.filled_size if buy_result.filled_size is not None else size
-        hedge_size = math.floor(bought) if sell_platform == "kalshi" else bought
-        sell_result: OrderResult | None = None
-        if hedge_size > 0:
-            sell_leg = OrderLeg(
-                market_id=sell_id,
-                platform=sell_platform,
-                side=Side.SELL,
-                size=hedge_size,
-                limit_price=sell_price,
-                order_type="LIMIT",
+        # From here a buy has filled. Any exception (client bug, missing
+        # credentials, DB error) must halt — otherwise the position is
+        # silently unhedged and the pair stays eligible to re-buy.
+        try:
+            # Hedge exactly what was bought. Kalshi trades whole contracts.
+            bought = (
+                buy_result.filled_size if buy_result.filled_size is not None else size
             )
-            sell_result = await self._submit_with_retry(
-                sell_client, sell_leg, signal_id=signal_id, strategy=strategy
-            )
-        _sell_done_ms = int(time.time() * 1000)
+            hedge_size = math.floor(bought) if sell_platform == "kalshi" else bought
+            sell_result: OrderResult | None = None
+            if hedge_size > 0:
+                sell_leg = OrderLeg(
+                    market_id=sell_id,
+                    platform=sell_platform,
+                    side=Side.SELL,
+                    size=hedge_size,
+                    limit_price=sell_price,
+                    order_type="LIMIT",
+                )
+                sell_result = await self._submit_with_retry(
+                    sell_client, sell_leg, signal_id=signal_id, strategy=strategy
+                )
+            _sell_done_ms = int(time.time() * 1000)
 
-        if sell_result is not None and sell_result.status == "pending":
-            await self._halt_unknown_fill(sell_client, sell_result, pair_id, "sell")
-            return None
+            if sell_result is not None and sell_result.status == "pending":
+                await self._halt_unknown_fill(sell_client, sell_result, pair_id, "sell")
+                return None
 
-        sold = 0.0
-        if sell_result is not None and sell_result.filled_price is not None:
-            sold = (
-                sell_result.filled_size
-                if sell_result.filled_size is not None
-                else hedge_size
-            )
-        if (
-            sell_result is None
-            or sell_result.filled_price is None
-            or (abs(sold - bought) > 1e-9)
-        ):
-            logger.error(
-                "UNBALANCED_ARB pair=%s bought=%s sold=%s — unhedged exposure",
-                pair_id,
-                bought,
-                sold,
-            )
-            await halt(
-                self.db,
-                f"unbalanced_arb pair={pair_id} bought={bought} sold={sold} "
-                f"buy_order={buy_result.order_id} "
-                f"sell_order={None if sell_result is None else sell_result.order_id}",
-                component="arb_engine",
-            )
+            sold = 0.0
+            if sell_result is not None and sell_result.filled_price is not None:
+                sold = (
+                    sell_result.filled_size
+                    if sell_result.filled_size is not None
+                    else hedge_size
+                )
+            if (
+                sell_result is None
+                or sell_result.filled_price is None
+                or (abs(sold - bought) > 1e-9)
+            ):
+                logger.error(
+                    "UNBALANCED_ARB pair=%s bought=%s sold=%s — unhedged exposure",
+                    pair_id,
+                    bought,
+                    sold,
+                )
+                await halt(
+                    self.db,
+                    f"unbalanced_arb pair={pair_id} bought={bought} sold={sold} "
+                    f"buy_order={buy_result.order_id} "
+                    f"sell_order={None if sell_result is None else sell_result.order_id}",
+                    component="arb_engine",
+                )
+                if self._circuit_breaker is not None:
+                    await self._circuit_breaker.record_order_result(success=False)
+                return None
+
             if self._circuit_breaker is not None:
-                await self._circuit_breaker.record_order_result(success=False)
-            return None
+                await self._circuit_breaker.record_order_result(success=True)
+            # P&L and position rows use the size that actually traded.
+            size = bought
 
-        if self._circuit_breaker is not None:
-            await self._circuit_breaker.record_order_result(success=True)
-        # P&L and position rows use the size that actually traded.
-        size = bought
+            sell_price_yes = sell_result.filled_price
+            if sell_result.book == "NO":
+                # Translated Polymarket sell: filled on the NO book.
+                sell_price_yes = round(1.0 - sell_price_yes, 6)
+            actual_spread = sell_price_yes - buy_result.filled_price
+            total_fees = (buy_result.fee_paid or 0) + (sell_result.fee_paid or 0)
+            actual_pnl = round(actual_spread * size - total_fees, 4)
 
-        sell_price_yes = sell_result.filled_price
-        if sell_result.book == "NO":
-            # Translated Polymarket sell: filled on the NO book.
-            sell_price_yes = round(1.0 - sell_price_yes, 6)
-        actual_spread = sell_price_yes - buy_result.filled_price
-        total_fees = (buy_result.fee_paid or 0) + (sell_result.fee_paid or 0)
-        actual_pnl = round(actual_spread * size - total_fees, 4)
+            # Both legs have traded, so the trade is recorded either way. A P&L
+            # this far above the cap usually means a false-positive pair (the two
+            # markets aren't equivalent), so halt for human review below.
+            _pnl_cap = size * self._risk_config.pnl_sanity_cap_ratio
+            sanity_cap_hit = actual_pnl > _pnl_cap
 
-        _pnl_cap = size * self._risk_config.pnl_sanity_cap_ratio
-        if actual_pnl > _pnl_cap:
-            logger.warning(
-                "PNL_SANITY_CAP blocked pair=%s actual_pnl=%.4f > cap=%.4f "
-                "(size=%.1f spread=%.4f). Likely false-positive pair — skipping DB write.",
-                pair_id,
-                actual_pnl,
-                _pnl_cap,
-                size,
-                spread,
-            )
-            return None
-
-        pos_id = f"pos_{uuid.uuid4().hex[:12]}"
-        _positions_written = False
-        try:
-            await self.db.execute(
-                """INSERT INTO positions
-                   (id, signal_id, market_id, strategy, side, book, entry_price,
-                    entry_size, exit_price, exit_size, realized_pnl, fees_paid,
-                    pnl_model, status, opened_at, closed_at, updated_at)
-                   VALUES (?, ?, ?, ?, 'BUY', 'YES', ?, ?, ?, ?, ?, ?, 'realistic', 'closed', ?, ?, ?)""",
-                # Recorded in YES-price space: a translated (NO-book) sell's
-                # fill is converted above, so book stays 'YES'.
-                (
+            pos_id = f"pos_{uuid.uuid4().hex[:12]}"
+            _positions_written = False
+            try:
+                await self.db.execute(
+                    """INSERT INTO positions
+                       (id, signal_id, market_id, strategy, side, book, entry_price,
+                        entry_size, exit_price, exit_size, realized_pnl, fees_paid,
+                        pnl_model, status, opened_at, closed_at, updated_at)
+                       VALUES (?, ?, ?, ?, 'BUY', 'YES', ?, ?, ?, ?, ?, ?, 'realistic', 'closed', ?, ?, ?)""",
+                    # Recorded in YES-price space: a translated (NO-book) sell's
+                    # fill is converted above, so book stays 'YES'.
+                    (
+                        pos_id,
+                        signal_id,
+                        buy_id,
+                        strategy,
+                        buy_result.filled_price,
+                        size,
+                        sell_price_yes,
+                        size,
+                        actual_pnl,
+                        total_fees,
+                        now,
+                        now,
+                        now,
+                    ),
+                )
+                _positions_written = True
+            except Exception:
+                logger.exception(
+                    "Failed to insert positions row for pair=%s signal_id=%s pos_id=%s",
+                    pair_id,
+                    signal_id,
                     pos_id,
-                    signal_id,
-                    buy_id,
-                    strategy,
-                    buy_result.filled_price,
-                    size,
-                    sell_price_yes,
-                    size,
-                    actual_pnl,
-                    total_fees,
-                    now,
-                    now,
-                    now,
-                ),
-            )
-            _positions_written = True
-        except Exception:
-            logger.exception(
-                "Failed to insert positions row for pair=%s signal_id=%s pos_id=%s",
-                pair_id,
-                signal_id,
-                pos_id,
-            )
+                )
 
-        _outcomes_written = False
-        try:
-            await self.db.execute(
-                """INSERT INTO trade_outcomes
-                   (id, signal_id, strategy, violation_id, market_id_a, market_id_b,
-                    predicted_edge, predicted_pnl, actual_pnl, fees_total,
-                    edge_captured_pct, signal_to_fill_ms, holding_period_ms,
-                    spread_at_signal, resolved_at, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    f"trade_{uuid.uuid4().hex[:12]}",
+            _outcomes_written = False
+            try:
+                await self.db.execute(
+                    """INSERT INTO trade_outcomes
+                       (id, signal_id, strategy, violation_id, market_id_a, market_id_b,
+                        predicted_edge, predicted_pnl, actual_pnl, fees_total,
+                        edge_captured_pct, signal_to_fill_ms, holding_period_ms,
+                        spread_at_signal, resolved_at, created_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        f"trade_{uuid.uuid4().hex[:12]}",
+                        signal_id,
+                        strategy,
+                        violation_id,
+                        buy_id,
+                        sell_id,
+                        edge,
+                        round(econ.net, 4),
+                        actual_pnl,
+                        total_fees,
+                        (
+                            round((actual_pnl / econ.net) * 100, 1)
+                            if econ.net > 0
+                            else 0
+                        ),
+                        _sell_done_ms - _trade_start_ms,
+                        _sell_done_ms - _buy_fill_ms,
+                        spread,
+                        now,
+                        now,
+                    ),
+                )
+                _outcomes_written = True
+            except Exception:
+                logger.exception(
+                    "Failed to insert trade_outcomes row for pair=%s signal_id=%s",
+                    pair_id,
                     signal_id,
-                    strategy,
-                    violation_id,
-                    buy_id,
-                    sell_id,
-                    edge,
-                    round(econ.net, 4),
-                    actual_pnl,
-                    total_fees,
-                    (round((actual_pnl / econ.net) * 100, 1) if econ.net > 0 else 0),
-                    _sell_done_ms - _trade_start_ms,
-                    _sell_done_ms - _buy_fill_ms,
-                    spread,
-                    now,
-                    now,
-                ),
-            )
-            _outcomes_written = True
-        except Exception:
-            logger.exception(
-                "Failed to insert trade_outcomes row for pair=%s signal_id=%s",
-                pair_id,
-                signal_id,
-            )
-            if _positions_written:
-                # Roll back the positions row so reconciliation doesn't see
-                # a closed position with no corresponding trade_outcomes row.
-                try:
-                    await self.db.rollback()
-                except Exception:
-                    logger.debug(
-                        "rollback after trade_outcomes failure pair=%s",
-                        pair_id,
-                        exc_info=True,
-                    )
+                )
+                # No rollback: it would also discard both legs' uncommitted
+                # orders rows (and other coroutines' writes on this connection).
+                # Reconciliation flags a closed position without an outcome.
 
-        # Commit per trade: batching delayed persistence by up to 9 trades,
-        # so a process crash between flushes could drop filled positions
-        # that already moved real capital on the exchange. Reconciliation
-        # can't repair what it can't see. SQLite in WAL mode handles
-        # single-row commits cheaply, so the throughput cost is negligible.
-        if _positions_written and _outcomes_written:
+            # Commit per trade so a crash can't drop fills that already moved
+            # capital. Commit even if one insert failed: whatever was recorded
+            # (orders, position) must survive.
             try:
                 await self.db.commit()
             except Exception:
@@ -1049,22 +1046,56 @@ class ArbitrageEngine:
                     pair_id,
                     signal_id,
                 )
+                _positions_written = False
 
-        logger.info(
-            "  ARB FILLED: pnl=$%.4f fees=$%.4f | buy@%.4f sell@%.4f",
-            actual_pnl,
-            total_fees,
-            buy_result.filled_price,
-            sell_price_yes,
-        )
+            if not _positions_written:
+                await halt(
+                    self.db,
+                    f"position_record_failed pair={pair_id} signal={signal_id} "
+                    f"buy_order={buy_result.order_id} sell_order={sell_result.order_id}",
+                    component="arb_engine",
+                )
+            if sanity_cap_hit:
+                logger.warning(
+                    "PNL_SANITY_CAP pair=%s actual_pnl=%.4f > cap=%.4f (size=%.1f "
+                    "spread=%.4f) — likely false-positive pair; halting for review",
+                    pair_id,
+                    actual_pnl,
+                    _pnl_cap,
+                    size,
+                    spread,
+                )
+                await halt(
+                    self.db,
+                    f"pnl_sanity_cap pair={pair_id} actual_pnl={actual_pnl:.4f} "
+                    f"cap={_pnl_cap:.4f} — check the two markets are equivalent",
+                    component="arb_engine",
+                )
 
-        return {
-            "strategy": strategy,
-            "pair_id": pair_id,
-            "spread": spread,
-            "actual_pnl": actual_pnl,
-            "fees": total_fees,
-        }
+            logger.info(
+                "  ARB FILLED: pnl=$%.4f fees=$%.4f | buy@%.4f sell@%.4f",
+                actual_pnl,
+                total_fees,
+                buy_result.filled_price,
+                sell_price_yes,
+            )
+
+            return {
+                "strategy": strategy,
+                "pair_id": pair_id,
+                "spread": spread,
+                "actual_pnl": actual_pnl,
+                "fees": total_fees,
+            }
+        except Exception as exc:
+            logger.exception("Exception after buy fill on pair=%s", pair_id)
+            await halt(
+                self.db,
+                f"exception_after_fill pair={pair_id} buy_order={buy_result.order_id} "
+                f"{type(exc).__name__}: {exc}",
+                component="arb_engine",
+            )
+            return None
 
     async def flush(self):
         """Commit any pending DB writes.

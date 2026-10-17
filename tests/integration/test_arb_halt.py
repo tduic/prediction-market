@@ -200,3 +200,74 @@ async def test_translated_polymarket_sell_pnl_in_yes_space(db):
     assert engine.trades[0]["actual_pnl"] == pytest.approx((0.64 - 0.55) * 10.0)
     cursor = await db.execute("SELECT exit_price FROM positions")
     assert (await cursor.fetchone())[0] == pytest.approx(0.64)
+
+
+class RaisingClient(FakeClient):
+    async def submit_order(self, leg, signal_id=None, strategy=None):
+        self.legs.append(leg)
+        raise RuntimeError("RSA key not loaded")
+
+
+async def test_exception_after_buy_fill_halts(db):
+    buy = FakeClient("polymarket", _filled("polymarket", 0.40, 10.0))
+    sell = RaisingClient("kalshi")
+    engine = await _engine(db, buy, sell)
+    await engine.initial_sweep()
+    state = await get_halt(db)
+    assert state is not None and state["reason"].startswith("exception_after_fill")
+
+
+async def test_sanity_cap_records_the_fill_and_halts(db):
+    # Both legs filled at a 0.20 spread on 10 contracts: P&L 2.00 > cap 1.00.
+    # Money moved, so the trade must be recorded — then halt for review.
+    buy = FakeClient("polymarket", _filled("polymarket", 0.40, 10.0))
+    sell = FakeClient("kalshi", _filled("kalshi", 0.60, 10.0))
+    engine = await _engine(db, buy, sell)
+    await engine.initial_sweep()
+    cursor = await db.execute("SELECT COUNT(*) FROM positions")
+    assert (await cursor.fetchone())[0] == 1
+    state = await get_halt(db)
+    assert state is not None and state["reason"].startswith("pnl_sanity_cap")
+
+
+async def test_trade_outcomes_failure_keeps_position_row(db):
+    await db.execute(
+        "CREATE TRIGGER fail_trade_outcomes BEFORE INSERT ON trade_outcomes "
+        "BEGIN SELECT RAISE(ABORT, 'disk I/O error'); END"
+    )
+    await db.commit()
+    buy = FakeClient("polymarket", _filled("polymarket", 0.40, 10.0))
+    sell = FakeClient("kalshi", _filled("kalshi", 0.50, 10.0))
+    engine = await _engine(db, buy, sell)
+    await engine.initial_sweep()
+    cursor = await db.execute("SELECT COUNT(*) FROM positions")
+    assert (await cursor.fetchone())[0] == 1  # no rollback of recorded fills
+
+
+async def test_position_write_failure_halts(db):
+    await db.execute(
+        "CREATE TRIGGER fail_positions BEFORE INSERT ON positions "
+        "BEGIN SELECT RAISE(ABORT, 'disk I/O error'); END"
+    )
+    await db.commit()
+    buy = FakeClient("polymarket", _filled("polymarket", 0.40, 10.0))
+    sell = FakeClient("kalshi", _filled("kalshi", 0.50, 10.0))
+    engine = await _engine(db, buy, sell)
+    await engine.initial_sweep()
+    state = await get_halt(db)
+    assert state is not None and state["reason"].startswith("position_record_failed")
+
+
+async def test_halt_set_during_pretrade_lookups_blocks_the_buy(db):
+    from execution.market_data import StaticMarketData, set_market_data
+
+    class _HaltsMidway(StaticMarketData):
+        async def executable_depth(self, db, leg):
+            await halt(db, "other pair went unbalanced", component="arb_engine")
+            return float("inf")
+
+    set_market_data(_HaltsMidway())
+    buy, sell = FakeClient("polymarket"), FakeClient("kalshi")
+    engine = await _engine(db, buy, sell)
+    await engine.initial_sweep()
+    assert buy.legs == []

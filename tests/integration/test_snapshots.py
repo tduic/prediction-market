@@ -204,13 +204,19 @@ class TestStatsFields:
 
 @pytest.mark.asyncio
 class TestPnLSanityCap:
-    async def test_arb_path_blocked_when_pnl_exceeds_cap(self, db):
+    async def test_arb_over_cap_is_recorded_then_halts(self, db):
+        # Both legs filled, so the trade is recorded (money moved); the
+        # implausible P&L then halts execution for human review.
+        from core.engine.execution_control import get_halt
+
         matches = [_make_match("poly_A", "kal_A", 0.50, 0.55)]
         await _seed_markets(db, matches)
         engine = ArbitrageEngine(db, matches, min_spread=0.03)
         await _trigger_trade(engine, db, "poly_A", 0.10)
         cursor = await db.execute("SELECT COUNT(*) FROM positions")
-        assert (await cursor.fetchone())[0] == 0
+        assert (await cursor.fetchone())[0] == 1
+        state = await get_halt(db)
+        assert state is not None and state["reason"].startswith("pnl_sanity_cap")
 
     async def test_arb_path_allowed_when_pnl_within_cap(self, db):
         matches = [_make_match("poly_A", "kal_A", 0.50, 0.55)]
@@ -234,15 +240,18 @@ class TestPnLSanityCap:
 
         assert RiskControlConfig().pnl_sanity_cap_ratio == 0.10
 
-    async def test_arb_trade_outcomes_also_blocked(self, db):
-        matches = [_make_match("poly_A", "kal_A", 0.50, 0.55)]
+    async def test_arb_over_cap_blocks_further_trades(self, db):
+        matches = [
+            _make_match("poly_A", "kal_A", 0.50, 0.55),
+            _make_match("poly_B", "kal_B", 0.50, 0.55),
+        ]
         await _seed_markets(db, matches)
         engine = ArbitrageEngine(db, matches, min_spread=0.03)
         await _trigger_trade(engine, db, "poly_A", 0.10)
+        await _trigger_trade(engine, db, "poly_B", 0.51)
         await engine.flush()
-        for table in ("positions", "trade_outcomes"):
-            cursor = await db.execute(f"SELECT COUNT(*) FROM {table}")
-            assert (await cursor.fetchone())[0] == 0
+        cursor = await db.execute("SELECT COUNT(*) FROM trade_outcomes")
+        assert (await cursor.fetchone())[0] == 1  # only the first, then halted
 
 
 class TestMinSpreadEnvVar:
