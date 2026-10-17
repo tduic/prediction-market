@@ -670,6 +670,11 @@ async def main():
                 fee_warmup_task,
                 return_exceptions=True,
             )
+            # Release exchange HTTP clients (engine + single-platform cache).
+            from core.strategies.single_platform import close_execution_clients
+
+            await arb_engine.close()
+            await close_execution_clients(db)
             total_arb = len(arb_engine.trades)
             total_sched = scheduled.total_trades
             logger.info(

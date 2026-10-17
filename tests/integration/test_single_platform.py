@@ -1358,3 +1358,18 @@ async def test_single_platform_no_fill_not_recorded_by_breaker():
     )
     await _record_circuit_breaker_result(_Breaker(), result)
     assert calls == []
+
+
+async def test_close_execution_clients_closes_cached_clients(db):
+    from core.strategies import single_platform
+
+    closed = []
+
+    class _C:
+        async def close(self):
+            closed.append(1)
+
+    setattr(db, single_platform._CLIENT_CACHE_ATTR, {("live", "kalshi"): _C()})
+    await single_platform.close_execution_clients(db)
+    assert closed == [1]
+    assert getattr(db, single_platform._CLIENT_CACHE_ATTR) == {}
