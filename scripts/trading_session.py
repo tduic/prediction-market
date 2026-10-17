@@ -519,7 +519,8 @@ async def main():
         )
 
         # Build asset ID maps for websocket subscriptions.
-        # Polymarket WS needs platform_ids (condition_id), not our internal IDs.
+        # Polymarket WS is keyed by CLOB YES token ids (markets.yes_token_id),
+        # not conditionIds or our internal IDs; poly_id_map maps them back.
         (
             poly_platform_ids,
             poly_id_map,
