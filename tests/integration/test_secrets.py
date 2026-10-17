@@ -143,3 +143,48 @@ def test_backend_selection_via_env(monkeypatch):
     monkeypatch.setenv("SECRETS_BACKEND", "gcp")
     set_backend(None)
     assert get_backend().name == "gcp"
+
+
+class _Payload:
+    def __init__(self, value):
+        self.payload = type("P", (), {"data": value.encode()})()
+
+
+class _FlakyClient:
+    """First call raises the given error, later calls succeed."""
+
+    def __init__(self, first_error):
+        self.first_error = first_error
+        self.calls = 0
+
+    def access_secret_version(self, request):
+        self.calls += 1
+        if self.calls == 1:
+            raise self.first_error
+        return _Payload("s3cret")
+
+
+def _strict_backend_with(client):
+    backend = GCPSecretManagerBackend(project_id="proj", strict=True)
+    backend._client = client
+    return backend
+
+
+def test_transient_gcp_error_is_retried_not_cached():
+    class ServiceUnavailable(Exception):  # google.api_core name for HTTP 503
+        pass
+
+    backend = _strict_backend_with(_FlakyClient(ServiceUnavailable("503")))
+    assert backend.get("ALERT_DISCORD_WEBHOOK_URL", "") == ""  # this call fails
+    assert backend.get("ALERT_DISCORD_WEBHOOK_URL", "") == "s3cret"  # retried
+
+
+def test_missing_secret_is_cached():
+    class NotFound(Exception):
+        pass
+
+    client = _FlakyClient(NotFound("404"))
+    backend = _strict_backend_with(client)
+    assert backend.get("NOPE", "") == ""
+    assert backend.get("NOPE", "") == ""
+    assert client.calls == 1  # definite miss: not retried

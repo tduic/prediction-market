@@ -50,6 +50,11 @@ logger = logging.getLogger(__name__)
 # PEM contents are provisioned separately with restrictive filesystem access.
 ENV_ONLY_NAMES = frozenset({"KALSHI_RSA_KEY_PATH"})
 
+# google.api_core.exceptions names for answers that won't change on retry.
+_DEFINITE_SECRET_ERRORS = frozenset(
+    {"NotFound", "PermissionDenied", "FailedPrecondition"}
+)
+
 
 class SecretsBackend(Protocol):
     """Interface that all secret backends must satisfy."""
@@ -176,8 +181,12 @@ class GCPSecretManagerBackend:
             return value
         # Normalize provider failures into the configured fallback behavior.
         except Exception as e:  # noqa: BLE001
-            # Don't spam retries after a failed lookup for the process lifetime.
-            self._unavailable.add(name)
+            # Cache only definite answers (the secret doesn't exist / we may
+            # not read it). A transient error (timeout, 503) must not blank a
+            # secret for the rest of the process — e.g. silence alerting in
+            # strict mode until a restart.
+            if type(e).__name__ in _DEFINITE_SECRET_ERRORS:
+                self._unavailable.add(name)
             return self._fallback(name, default, type(e).__name__)
 
 
