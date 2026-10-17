@@ -77,7 +77,8 @@ async def _compute_daily_loss_today(db: aiosqlite.Connection) -> float:
     _today = datetime.now(UTC).strftime("%Y-%m-%d")
     _tomorrow = (date.fromisoformat(_today) + timedelta(days=1)).isoformat()
     cursor = await db.execute(
-        "SELECT COALESCE(SUM(actual_pnl - COALESCE(fees_total, 0)), 0) "
+        # actual_pnl is already net of fees
+        "SELECT COALESCE(SUM(actual_pnl), 0) "
         "FROM trade_outcomes WHERE created_at >= ? AND created_at < ?",
         (_today, _tomorrow),
     )
@@ -236,7 +237,8 @@ def _build_app(
                 row = await cursor.fetchone()
                 realized_pnl_total = row[0] if row else 0
                 total_fees = row[1] if row else 0
-                total_capital = PAPER_CAPITAL + realized_pnl_total - total_fees
+                # actual_pnl is already net of fees
+                total_capital = PAPER_CAPITAL + realized_pnl_total
                 pos_cursor = await db.execute(
                     "SELECT COUNT(*), COALESCE(SUM(entry_price * entry_size), 0) "
                     "FROM positions WHERE status = 'open'"
@@ -612,11 +614,8 @@ def _build_app(
                     "SELECT COALESCE(SUM(actual_pnl), 0), COALESCE(SUM(fees_total), 0) FROM trade_outcomes"
                 )
                 row = await cursor.fetchone()
-                total_capital = (
-                    PAPER_CAPITAL + (row[0] or 0) - (row[1] or 0)
-                    if row
-                    else PAPER_CAPITAL
-                )
+                # actual_pnl is already net of fees
+                total_capital = PAPER_CAPITAL + (row[0] or 0) if row else PAPER_CAPITAL
 
             _cutoff_90d = (datetime.now(UTC) - timedelta(days=90)).isoformat()
             cursor = await db.execute(
@@ -807,9 +806,10 @@ def _build_app(
                 SELECT
                     DATE(created_at) AS trade_date,
                     COUNT(*) AS trade_count,
-                    COALESCE(SUM(actual_pnl), 0) AS gross_pnl,
+                    COALESCE(SUM(actual_pnl + COALESCE(fees_total, 0)), 0)
+                        AS gross_pnl,
                     COALESCE(SUM(fees_total), 0) AS total_fees,
-                    COALESCE(SUM(actual_pnl) - SUM(COALESCE(fees_total, 0)), 0) AS net_pnl,
+                    COALESCE(SUM(actual_pnl), 0) AS net_pnl,  -- already net
                     SUM(CASE WHEN actual_pnl > 0 THEN 1 ELSE 0 END) AS win_count
                 FROM trade_outcomes
                 WHERE created_at >= ?

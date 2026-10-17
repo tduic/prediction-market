@@ -37,7 +37,8 @@ async def take_trading_snapshot(db: aiosqlite.Connection) -> int | None:
         totals = await cursor.fetchone()
         realized_pnl_total = totals[0] if totals else 0
         fees_total = totals[1] if totals else 0
-        total_capital = starting_capital + realized_pnl_total - fees_total
+        # actual_pnl is already net of fees; fees_total is informational.
+        total_capital = starting_capital + realized_pnl_total
         cash = total_capital  # Paper trading has no open positions
 
         # ── Count open positions ──
@@ -206,7 +207,7 @@ async def print_analytics(db: aiosqlite.Connection):
     print(f"\n  Markets: {poly_count} Polymarket + {kalshi_count} Kalshi")
     print(f"  Violations detected: {viol_count}")
     print(f"  Trades executed: {total}")
-    print(f"  Total PnL: ${total_pnl:.4f}")
-    print(f"  Total fees: ${total_fees:.4f}")
-    print(f"  Net: ${total_pnl - total_fees:.4f}")
+    print(f"  Net PnL (after fees): ${total_pnl:.4f}")
+    print(f"  Fees paid: ${total_fees:.4f}")
+    print(f"  Gross PnL: ${total_pnl + total_fees:.4f}")
     print("=" * 70)

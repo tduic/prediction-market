@@ -332,7 +332,7 @@ class DailyLossCircuitBreaker:
         """
         Return today's realized net losses as a positive float.
 
-        Sums ``actual_pnl - fees_total`` from ``trade_outcomes`` dated
+        Sums ``actual_pnl`` (already net of fees) from ``trade_outcomes`` dated
         today (UTC). Returns 0.0 if net P&L is positive (no loss).
 
         Uses a range comparison on ``created_at`` so the query planner can
@@ -350,7 +350,7 @@ class DailyLossCircuitBreaker:
         tomorrow = (date.fromisoformat(today) + timedelta(days=1)).isoformat()
         cursor = await self.db.execute(
             """
-            SELECT COALESCE(SUM(actual_pnl - COALESCE(fees_total, 0)), 0)
+            SELECT COALESCE(SUM(actual_pnl), 0)
             FROM trade_outcomes
             WHERE created_at >= ? AND created_at < ?
             """,

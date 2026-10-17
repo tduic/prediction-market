@@ -4,7 +4,8 @@ Risk checks for signal validation before execution.
 All monetary limits are computed as percentages of current portfolio value,
 so they scale automatically as the account grows or shrinks.
 
-Portfolio value = starting_capital + realized_pnl_total - fees_total
+Portfolio value = starting_capital + realized_pnl_total (trade_outcomes.actual_pnl
+is already net of fees)
 
 These checks are called by the execution handler BEFORE routing orders.
 Every check result is logged to the risk_check_log table for audit.
@@ -66,7 +67,7 @@ async def get_portfolio_value(
             )
             row = await cursor.fetchone()
             assert row is not None  # aggregate query always returns one row
-            return base + float(row[0] or 0) - float(row[1] or 0)
+            return base + float(row[0] or 0)  # actual_pnl is net of fees
 
         # No snapshot yet — full scan
         cursor = await db.execute(
@@ -76,7 +77,8 @@ async def get_portfolio_value(
         row = await cursor.fetchone()
         realized_pnl = row[0] if row else 0
         total_fees = row[1] if row else 0
-        return starting_capital + realized_pnl - total_fees
+        del total_fees  # actual_pnl is already net of fees
+        return starting_capital + realized_pnl
     except Exception as e:
         logger.warning(
             "Could not compute portfolio value: %s — using starting_capital", e
@@ -144,10 +146,11 @@ async def check_daily_loss_limit(
     try:
         today = datetime.now(UTC).strftime("%Y-%m-%d")
         tomorrow = (date.fromisoformat(today) + timedelta(days=1)).isoformat()
-        # Match circuit_breaker._compute_daily_loss() exactly: net = pnl - fees,
-        # loss = max(0, -net). Range comparison allows index on created_at.
+        # Match circuit_breaker._compute_daily_loss() exactly: actual_pnl is
+        # already net of fees; loss = max(0, -net). Range comparison allows
+        # index on created_at.
         cursor = await db.execute(
-            "SELECT COALESCE(SUM(actual_pnl - COALESCE(fees_total, 0)), 0) "
+            "SELECT COALESCE(SUM(actual_pnl), 0) "
             "FROM trade_outcomes WHERE created_at >= ? AND created_at < ?",
             (today, tomorrow),
         )
