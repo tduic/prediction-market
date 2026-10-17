@@ -57,3 +57,35 @@ def test_merge_keeps_update_file_when_replacement_fails(tmp_path, monkeypatch):
         raise AssertionError("expected atomic replacement to fail")
 
     assert updates_path.exists()
+
+
+def _merge(tmp_path, existing: str, updates: str) -> str:
+    env_path = tmp_path / "runtime.env"
+    updates_path = tmp_path / "updates.env"
+    env_path.write_text(existing, encoding="utf-8")
+    updates_path.write_text(updates, encoding="utf-8")
+    env_merge.merge_environment_file(updates_path, env_path)
+    return env_path.read_text(encoding="utf-8")
+
+
+def test_replacement_value_with_group_reference_is_literal(tmp_path):
+    # Previously the value was an re.sub replacement template: "\1" raised
+    # re.error ("invalid group reference") and aborted the deploy.
+    out = _merge(tmp_path, "KEY=old\n", "KEY=a\\1b\n")
+    assert out == "KEY=a\\1b\n"
+
+
+def test_replacement_value_with_bad_escape_is_literal(tmp_path):
+    out = _merge(tmp_path, "KEY=old\n", "KEY=C:\\q\\path\n")
+    assert out == "KEY=C:\\q\\path\n"
+
+
+def test_replacement_value_with_double_backslash_is_not_collapsed(tmp_path):
+    # Previously "\\\\" in the value was silently collapsed to a single "\\".
+    out = _merge(tmp_path, "KEY=old\n", "KEY=x\\\\y\n")
+    assert out == "KEY=x\\\\y\n"
+
+
+def test_replacement_value_with_group_syntax_is_literal(tmp_path):
+    out = _merge(tmp_path, "KEY=old\nOTHER=1\n", "KEY=\\g<0>$&\n")
+    assert out == "KEY=\\g<0>$&\nOTHER=1\n"
