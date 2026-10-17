@@ -13,7 +13,7 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding
 from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey
 
-from core.ingestor.polymarket import MarketData, OrderBook, TokenBucket
+from core.ingestor.polymarket import MarketData, TokenBucket
 from core.secrets import get_secret
 
 logger = logging.getLogger(__name__)
@@ -131,51 +131,6 @@ class KalshiClient:
             "Content-Type": "application/json",
         }
 
-    async def poll_markets(
-        self,
-        status: str | None = None,
-        category: str | None = None,
-        limit: int = 100,
-        offset: int = 0,
-    ) -> list[MarketData]:
-        """Poll markets from Kalshi API."""
-        if not await self._wait_for_token():
-            logger.warning(
-                "Kalshi rate limit: no token available after %.1fs — skipping poll",
-                _RATE_LIMIT_WAIT_S,
-            )
-            return []
-
-        try:
-            params: dict[str, str | int] = {"limit": limit, "offset": offset}
-            if status:
-                params["status"] = status
-            if category:
-                params["category"] = category
-
-            # Sign the canonical full API path without the query string. Kalshi's
-            # signature covers method + path only; query params must be sent as
-            # a separate dict to httpx. See scripts/verify_api_auth.py and
-            # core/ingestor/store.py for the canonical pattern.
-            headers = self._sign_request("GET", "/trade-api/v2/markets")
-
-            response = await self.client.get("/markets", headers=headers, params=params)
-            response.raise_for_status()
-            data = response.json()
-
-            markets = []
-            for item in data.get("markets", []):
-                market = self._parse_market(item)
-                if market:
-                    markets.append(market)
-
-            logger.info("Polled %d markets from Kalshi", len(markets))
-            return markets
-
-        except httpx.HTTPError as e:
-            logger.error("Kalshi API error: %s", e)
-            return []
-
     async def get_market(self, ticker: str) -> MarketData | None:
         """Get single market by ticker."""
         if not await self._wait_for_token():
@@ -207,42 +162,6 @@ class KalshiClient:
             return None
         except httpx.HTTPError as e:
             logger.error("Kalshi API error: %s", e)
-            return None
-
-    async def get_orderbook(self, ticker: str) -> OrderBook | None:
-        """Get orderbook for a market."""
-        if not await self._wait_for_token():
-            logger.warning(
-                "Kalshi rate limit: no token available after %.1fs — "
-                "skipping get_orderbook(%s)",
-                _RATE_LIMIT_WAIT_S,
-                ticker,
-            )
-            return None
-
-        try:
-            # Sign the canonical full API path (with /trade-api/v2 prefix);
-            # request URL stays relative to api_base.
-            headers = self._sign_request(
-                "GET", f"/trade-api/v2/markets/{ticker}/orderbook"
-            )
-
-            response = await self.client.get(
-                f"/markets/{ticker}/orderbook", headers=headers
-            )
-            response.raise_for_status()
-            data = response.json()
-
-            book = OrderBook(
-                token_id=ticker,
-                bids=data.get("bids", []),
-                asks=data.get("asks", []),
-            )
-            book.compute_mid_price()
-            return book
-
-        except httpx.HTTPError as e:
-            logger.error("Error fetching orderbook for %s: %s", ticker, e)
             return None
 
     def _parse_market(self, item: dict) -> MarketData | None:

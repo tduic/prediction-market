@@ -51,9 +51,6 @@ class PlatformCredentials:
     kalshi_rsa_key_path: str = field(
         default_factory=lambda: get_secret("KALSHI_RSA_KEY_PATH", "") or ""
     )
-    kalshi_environment: str = field(
-        default_factory=lambda: os.getenv("KALSHI_ENVIRONMENT", "prod")
-    )
     kalshi_api_base: str = field(
         default_factory=lambda: os.getenv(
             "KALSHI_API_BASE", "https://api.elections.kalshi.com/trade-api/v2"
@@ -81,26 +78,6 @@ class DatabaseConfig:
 class IngestorConfig:
     """Market data ingestor settings."""
 
-    poll_interval_polymarket_s: int = field(
-        default_factory=lambda: _bounded_positive_int_env(
-            "POLL_INTERVAL_POLYMARKET_S", 30, minimum=1, maximum=86400
-        )
-    )
-    poll_interval_kalshi_s: int = field(
-        default_factory=lambda: _bounded_positive_int_env(
-            "POLL_INTERVAL_KALSHI_S", 30, minimum=1, maximum=86400
-        )
-    )
-    poll_interval_external_s: int = field(
-        default_factory=lambda: _bounded_positive_int_env(
-            "POLL_INTERVAL_EXTERNAL_S", 300, minimum=1, maximum=86400
-        )
-    )
-    max_markets_per_poll: int = field(
-        default_factory=lambda: _bounded_positive_int_env(
-            "MAX_MARKETS_PER_POLL", 500, minimum=1, maximum=100000
-        )
-    )
     pair_refresh_interval_s: int = field(
         default_factory=lambda: _bounded_positive_int_env(
             "PAIR_REFRESH_INTERVAL_S", 1800, minimum=1, maximum=86400
@@ -257,9 +234,6 @@ class ExecutionConfig:
     retry_backoff_base_s: float = field(
         default_factory=lambda: float(os.getenv("RETRY_BACKOFF_BASE_S", "1"))
     )
-    partial_fill_cancel_window_s: int = field(
-        default_factory=lambda: int(os.getenv("PARTIAL_FILL_CANCEL_WINDOW_S", "5"))
-    )
 
 
 @dataclass
@@ -267,7 +241,6 @@ class ObservabilityConfig:
     """Logging and monitoring settings."""
 
     log_level: str = field(default_factory=lambda: os.getenv("LOG_LEVEL", "INFO"))
-    log_format: str = field(default_factory=lambda: os.getenv("LOG_FORMAT", "text"))
     pnl_snapshot_interval_s: int = field(
         default_factory=lambda: int(os.getenv("PNL_SNAPSHOT_INTERVAL_S", "900"))
     )

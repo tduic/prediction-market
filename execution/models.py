@@ -38,28 +38,3 @@ class OrderLeg(BaseModel):
         if v.upper() not in ("LIMIT", "MARKET"):
             raise ValueError("order_type must be 'LIMIT' or 'MARKET'")
         return v.upper()
-
-
-class TradingSignal(BaseModel):
-    """Schema for trading signals from core."""
-
-    signal_id: str
-    schema_version: str
-    generated_at_utc: str  # ISO format timestamp
-    expires_at_utc: str  # ISO format timestamp
-    legs: list[OrderLeg] = Field(..., min_length=1)
-    execution_mode: str = "simultaneous"  # "simultaneous" or "sequential"
-    abort_on_partial: bool = False
-    expiry_s: int = Field(default=300, gt=0)  # Seconds to keep position open
-
-    @validator("schema_version")
-    def validate_schema_version(cls, v: str) -> str:
-        if v != "1.0":
-            raise ValueError("schema_version must be '1.0'")
-        return v
-
-    @validator("execution_mode")
-    def validate_execution_mode(cls, v: str) -> str:
-        if v.lower() not in ("simultaneous", "sequential"):
-            raise ValueError("execution_mode must be 'simultaneous' or 'sequential'")
-        return v.lower()

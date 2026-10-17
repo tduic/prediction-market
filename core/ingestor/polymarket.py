@@ -133,42 +133,6 @@ class PolymarketClient:
             "POLY-API-KEY": self.api_key,
         }
 
-    async def poll_markets(self, limit: int = 100, offset: int = 0) -> list[MarketData]:
-        """
-        Poll all markets from Polymarket API.
-
-        Args:
-            limit: Results per page
-            offset: Pagination offset
-
-        Returns:
-            List of MarketData objects
-        """
-        if not self.rate_limiter.acquire():
-            logger.warning("Rate limit exceeded for Polymarket")
-            return []
-
-        try:
-            path = f"/markets?limit={limit}&offset={offset}"
-            headers = self._sign_request("GET", path)
-
-            response = await self.client.get(path, headers=headers)
-            response.raise_for_status()
-            data = response.json()
-
-            markets = []
-            for item in data.get("data", []):
-                market = self._parse_market(item)
-                if market:
-                    markets.append(market)
-
-            logger.info(f"Polled {len(markets)} markets from Polymarket")
-            return markets
-
-        except httpx.HTTPError as e:
-            logger.error(f"Polymarket API error: {e}")
-            return []
-
     async def get_market(self, condition_id: str) -> MarketData | None:
         """
         Get single market by condition ID.
@@ -200,39 +164,6 @@ class PolymarketClient:
             return None
         except httpx.HTTPError as e:
             logger.error(f"Polymarket API error: {e}")
-            return None
-
-    async def get_orderbook(self, token_id: str) -> OrderBook | None:
-        """
-        Get orderbook for a token.
-
-        Args:
-            token_id: Token ID
-
-        Returns:
-            OrderBook or None
-        """
-        if not self.rate_limiter.acquire():
-            return None
-
-        try:
-            path = f"/book?token_id={token_id}"
-            headers = self._sign_request("GET", path)
-
-            response = await self.client.get(path, headers=headers)
-            response.raise_for_status()
-            data = response.json()
-
-            book = OrderBook(
-                token_id=token_id,
-                bids=data.get("bids", []),
-                asks=data.get("asks", []),
-            )
-            book.compute_mid_price()
-            return book
-
-        except httpx.HTTPError as e:
-            logger.error(f"Error fetching orderbook for {token_id}: {e}")
             return None
 
     def _parse_market(self, item: dict) -> MarketData | None:

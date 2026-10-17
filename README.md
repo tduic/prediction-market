@@ -178,7 +178,6 @@ Pairs related markets across platforms using title normalization plus an inverte
 ### Strategies (`core/strategies/`)
 - `assignment.py` — spread-bucket → strategy label mapping.
 - `single_platform.py` — P2–P5 detection + `mark_and_close_positions` for expired holdings.
-- `batch.py` — initial-sweep pass over all pairs on startup.
 
 ### Signals (`core/signals/`)
 - `risk.py` — all pre-trade risk checks (position, daily loss, exposure, duplicate, min edge).

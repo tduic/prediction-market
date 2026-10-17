@@ -1,40 +1,34 @@
-"""Guard against recurring file corruption (literal \\n sequences)."""
+"""Guard against recurring file corruption (literal \\n sequences).
+
+Files have twice been rewritten as one long line of escaped newlines
+(scripts/dashboard_api.py, execution/circuit_breaker.py). Check every source
+file, not a hand-picked list.
+"""
 
 import ast
 from pathlib import Path
 
+import pytest
+
 _ROOT = Path(__file__).parent.parent.parent
-
-_CORRUPTION_PRONE = [
-    _ROOT / "scripts" / "dashboard_api.py",
-    _ROOT / "core" / "engine" / "reconciliation.py",
-    _ROOT / "core" / "strategies" / "batch.py",
-]
-
-
-def test_dashboard_api_is_valid_python():
-    src = (_ROOT / "scripts" / "dashboard_api.py").read_text()
-    ast.parse(src)
+_SOURCES = sorted(
+    p
+    for d in ("core", "execution", "scripts", "tests")
+    for p in (_ROOT / d).rglob("*.py")
+    if "__pycache__" not in p.parts
+)
 
 
-def test_reconciliation_is_valid_python():
-    src = (_ROOT / "core" / "engine" / "reconciliation.py").read_text()
-    ast.parse(src)
+@pytest.mark.parametrize("path", _SOURCES, ids=lambda p: str(p.relative_to(_ROOT)))
+def test_source_parses(path):
+    ast.parse(path.read_text(), filename=str(path))
 
 
-def test_batch_strategy_is_valid_python():
-    src = (_ROOT / "core" / "strategies" / "batch.py").read_text()
-    ast.parse(src)
-
-
-def test_no_literal_newline_corruption():
-    """All corruption-prone files must not contain literal backslash-n sequences
-    where a file has fewer real newlines than expected (i.e., the file is one
-    long line with escaped newlines)."""
-    for path in _CORRUPTION_PRONE:
-        src = path.read_text()
-        real_lines = src.count("\n")
-        assert real_lines >= 50, (
-            f"{path.name} has only {real_lines} real newlines — "
-            f"possible literal \\\\n corruption"
-        )
+@pytest.mark.parametrize("path", _SOURCES, ids=lambda p: str(p.relative_to(_ROOT)))
+def test_no_single_line_corruption(path):
+    src = path.read_text()
+    longest = max((len(line) for line in src.splitlines()), default=0)
+    assert longest < 1000, (
+        f"{path.name} has a {longest}-character line — "
+        "possible literal \\n corruption"
+    )
