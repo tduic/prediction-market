@@ -3,6 +3,11 @@ Description=Predictor Trading System
 Documentation=https://github.com/tyjodu/prediction-market
 After=network-online.target
 Wants=network-online.target
+# Give up (unit enters "failed") after 5 starts within 5 minutes. These keys
+# belong in [Unit]: under [Service], StartLimitIntervalSec is an unknown key
+# and is ignored, so the 5-in-5-minutes limit never applied.
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -27,11 +32,9 @@ ExecStart=/data/predictor/venv/bin/python \
     --dashboard-port 8000 \
     --dashboard-host 0.0.0.0
 
-# Restart policy: wait 30s before retrying on crash
+# Restart policy: wait 30s before retrying on crash (rate limit is in [Unit]).
 Restart=on-failure
 RestartSec=30
-StartLimitIntervalSec=300
-StartLimitBurst=5
 
 # Logging — view with: journalctl -u predictor -f
 StandardOutput=journal
