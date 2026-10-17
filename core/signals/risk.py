@@ -90,7 +90,9 @@ def _leg_capital_at_risk(leg: Any) -> float:
     """Capital a leg puts at risk: size * p to buy YES at p, size * (1 - p) to
     sell YES at p (the short side's collateral, or the cost of buying NO)."""
     price = leg.limit_price if leg.limit_price is not None else 0.5
-    if str(getattr(leg, "side", "BUY")).upper() == "SELL":
+    side = getattr(leg, "side", "BUY")
+    side = getattr(side, "value", side)  # Side enum or plain string
+    if str(side).upper() == "SELL":
         return leg.size * (1.0 - price)
     return leg.size * price
 

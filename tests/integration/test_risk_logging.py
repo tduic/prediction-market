@@ -162,3 +162,14 @@ class TestCapitalAtRisk:
         )
         # open short: 10 * (1 - 0.90) = 1.0; new buy: 10 * 0.50 = 5.0
         assert result.check_value == pytest.approx(6.0)
+
+
+async def test_capital_at_risk_accepts_side_enum():
+    from core.signals.risk import _leg_capital_at_risk
+    from execution.enums import Side
+    from execution.models import OrderLeg
+
+    leg = OrderLeg(
+        market_id="m", platform="kalshi", side=Side.SELL, size=10, limit_price=0.10
+    )
+    assert _leg_capital_at_risk(leg) == pytest.approx(9.0)
