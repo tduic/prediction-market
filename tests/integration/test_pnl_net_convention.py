@@ -64,7 +64,9 @@ async def test_snapshot_capital_counts_fees_once(one_trade):
     assert (await cursor.fetchone())[0] == pytest.approx(10_000.10)
 
 
-async def test_dashboard_overview_and_strategies_count_fees_once(one_trade, tmp_path):
+async def test_dashboard_overview_and_strategies_count_fees_once(
+    one_trade, tmp_path, monkeypatch
+):
     import aiosqlite
     from httpx import ASGITransport, AsyncClient
 
@@ -84,6 +86,8 @@ async def test_dashboard_overview_and_strategies_count_fees_once(one_trade, tmp_
                 [tuple(r) for r in rows],
             )
         await file_db.commit()
+    # A developer's local .env (loaded by scripts) may set a password.
+    monkeypatch.delenv("DASHBOARD_PASSWORD", raising=False)
     app = create_dashboard_app(db_path=str(path))
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
         overview = (await c.get("/api/overview")).json()
