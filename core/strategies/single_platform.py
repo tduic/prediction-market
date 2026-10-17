@@ -810,20 +810,29 @@ async def detect_single_platform_opportunities(
             # Phase 4: open position, NO synthetic exit price.
             # mark_and_close_positions() will close it after holding_period_s
             # at the then-current market price, giving a realistic realized PnL.
+            #
+            # entry_price is always in YES-price space (mark-to-market and
+            # resolution compare it with YES prices). A translated Polymarket
+            # SELL fills on the NO book at 1 - p, so convert it back; ``book``
+            # records the token actually held.
+            entry_price = result.filled_price
+            if result.book == "NO":
+                entry_price = round(1.0 - result.filled_price, 6)
             pos_id = f"pos_{uuid.uuid4().hex[:12]}"
             try:
                 await db.execute(
                     """INSERT INTO positions
                        (id, signal_id, market_id, strategy, side, book, entry_price,
                         entry_size, fees_paid, pnl_model, status, opened_at, updated_at)
-                       VALUES (?, ?, ?, ?, ?, 'YES', ?, ?, ?, 'realistic', 'open', ?, ?)""",
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'realistic', 'open', ?, ?)""",
                     (
                         pos_id,
                         signal_id,
                         m["id"],
                         strategy,
                         side,
-                        result.filled_price,
+                        result.book,
+                        entry_price,
                         size,
                         result.fee_paid or 0,
                         now,
@@ -838,7 +847,7 @@ async def detect_single_platform_opportunities(
                     "strategy": strategy,
                     "market": f"{m['platform']}:{m['id'][:20]}",
                     "side": side,
-                    "price": result.filled_price,
+                    "price": entry_price,
                     "edge": edge,
                     "pos_id": pos_id,
                 }

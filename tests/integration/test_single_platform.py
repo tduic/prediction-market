@@ -1251,3 +1251,78 @@ class TestExecutionHalt:
         state = await get_halt(db)
         assert state is not None and state["reason"].startswith("unknown_fill")
         assert client.cancelled == ["o-rest"]
+
+
+class TestTranslatedSells:
+    """A Polymarket SELL without YES inventory executes as BUY NO; its fill
+    price is in NO space. Positions store entry_price in YES space (what
+    mark-to-market and resolution compare against) and record the token
+    actually held in ``book``."""
+
+    async def _open_translated_short(self, db, monkeypatch, no_fill=0.30):
+        from execution.clients.base import OrderResult
+
+        legs = []
+
+        class _NoBookClient:
+            async def submit_order(self, leg, signal_id=None, strategy=None):
+                legs.append(leg)
+                return OrderResult(
+                    order_id="o-no",
+                    platform="polymarket",
+                    status="filled",
+                    submission_latency_ms=1,
+                    filled_price=no_fill,
+                    filled_size=leg.size,
+                    fee_paid=0.0,
+                    book="NO",
+                )
+
+            async def cancel_order(self, order_id):
+                return True
+
+        monkeypatch.setattr(
+            "execution.factory._make_single_execution_client",
+            lambda db, mode, platform: _NoBookClient(),
+        )
+        await _seed_market(db, "m_short", yes_price=0.75)
+        await detect_single_platform_opportunities(db, max_trades=10)
+        assert legs and legs[0].side.value == "SELL"
+        cursor = await db.execute(
+            "SELECT id, side, book, entry_price, entry_size FROM positions"
+        )
+        return await cursor.fetchone()
+
+    async def test_entry_price_stored_in_yes_space(self, db, monkeypatch):
+        row = await self._open_translated_short(db, monkeypatch, no_fill=0.30)
+        assert row["side"] == "SELL"
+        assert row["book"] == "NO"
+        assert row["entry_price"] == pytest.approx(0.70)
+
+    async def test_mark_to_market_pnl_is_correct(self, db, monkeypatch):
+        row = await self._open_translated_short(db, monkeypatch, no_fill=0.30)
+        await db.execute("UPDATE positions SET opened_at = '2000-01-01T00:00:00+00:00'")
+        await db.commit()
+        await mark_and_close_positions(
+            db, holding_period_s=1, price_cache={"m_short": 0.65}
+        )
+        cursor = await db.execute(
+            "SELECT realized_pnl FROM positions WHERE id = ?", (row["id"],)
+        )
+        # Short YES from 0.70, marked at 0.65 → gain 0.05 per contract
+        realized = (await cursor.fetchone())[0]
+        assert realized == pytest.approx(0.05 * row["entry_size"], abs=1e-4)
+
+    async def test_translated_short_is_not_counted_as_yes_inventory(
+        self, db, monkeypatch
+    ):
+        from execution.clients.polymarket_book import BookResolver
+        from execution.enums import Book, Side
+
+        await self._open_translated_short(db, monkeypatch)
+        await db.execute(
+            "UPDATE markets SET yes_token_id='ty', no_token_id='tn' WHERE id='m_short'"
+        )
+        await db.commit()
+        resolved = await BookResolver(db).resolve("m_short", Side.SELL, 1.0, 0.75)
+        assert resolved is not None and resolved.book is Book.NO
