@@ -76,6 +76,7 @@ def _database_size_bytes(db_path: str) -> int:
 async def refresh_markets_and_matches(db: aiosqlite.Connection, cfg) -> list[dict]:
     """Full fetch + store + match + persist. Run once, then use cached matches."""
     from core.ingestor.store import (
+        MarketFetchError,
         fetch_kalshi_markets,
         fetch_polymarket_markets,
         store_markets,
@@ -93,7 +94,27 @@ async def refresh_markets_and_matches(db: aiosqlite.Connection, cfg) -> list[dic
             api_base=cfg.platform_credentials.kalshi_api_base,
         )
     )
-    poly_markets, kalshi_markets = await asyncio.gather(poly_task, kalshi_task)
+    try:
+        poly_markets, kalshi_markets = await asyncio.gather(poly_task, kalshi_task)
+    except MarketFetchError as e:
+        # Never store a partial listing, and never crash: an exit here with
+        # an empty pair cache would restart-loop into StartLimitBurst. Keep
+        # the previous DB snapshot and idle like "no matches".
+        for t in (poly_task, kalshi_task):
+            t.cancel()
+        logger.error("Market refresh aborted, DB left unchanged: %s", e)
+        from core.alerting import Severity, get_alert_manager
+
+        try:
+            await get_alert_manager().send(
+                title="Market fetch failed: refresh aborted",
+                message=str(e)[:500],
+                severity=Severity.CRITICAL,
+                component="trading_session",
+            )
+        except Exception:  # noqa: BLE001 — alerting must not break startup
+            logger.exception("failed to send market-fetch alert")
+        return []
 
     if not poly_markets and not kalshi_markets:
         logger.warning("No markets fetched")
