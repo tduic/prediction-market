@@ -566,6 +566,82 @@ class TestHostAuthPolicy:
         assert _enforce_host_auth_policy("10.0.0.5") == "10.0.0.5"
 
 
+class _FakeSecretsBackend:
+    """Secrets backend that ignores the environment (like GCP + SECRETS_STRICT)."""
+
+    name = "fake"
+
+    def __init__(self, values: dict[str, str]) -> None:
+        self._values = values
+
+    def get(self, name: str, default: str | None = None) -> str | None:
+        return self._values.get(name, default)
+
+
+@pytest.fixture
+def fake_secrets():
+    from core.secrets import set_backend
+
+    def _install(values: dict[str, str]) -> None:
+        set_backend(_FakeSecretsBackend(values))
+
+    yield _install
+    set_backend(None)
+
+
+class TestAuthSecretSourceConsistency:
+    """The bind guard and the auth middleware must read the password from the
+    same place (get_secret). Previously the middleware used get_secret while
+    the guard used os.getenv: with SECRETS_STRICT=true and the password only in
+    .env, no middleware was installed yet the guard allowed 0.0.0.0, serving
+    every endpoint unauthenticated."""
+
+    def test_env_only_password_with_strict_backend_forces_loopback(
+        self, monkeypatch, fake_secrets
+    ):
+        from scripts.dashboard_api import _enforce_host_auth_policy
+
+        monkeypatch.setenv("DASHBOARD_PASSWORD", "only-in-env")
+        fake_secrets({})  # strict backend: env is not consulted
+        assert _enforce_host_auth_policy("0.0.0.0") == "127.0.0.1"
+
+    def test_secret_store_password_allows_public_bind(self, monkeypatch, fake_secrets):
+        from scripts.dashboard_api import _enforce_host_auth_policy
+
+        monkeypatch.delenv("DASHBOARD_PASSWORD", raising=False)
+        fake_secrets({"DASHBOARD_PASSWORD": "from-store"})
+        assert _enforce_host_auth_policy("0.0.0.0") == "0.0.0.0"
+
+    @pytest.mark.asyncio
+    async def test_secret_store_password_installs_auth(
+        self, monkeypatch, fake_secrets, tmp_path
+    ):
+        monkeypatch.delenv("DASHBOARD_PASSWORD", raising=False)
+        fake_secrets({"DASHBOARD_PASSWORD": "from-store"})
+        app = create_dashboard_app(db_path=str(tmp_path / "auth.db"))
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/openapi.json")
+            assert resp.status_code == 401
+            ok = await client.get("/openapi.json", auth=("admin", "from-store"))
+            assert ok.status_code == 200
+
+    @pytest.mark.asyncio
+    async def test_401_carries_security_headers(
+        self, monkeypatch, fake_secrets, tmp_path
+    ):
+        monkeypatch.delenv("DASHBOARD_PASSWORD", raising=False)
+        fake_secrets({"DASHBOARD_PASSWORD": "from-store"})
+        app = create_dashboard_app(db_path=str(tmp_path / "auth.db"))
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/api/overview")
+            assert resp.status_code == 401
+            assert resp.headers.get("X-Frame-Options") == "DENY"
+            assert resp.headers.get("X-Content-Type-Options") == "nosniff"
+            assert "Content-Security-Policy" in resp.headers
+
+
 # ── /api/system-health ────────────────────────────────────────────────────────────────────────────────────
 
 

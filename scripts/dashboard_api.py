@@ -111,6 +111,16 @@ class _SecurityHeadersMiddleware(BaseHTTPMiddleware):
         return response
 
 
+def _dashboard_password() -> str:
+    """Single source of truth for the dashboard password (via get_secret).
+
+    Both the auth middleware and the public-bind guard must use this so that a
+    password visible to one (e.g. only in .env under SECRETS_STRICT=true) can
+    never be invisible to the other.
+    """
+    return get_secret("DASHBOARD_PASSWORD", "") or ""
+
+
 class _BasicAuthMiddleware(BaseHTTPMiddleware):
     """HTTP Basic Auth gate. Applied only when DASHBOARD_PASSWORD is set."""
 
@@ -158,12 +168,14 @@ def _build_app(
     # status loop. Keeping it in app state avoids a second SQLite writer.
     app.state.runtime_health = runtime_health
 
-    # Security headers on every response.
-    app.add_middleware(_SecurityHeadersMiddleware)
+    # Middleware order: Starlette runs the LAST-added middleware outermost.
+    # Auth is innermost, CORS wraps it (so preflights are answered without
+    # credentials), and security headers are added last so they wrap
+    # everything — including the 401 responses produced by the auth gate.
 
-    # HTTP Basic Auth — enabled when DASHBOARD_PASSWORD env var is set.
-    # Add before CORS so unauthenticated requests are rejected at the gate.
-    _dash_password = get_secret("DASHBOARD_PASSWORD", "") or ""
+    # HTTP Basic Auth — enabled when DASHBOARD_PASSWORD resolves via
+    # get_secret (the same source _enforce_host_auth_policy checks).
+    _dash_password = _dashboard_password()
     if _dash_password:
         _dash_user = os.getenv("DASHBOARD_USER", "admin")
         app.add_middleware(
@@ -184,6 +196,9 @@ def _build_app(
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    # Security headers on every response (outermost — see ordering note above).
+    app.add_middleware(_SecurityHeadersMiddleware)
 
     # ── helpers ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
@@ -1586,12 +1601,16 @@ def _enforce_host_auth_policy(host: str) -> str:
     force-bind to 127.0.0.1 instead. Previously the auth middleware was only
     attached when DASHBOARD_PASSWORD was non-empty, so an unset password on
     0.0.0.0 silently served every endpoint unauthenticated.
+
+    The password is resolved via _dashboard_password() (get_secret), the
+    exact source _build_app uses to decide whether to install the auth
+    middleware, so the guard and the middleware can never disagree.
     """
-    if not _is_loopback_host(host) and not os.getenv("DASHBOARD_PASSWORD", ""):
+    if not _is_loopback_host(host) and not _dashboard_password():
         logger.error(
             "Refusing to bind dashboard to %s with no DASHBOARD_PASSWORD set — "
-            "falling back to 127.0.0.1. Set DASHBOARD_PASSWORD in the "
-            "environment to expose publicly.",
+            "falling back to 127.0.0.1. Set DASHBOARD_PASSWORD in the active "
+            "secrets backend to expose publicly.",
             host,
         )
         return "127.0.0.1"
