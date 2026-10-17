@@ -1220,8 +1220,15 @@ def _build_app(
                 from core.engine.execution_control import get_halt
 
                 result["execution_halt"] = await get_halt(db)
-                if result["execution_halt"] is not None:
-                    issues.append("execution_halted")
+                halt_state = result["execution_halt"]
+                if halt_state is not None:
+                    # Unreadable state also blocks trading (fail closed) but is
+                    # usually a transient lock, not an operator-visible halt.
+                    issues.append(
+                        "execution_halt_unreadable"
+                        if halt_state.get("component") == "unreadable"
+                        else "execution_halted"
+                    )
             except aiosqlite.Error as e:
                 result["execution_halt"] = {"error": str(e)}
                 issues.append("execution_halt_query_failed")

@@ -1243,3 +1243,25 @@ class TestSignalsCountEndpoint:
         resp = await client.get("/api/signals/count?days=1")
         assert resp.status_code == 200
         assert "total_count" in resp.json()
+
+
+@pytest.mark.asyncio
+async def test_system_health_unreadable_halt_state_is_not_reported_as_a_halt(
+    app_and_client, monkeypatch
+):
+    """Halt state that can't be read blocks trading (fail closed), but the
+    dashboard should say so rather than claim an execution halt."""
+    from core.engine import execution_control
+
+    async def _unreadable(db):
+        return {
+            "reason": "halt state unreadable: database is locked",
+            "component": "unreadable",
+            "halted_at": None,
+        }
+
+    monkeypatch.setattr(execution_control, "get_halt", _unreadable)
+    _, client, _ = app_and_client
+    data = (await client.get("/api/system-health")).json()
+    assert "execution_halted" not in data["issues"]
+    assert "execution_halt_unreadable" in data["issues"]

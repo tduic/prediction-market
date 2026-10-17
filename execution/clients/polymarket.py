@@ -241,7 +241,8 @@ class PolymarketExecutionClient(BaseExecutionClient):
                 if not api_result.get("success", True) or not order_id:
                     error_msg = api_result.get("errorMsg", "Order rejected")
                     result = OrderResult(
-                        order_id=order_id or f"FAILED-{leg.market_id}",
+                        order_id=order_id
+                        or f"FAILED-{leg.market_id}-{uuid.uuid4().hex[:8]}",
                         platform="polymarket",
                         status="failed",
                         submission_latency_ms=submission_latency_ms,

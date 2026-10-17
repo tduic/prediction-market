@@ -33,7 +33,7 @@ async def get_halt(db: aiosqlite.Connection) -> dict | None:
         logger.error("Cannot read execution halt state (treating as halted): %s", exc)
         return {
             "reason": f"halt state unreadable: {exc}",
-            "component": None,
+            "component": "unreadable",
             "halted_at": None,
         }
     if row is None or not row[0]:

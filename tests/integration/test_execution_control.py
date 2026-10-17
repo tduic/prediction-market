@@ -73,6 +73,7 @@ async def test_unreadable_halt_state_fails_closed():
         assert await is_halted(conn) is True
         state = await get_halt(conn)
         assert state is not None and state["reason"].startswith("halt state unreadable")
+        assert state["component"] == "unreadable"
 
 
 class TestClearHaltScript:
