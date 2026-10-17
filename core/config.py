@@ -149,9 +149,15 @@ class RiskControlConfig:
     strategy_replay_min_move: float = field(
         default_factory=lambda: float(os.getenv("STRATEGY_REPLAY_MIN_MOVE", "0.01"))
     )
+    # Off by default: P2 sums prices over title-root groups, but without
+    # event metadata it can't tell a mutually exclusive set (one event's
+    # outcomes) from unrelated markets sharing a title (e.g. the same
+    # "Over 207.5 points" line for several games, or threshold ladders),
+    # so it fires bogus SELLs. Re-enable once grouping uses Kalshi
+    # event_ticker + mutually_exclusive.
     strategy_p2_enabled: bool = field(
         default_factory=lambda: (
-            os.getenv("STRATEGY_P2_ENABLED", "true").lower() == "true"
+            os.getenv("STRATEGY_P2_ENABLED", "false").lower() == "true"
         )
     )
     strategy_p3_enabled: bool = field(

@@ -375,6 +375,11 @@ class TestP5InformationLatency:
 
 @pytest.mark.asyncio
 class TestP2StructuredEvent:
+    @pytest.fixture(autouse=True)
+    def _enable_p2(self, monkeypatch):
+        # P2 is off by default; these tests exercise its logic.
+        monkeypatch.setenv("STRATEGY_P2_ENABLED", "true")
+
     async def test_over_sum_triggers_sell(self, db):
         for i, (month, price) in enumerate(
             zip(["January", "March", "June"], [0.42, 0.40, 0.38], strict=True)
@@ -473,6 +478,11 @@ class TestP2StructuredEvent:
 
 @pytest.mark.asyncio
 class TestQuotaAllocation:
+    @pytest.fixture(autouse=True)
+    def _enable_p2(self, monkeypatch):
+        # P2 is off by default; these tests exercise its logic.
+        monkeypatch.setenv("STRATEGY_P2_ENABLED", "true")
+
     async def test_total_capped_at_max_trades(self, db):
         for i in range(30):
             await _seed_market(db, f"mkt_{i}", yes_price=0.20, spread=0.12)
@@ -939,12 +949,13 @@ class TestRiskConfigStrategyFlags:
     def test_strategy_flags_exist_with_defaults(self):
         cfg = RiskControlConfig()
         for flag in [
-            "strategy_p2_enabled",
             "strategy_p3_enabled",
             "strategy_p4_enabled",
             "strategy_p5_enabled",
         ]:
             assert getattr(cfg, flag) is True
+        # P2 is off by default until it can use event metadata.
+        assert cfg.strategy_p2_enabled is False
 
     def test_replay_cooldown_exists(self):
         assert RiskControlConfig().strategy_replay_cooldown_s > 0
