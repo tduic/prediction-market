@@ -1337,3 +1337,24 @@ async def test_execution_clients_are_reused_across_cycles(db):
     assert _client_for(db, "paper", "kalshi") is not _client_for(
         db, "paper", "polymarket"
     )
+
+
+async def test_single_platform_no_fill_not_recorded_by_breaker():
+    from core.strategies.single_platform import _record_circuit_breaker_result
+    from execution.clients.base import OrderResult
+
+    calls = []
+
+    class _Breaker:
+        async def record_order_result(self, success):
+            calls.append(success)
+
+    result = OrderResult(
+        order_id="o",
+        platform="kalshi",
+        status="failed",
+        submission_latency_ms=1,
+        no_fill=True,
+    )
+    await _record_circuit_breaker_result(_Breaker(), result)
+    assert calls == []

@@ -368,3 +368,11 @@ async def test_legacy_post_exception_is_unknown_with_unique_ids(db):
     second = await client.submit_order(_leg())
     assert first.status == "pending"  # the post may have reached the exchange
     assert first.order_id != second.order_id
+
+
+async def test_v2_no_fill_is_flagged(db):
+    await _seed(db)
+    result = await _client(db, FakeClob(orders=[_order("UNMATCHED", 0)])).submit_order(
+        _leg()
+    )
+    assert result.no_fill is True

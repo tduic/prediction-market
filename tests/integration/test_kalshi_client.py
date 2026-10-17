@@ -308,3 +308,10 @@ async def test_missing_rsa_key_fails_cleanly_without_a_request(db):
     result = await client.submit_order(_leg())
     assert result.status == "failed"
     assert seen == []
+
+
+async def test_ioc_no_fill_is_flagged(db, rsa_key):
+    await _seed(db)
+    client, _ = _client(db, rsa_key, lambda r: _created(fill="0.00", remaining="10.00"))
+    result = await client.submit_order(_leg())
+    assert result.no_fill is True

@@ -339,3 +339,46 @@ async def test_close_releases_both_clients(db):
     engine = await _engine(db, _Closable("polymarket"), _Closable("kalshi"))
     await engine.close()
     assert sorted(closed) == ["kalshi", "polymarket"]
+
+
+async def test_no_fill_is_not_a_breaker_failure(db):
+    """An IOC that finds no liquidity at the limit isn't an exchange error;
+    five of them in a row must not trip the daily breaker."""
+    calls = []
+
+    class _Breaker:
+        async def should_halt(self):
+            return False
+
+        async def record_order_result(self, success):
+            calls.append(success)
+
+    no_fill = _failed("polymarket")
+    no_fill.no_fill = True
+    rejected = _failed("polymarket")  # e.g. auth / bad request: a real failure
+    # Failed buys are retried (3 attempts per trade), so give each phase 3.
+    buy = FakeClient(
+        "polymarket", no_fill, no_fill, no_fill, rejected, rejected, rejected
+    )
+    engine = await _engine(db, buy, FakeClient("kalshi"))
+    engine._circuit_breaker = _Breaker()
+    await engine.initial_sweep()
+    assert calls == []  # the no-fill attempt was not counted
+
+    engine.fired_state.clear()
+    await engine.periodic_scan()
+    assert calls == [False]  # a genuine rejection is
+
+
+async def test_clients_flag_no_fill(db):
+    from execution.clients.paper import PaperExecutionClient
+    from execution.models import OrderLeg
+    from tests.integration.test_arb_engine import _seed_markets_for_engine
+
+    await _seed_markets_for_engine(db, [_make_match("poly_A", "kal_A", 0.40, 0.50)])
+    paper = PaperExecutionClient(db, platform_label="paper_kalshi")
+    leg = OrderLeg(
+        market_id="kal_A", platform="kalshi", side="BUY", size=5, limit_price=0.30
+    )  # market is at 0.50, above the limit
+    result = await paper.submit_order(leg)
+    assert result.status == "failed" and result.no_fill is True

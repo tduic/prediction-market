@@ -375,6 +375,7 @@ class PolymarketExecutionClientV2(BaseExecutionClient):
                 "failed",
                 start,
                 error_message=f"no fill (status={order.get('status')})",
+                no_fill=True,
                 book=book,
             )
             await self.update_order_fill(result)

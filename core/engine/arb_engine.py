@@ -914,8 +914,10 @@ class ArbitrageEngine:
             await self._halt_unknown_fill(buy_client, buy_result, pair_id, "buy")
             return None
         if buy_result.filled_price is None:
-            # Clean failure: nothing filled, so there is nothing to hedge.
-            if self._circuit_breaker is not None:
+            # Clean failure: nothing filled, so there is nothing to hedge. A
+            # plain no-fill (no liquidity at the limit) isn't an exchange
+            # error and doesn't count toward the consecutive-failure breaker.
+            if self._circuit_breaker is not None and not buy_result.no_fill:
                 await self._circuit_breaker.record_order_result(success=False)
             return None
 

@@ -295,7 +295,9 @@ class KalshiExecutionClient(BaseExecutionClient):
             await self.write_order(leg, result, signal_id=signal_id, strategy=strategy)
             return result
         if filled <= 0:
-            result = _result(order_id, "failed", error_message="no fill (IOC)")
+            result = _result(
+                order_id, "failed", error_message="no fill (IOC)", no_fill=True
+            )
             await self.write_order(leg, result, signal_id=signal_id, strategy=strategy)
             return result
 

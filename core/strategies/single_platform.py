@@ -366,7 +366,7 @@ async def _record_circuit_breaker_result(circuit_breaker, result) -> None:
     status="pending" with no fill price. That is not an execution failure, so
     it neither counts toward the consecutive-failure halt nor resets it.
     """
-    if circuit_breaker is None or result.status == "pending":
+    if circuit_breaker is None or result.status == "pending" or result.no_fill:
         return
     await circuit_breaker.record_order_result(success=result.status != "failed")
 

@@ -285,6 +285,7 @@ class PaperExecutionClient(BaseExecutionClient):
                         f"Market price {market_price:.4f} above limit "
                         f"{effective_limit:.4f}"
                     ),
+                    no_fill=True,
                 )
                 await self.write_order(
                     leg,
@@ -304,6 +305,7 @@ class PaperExecutionClient(BaseExecutionClient):
                         f"Market price {market_price:.4f} below limit "
                         f"{effective_limit:.4f}"
                     ),
+                    no_fill=True,
                 )
                 await self.write_order(
                     leg,

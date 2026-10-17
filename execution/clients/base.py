@@ -36,6 +36,10 @@ class OrderResult:
     # translated to BUY NO, so filled_price is in NO space (economic YES
     # price = 1 - filled_price).
     book: str = "YES"
+    # True when a valid order reached the market but nothing traded at the
+    # limit (IOC/FAK miss, paper price past the limit). Not an exchange
+    # error, so the circuit breaker doesn't count it as a failure.
+    no_fill: bool = False
 
 
 class BaseExecutionClient:
