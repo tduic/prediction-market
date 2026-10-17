@@ -160,7 +160,11 @@ async def check_fee_ratio(db: aiosqlite.Connection) -> InvariantResult:
     Fees / notional above 20% indicates a fee calculation bug or an
     off-by-100x error (bps vs fraction confusion).
     """
-    cursor = await db.execute("""SELECT SUM(fees_paid), SUM(entry_size * entry_price)
+    # Notional = capital at risk: size * p for a long, size * (1 - p) for a
+    # short (entry_price is YES-space).
+    cursor = await db.execute("""SELECT SUM(fees_paid),
+                  SUM(CASE WHEN side = 'SELL' THEN entry_size * (1 - entry_price)
+                           ELSE entry_size * entry_price END)
            FROM positions
            WHERE status = 'closed'
              AND fees_paid IS NOT NULL

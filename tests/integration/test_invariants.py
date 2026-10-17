@@ -420,3 +420,19 @@ class TestRunOneCycleAlertManager:
         await runner.run_one_cycle()
 
         mock_mgr.send.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_fee_ratio_uses_capital_at_risk_for_shorts(db):
+    """A short at 0.90 risks 0.10/contract; fees of 25% of that must fail
+    the check rather than hide behind the 0.90 YES notional."""
+    from core.invariants import check_fee_ratio
+
+    await _seed_signal(db, "sig1")
+    pos_id = await _seed_closed_position(
+        db, signal_id="sig1", entry_price=0.90, entry_size=100.0, fees_paid=2.5
+    )
+    await db.execute("UPDATE positions SET side = 'SELL' WHERE id = ?", (pos_id,))
+    await db.commit()
+    result = await check_fee_ratio(db)
+    assert result.passed is False  # 2.5 / (100 * 0.10) = 25%
