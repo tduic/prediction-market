@@ -44,6 +44,20 @@ async def test_crash_is_alerted_and_restarted(alerts):
     assert alerts.sent[0]["severity"] == Severity.CRITICAL
     assert "ws:test" in alerts.sent[0]["title"]
     assert "RuntimeError" in alerts.sent[0]["message"]
+    assert "boom" in alerts.sent[0]["message"]
+
+
+@pytest.mark.asyncio
+async def test_crash_alert_truncates_exception_text(alerts):
+    stop = asyncio.Event()
+
+    async def crash_long():
+        raise RuntimeError("x" * 1000)
+
+    await supervise("one", crash_long, stop, restart=False)
+    message = alerts.sent[0]["message"]
+    assert "x" * 200 in message
+    assert "x" * 201 not in message
 
 
 @pytest.mark.asyncio

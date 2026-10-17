@@ -70,7 +70,9 @@ async def supervise(
                 logger.info("task %s raised during shutdown: %r", name, exc)
                 return
             logger.exception("background task %s crashed", name)
-            reason = f"crashed with {type(exc).__name__}"
+            # Exception text is assumed secret-free; truncated to keep alerts
+            # (and Discord embeds) bounded.
+            reason = f"crashed with {type(exc).__name__}: {str(exc)[:200]}"
         else:
             if stop_event.is_set() or not restart:
                 return
