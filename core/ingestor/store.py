@@ -121,6 +121,7 @@ _POLY_KEEP_KEYS = (
     "clobTokenIds",
     "clob_token_ids",
     "tokens",
+    "outcomes",
     "outcomePrices",
     "bestBid",
     "bestAsk",
@@ -459,6 +460,21 @@ def kalshi_match_title(m: dict, with_matchup: bool = False) -> str:
 KALSHI_MAX_MID_SPREAD = MAX_MID_SPREAD
 
 
+def _yes_first(raw_outcomes: object) -> bool:
+    """True when a gamma ``outcomes`` value (JSON string or list) starts "Yes"."""
+    outcomes = raw_outcomes
+    if isinstance(raw_outcomes, str):
+        try:
+            outcomes = _json.loads(raw_outcomes)
+        except ValueError:
+            return False
+    return (
+        isinstance(outcomes, list)
+        and len(outcomes) >= 2
+        and str(outcomes[0]).strip().lower() == "yes"
+    )
+
+
 def _opt_float(m: dict, *keys: str) -> float | None:
     """First of ``keys`` present in ``m`` that parses as a float, else None."""
     for key in keys:
@@ -482,6 +498,7 @@ async def store_markets(
     # ── Prepare Polymarket rows in-memory ────────────────────────────────
     poly_market_rows = []
     poly_price_rows = []
+    poly_skipped_non_yes = 0
 
     for m in poly_markets:
         # Gamma API returns camelCase `conditionId` (66-char hex). The old
@@ -496,6 +513,15 @@ async def store_markets(
         condition_id = str(condition_id)
         title = m.get("question", m.get("title", ""))
         if not title:
+            continue
+
+        # Orientation comes from `outcomes`, not position: clobTokenIds[0] /
+        # outcomePrices[0] are the YES leg only when outcomes[0] is "Yes".
+        # Up/Down and team-vs-team markets have no YES leg for P1, so skip
+        # them. (Inputs without `outcomes` — legacy/mocked — keep the
+        # positional [YES, NO] convention.)
+        if "outcomes" in m and not _yes_first(m["outcomes"]):
+            poly_skipped_non_yes += 1
             continue
 
         # clobTokenIds is a JSON-encoded string like
@@ -697,11 +723,13 @@ async def store_markets(
     elapsed = time.time() - t_start
 
     logger.info(
-        "Stored %d markets (%d PM + %d KA) in %.1fs. Kalshi skipped: %s",
+        "Stored %d markets (%d PM + %d KA) in %.1fs. PM skipped (not Yes/No): "
+        "%d. Kalshi skipped: %s",
         stored,
         len(poly_market_rows),
         len(kalshi_market_rows),
         elapsed,
+        poly_skipped_non_yes,
         kalshi_skipped,
     )
     return stored
