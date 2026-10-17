@@ -9,6 +9,7 @@ import asyncio
 import logging
 import os
 import time
+import uuid
 from typing import Any
 
 import aiosqlite
@@ -172,6 +173,7 @@ class PolymarketExecutionClient(BaseExecutionClient):
         start_time = time.time()
 
         resolved = None
+        posted = False  # once True, an exception means the outcome is unknown
         try:
             # Resolve BEFORE initializing the CLOB client: a missing token is
             # a DB-resolvable problem, no point paying py-clob-client import +
@@ -189,7 +191,7 @@ class PolymarketExecutionClient(BaseExecutionClient):
                 )
                 logger.error(error_msg)
                 result = OrderResult(
-                    order_id=f"FAILED-{leg.market_id}",
+                    order_id=f"FAILED-{leg.market_id}-{uuid.uuid4().hex[:8]}",
                     platform="polymarket",
                     status="failed",
                     submission_latency_ms=submission_latency_ms,
@@ -228,6 +230,7 @@ class PolymarketExecutionClient(BaseExecutionClient):
             else:
                 order_type = _OrderType.GTC
 
+            posted = True
             api_result = self._client.post_order(signed_order, order_type)
 
             submission_latency_ms = int((time.time() - start_time) * 1000)
@@ -283,11 +286,18 @@ class PolymarketExecutionClient(BaseExecutionClient):
 
         except Exception as e:
             submission_latency_ms = int((time.time() - start_time) * 1000)
-            logger.exception("Error submitting to Polymarket")
+            logger.exception(
+                "Error submitting to Polymarket (outcome %s)",
+                "UNKNOWN" if posted else "not sent",
+            )
             result = OrderResult(
-                order_id=f"FAILED-{leg.market_id}",
+                order_id=(
+                    f"{'UNKNOWN' if posted else 'FAILED'}-{leg.market_id}-"
+                    f"{uuid.uuid4().hex[:8]}"
+                ),
                 platform="polymarket",
-                status="failed",
+                # A retry after an ambiguous post could double the order.
+                status="pending" if posted else "failed",
                 submission_latency_ms=submission_latency_ms,
                 error_message=str(e),
             )

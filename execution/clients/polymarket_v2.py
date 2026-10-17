@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import os
 import threading
 import time
@@ -34,6 +35,7 @@ from core.engine.fees import taker_fee
 from core.secrets import get_secret
 from execution.clients.base import BaseExecutionClient, OrderResult
 from execution.clients.polymarket_book import BookResolver, ResolvedOrder
+from execution.enums import Side
 from execution.market_data import get_market_data
 from execution.models import OrderLeg
 
@@ -147,6 +149,21 @@ class PolymarketExecutionClientV2(BaseExecutionClient):
         )
 
     @staticmethod
+    def _tick_price(resolved: ResolvedOrder, tick: float) -> float:
+        """Limit price on the market's tick, rounded only in our favour.
+
+        The SDK rounds to the nearest tick, which can pay more than the
+        limit on a buy (0.655 -> 0.66) or accept less on a sell.
+        """
+        steps = resolved.limit_price / tick
+        if resolved.side is Side.BUY:
+            steps = math.floor(steps + 1e-9)
+        else:
+            steps = math.ceil(steps - 1e-9)
+        decimals = max(0, -math.floor(math.log10(tick) + 1e-9))
+        return round(steps * tick, decimals)
+
+    @staticmethod
     def _local_id(prefix: str, leg: OrderLeg) -> str:
         """Unique id for an order the exchange never acknowledged.
 
@@ -196,12 +213,15 @@ class PolymarketExecutionClientV2(BaseExecutionClient):
             tick = await self._call(self._client.get_tick_size, resolved.token_id)
             order_args = OrderArgs(
                 token_id=resolved.token_id,
-                price=resolved.limit_price,
+                price=self._tick_price(resolved, float(tick)),
                 size=resolved.size,
                 side=resolved.side.value,
             )
             options = PartialCreateOrderOptions(tick_size=str(tick))
             order_type = OrderType.FOK if leg.order_type == "MARKET" else OrderType.FAK
+            # Build and sign. The SDK may make lookups here (neg-risk,
+            # version) but nothing is posted, so a failure is a clean one.
+            signed = await self._call(self._client.create_order, order_args, options)
         except Exception as exc:
             logger.exception("Polymarket V2 order could not be built")
             result = self._result(
@@ -229,9 +249,7 @@ class PolymarketExecutionClientV2(BaseExecutionClient):
         # Phase 2 — post. A definite rejection (4xx) is "failed"; anything
         # ambiguous may have reached the exchange and is "pending".
         try:
-            response = await self._call(
-                self._client.create_and_post_order, order_args, options, order_type
-            )
+            response = await self._call(self._client.post_order, signed, order_type)
         # Every exception must be classified here: an unclassified error after
         # the post could hide a live order.
         except Exception as exc:  # noqa: BLE001
@@ -374,7 +392,8 @@ class PolymarketExecutionClientV2(BaseExecutionClient):
             if params is None:
                 raise ValueError("fee metadata unavailable")
             fee = taker_fee(params, matched, price)
-        except (TimeoutError, ValueError) as exc:
+        # The fill is confirmed: no fee problem may turn it into an exception.
+        except Exception as exc:  # noqa: BLE001
             fee_error = str(exc) or type(exc).__name__
             logger.error(
                 "Polymarket V2 fill %s confirmed but fee unverified: %s",

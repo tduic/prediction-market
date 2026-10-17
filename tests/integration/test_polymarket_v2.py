@@ -15,18 +15,28 @@ from execution.models import OrderLeg
 class FakeClob:
     """Scripted stand-in for py_clob_client_v2.ClobClient (sync methods)."""
 
-    def __init__(self, post=None, orders=None, post_exc=None, get_exc=None):
+    def __init__(
+        self, post=None, orders=None, post_exc=None, get_exc=None, create_exc=None
+    ):
         self._post = post or {"success": True, "orderID": "0xorder"}
         self._orders = list(orders or [])
         self._post_exc = post_exc
         self._get_exc = get_exc
+        self._create_exc = create_exc
         self.posted: list[tuple] = []
         self.cancelled: list[str] = []
 
     def get_tick_size(self, token_id):
         return "0.01"
 
-    def create_and_post_order(self, order_args, options, order_type):
+    def create_order(self, order_args, options):
+        # Builds/signs only — may do HTTP lookups but never posts.
+        if self._create_exc is not None:
+            raise self._create_exc
+        return (order_args, options)
+
+    def post_order(self, signed, order_type):
+        order_args, options = signed
         self.posted.append((order_args, options, order_type))
         if self._post_exc is not None:
             raise self._post_exc
@@ -297,3 +307,64 @@ async def test_legacy_client_reports_no_book_for_translated_sells(db, monkeypatc
     monkeypatch.setattr(PolymarketExecutionClient, "_poll_for_fill", _filled)
     result = await client.submit_order(_leg(side="SELL", price=0.60))
     assert result.book == "NO"
+
+
+async def test_failure_while_building_is_failed_not_unknown(db):
+    # e.g. the SDK's neg-risk/version lookup times out before anything is posted
+    await _seed(db)
+    fake = FakeClob(create_exc=PolyApiException(error_msg="Request exception!"))
+    result = await _client(db, fake).submit_order(_leg())
+    assert result.status == "failed"
+    assert fake.posted == []
+
+
+async def test_buy_price_rounds_down_to_tick(db):
+    await _seed(db)
+    fake = FakeClob(orders=[_order("MATCHED", 10, price="0.65")])
+    await _client(db, fake).submit_order(_leg(price=0.655))
+    assert fake.posted[0][0].price == 0.65  # never pay more than the limit
+
+
+async def test_translated_sell_price_rounds_in_our_favour(db):
+    # SELL YES @0.345 without inventory → BUY NO @0.655 → floor to 0.65
+    await _seed(db)
+    fake = FakeClob(orders=[_order("MATCHED", 10, price="0.65")])
+    await _client(db, fake).submit_order(_leg(side="SELL", price=0.345))
+    assert fake.posted[0][0].price == 0.65
+
+
+async def test_fee_lookup_error_after_fill_keeps_the_fill(db):
+    class _BrokenFees(StaticMarketData):
+        async def fee_params(self, db, market_id):
+            raise RuntimeError("database is locked")
+
+    set_market_data(_BrokenFees())
+    await _seed(db)
+    result = await _client(db, FakeClob(orders=[_order("MATCHED", 10)])).submit_order(
+        _leg()
+    )
+    assert result.status == "filled"
+    assert result.fee_paid is None
+
+
+async def test_legacy_post_exception_is_unknown_with_unique_ids(db):
+    from execution.clients import polymarket as legacy
+    from execution.clients.polymarket import PolymarketExecutionClient
+
+    legacy._ensure_clob_imports()
+    await _seed(db)
+
+    class _Timeout:
+        def create_order(self, order_args):
+            return order_args
+
+        def post_order(self, signed, order_type):
+            raise TimeoutError("read timed out")
+
+    client = PolymarketExecutionClient(db, private_key="0x" + "1" * 64)
+    client._client = _Timeout()
+    client._initialized = True
+    first = await client.submit_order(_leg())
+    second = await client.submit_order(_leg())
+    assert first.status == "pending"  # the post may have reached the exchange
+    assert first.order_id != second.order_id

@@ -214,10 +214,20 @@ class KalshiExecutionClient(BaseExecutionClient):
         )
         path = "/trade-api/v2/portfolio/events/orders"
         try:
+            headers = self._sign_request("POST", path)
+        except ValueError as exc:  # missing API key / RSA key: nothing sent
+            result = _result(
+                f"FAILED-{leg.market_id}-{client_order_id[:8]}",
+                "failed",
+                error_message=f"cannot sign Kalshi request: {exc}",
+            )
+            await self.write_order(leg, result, signal_id=signal_id, strategy=strategy)
+            return result
+        try:
             response = await self.http_client.post(
                 f"{self.api_base}/portfolio/events/orders",
                 content=json.dumps(body),
-                headers=self._sign_request("POST", path),
+                headers=headers,
             )
         except httpx.HTTPError as exc:
             logger.error("Kalshi order outcome UNKNOWN (%s): %r", client_order_id, exc)

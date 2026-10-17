@@ -296,3 +296,15 @@ async def test_whole_fill_of_floored_size_is_filled(db, rsa_key):
     client, _ = _client(db, rsa_key, lambda r: _created(fill="2.00"))
     result = await client.submit_order(_leg(size=2.7))
     assert result.status == "filled"
+
+
+async def test_missing_rsa_key_fails_cleanly_without_a_request(db):
+    await _seed(db)
+    client = KalshiExecutionClient(db, api_key="key-id", rsa_key_path="", api_base=BASE)
+    seen: list[httpx.Request] = []
+    client.http_client = httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda r: seen.append(r) or _created())
+    )
+    result = await client.submit_order(_leg())
+    assert result.status == "failed"
+    assert seen == []
