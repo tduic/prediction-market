@@ -79,10 +79,13 @@ authorized administrator must provision Secret Manager access, the Kalshi PEM
 path, and any required non-secret runtime configuration before code deployment.
 
 This will:
-1. Rsync the project to `/data/predictor/prediction-market/` on the VM
-2. Preserve or create only non-secret runtime configuration at `/data/predictor/.env`
-3. Create a Python venv at `/data/predictor/venv/` and install all requirements
-4. Build the React dashboard frontend (`npm install && npm run build`)
+1. Build the React dashboard frontend locally (`npm ci && npm run build`) —
+   before packaging, so the fresh `dist/` ships; a failed build aborts the push
+2. Tar the project (never including `.env`, `*.pem`, `*.key` or key JSON) and
+   rsync it to `/data/predictor/prediction-market/` on the VM
+3. Preserve or create only non-secret runtime configuration at `/data/predictor/.env`
+4. Create the Python venv at `/data/predictor/venv/` if missing (never
+   `--clear`ed — the running service uses it) and install all requirements
 5. Install and start the `predictor` systemd service
 
 ---
@@ -299,13 +302,15 @@ The workflow (`.github/workflows/deploy.yml`) triggers on:
 - **New GitHub Release** (published) — the normal path
 - **Manual dispatch** — click "Run workflow" in the Actions tab for ad-hoc deploys
 
-Each deploy:
-1. Tars the repo (excluding `.git`, `venv`, `node_modules`, DB files)
-2. SCPs the tarball to the VM
-3. Rsyncs into `/data/predictor/prediction-market/` (preserves `.env` and DB)
-4. Installs Python dependencies
-5. Rebuilds the dashboard frontend
-6. Restarts the systemd service
+Each deploy (deploys are serialized by a `concurrency` group — a second
+release queues until the first finishes):
+1. Builds the dashboard frontend in CI (Node 24)
+2. Tars the repo (excluding `.git`, `venv`, `node_modules`, DB files, `.env`, keys)
+3. SCPs the tarball to the VM
+4. Merges non-secret runtime settings into `/data/predictor/.env`
+   (`deploy/env_merge.py`) — before the restart, so they take effect now
+5. Rsyncs into `/data/predictor/prediction-market/` (preserves `.env` and DB)
+6. Installs Python dependencies and restarts the systemd service
 7. Verifies the service is running (fails the workflow if it isn't)
 
 ### Creating a release to trigger deploy

@@ -52,15 +52,41 @@ echo "=================================================="
 echo "  Pushing to: $VM_NAME ($PROJECT_ID / $ZONE)"
 echo "=================================================="
 
-# ── 1. Sync code ─────────────────────────────────────────────────────────────
+# ── 1. Build dashboard frontend (BEFORE packaging, so dist/ is fresh) ─────────
+# Previously this ran after the tarball was built and uploaded, so every push
+# shipped the previous (or missing) dashboard/dist. A failed build now aborts
+# the deploy instead of silently shipping a stale frontend.
 echo ""
-echo "[1/5] Packaging and uploading code..."
+echo "[1/5] Building dashboard frontend..."
+if command -v npm &>/dev/null && [ -f "$PROJECT_ROOT/dashboard/package.json" ]; then
+  if ! (cd "$PROJECT_ROOT/dashboard" && npm ci --no-audit --no-fund --silent && npm run build --silent); then
+    echo "ERROR: dashboard build failed — aborting deploy (nothing was uploaded)."
+    exit 1
+  fi
+  echo "    Dashboard built; dist/ will be shipped with the code."
+elif [ -d "$PROJECT_ROOT/dashboard/dist" ]; then
+  echo "    WARNING: npm not found — shipping the EXISTING dashboard/dist, which may be stale."
+else
+  echo "    WARNING: npm not found and no dashboard/dist — API only, no frontend."
+fi
 
-# Tar locally (excludes heavy dirs), scp the tarball, extract on VM
-TARBALL="/tmp/predictor-deploy-$$.tar.gz"
+# ── 2. Sync code ─────────────────────────────────────────────────────────────
+echo ""
+echo "[2/5] Packaging and uploading code..."
+
+# Tar locally (excludes heavy dirs AND local secrets), scp the tarball,
+# extract on VM. The local .env / key files must never be packaged: the
+# tarball is staged in /tmp on both machines. Use --with-env to copy .env.
+TARBALL="$(mktemp -t predictor-deploy.XXXXXX)"
+trap 'rm -f "$TARBALL"' EXIT
 tar czf "$TARBALL" \
   -C "$PROJECT_ROOT" \
   --exclude='.git' \
+  --exclude='.env' \
+  --exclude='.env.*' \
+  --exclude='*.pem' \
+  --exclude='*.key' \
+  --exclude='*-key.json' \
   --exclude='venv' \
   --exclude='node_modules' \
   --exclude='__pycache__' \
@@ -96,10 +122,10 @@ $GCE_SSH "sudo mkdir -p /tmp/predictor-staging \
   && sudo chown -R predictor:predictor /data/predictor/prediction-market \
   && sudo rm -rf /tmp/predictor-staging /tmp/predictor-deploy.tar.gz"
 
-# ── 2. Copy .env (first deploy only, or when --with-env is passed) ────────────
+# ── 3. Copy .env (first deploy only, or when --with-env is passed) ────────────
 if [[ "$WITH_ENV" == "true" ]]; then
   echo ""
-  echo "[2/5] Copying .env to VM..."
+  echo "[3/5] Copying .env to VM..."
   if [[ ! -f "$PROJECT_ROOT/.env" ]]; then
     echo "ERROR: .env not found at $PROJECT_ROOT/.env"
     echo "Create it from config/settings.example.env and fill in your credentials."
@@ -116,7 +142,7 @@ if [[ "$WITH_ENV" == "true" ]]; then
   echo "    .env copied to /data/predictor/.env"
 else
   echo ""
-  echo "[2/5] Skipping .env (pass --with-env to copy it)"
+  echo "[3/5] Skipping .env (pass --with-env to copy it)"
   # Verify it exists on VM
   ENV_EXISTS=$($GCE_SSH "test -f /data/predictor/.env && echo yes || echo no" 2>/dev/null || echo "no")
   if [[ "$ENV_EXISTS" == "no" ]]; then
@@ -127,25 +153,17 @@ else
   fi
 fi
 
-# ── 3. Create / update Python venv ───────────────────────────────────────────
+# ── 4. Create / update Python venv ───────────────────────────────────────────
+# Never `venv --clear` here: that deletes the venv the running service is
+# executing from (and left it broken if pip then failed). Create the venv
+# only if it is missing, then install requirements into it in place.
 echo ""
-echo "[3/5] Installing Python dependencies..."
+echo "[4/5] Installing Python dependencies..."
 $GCE_SSH "cd /data/predictor/prediction-market \
-  && sudo -u predictor python3 -m venv /data/predictor/venv --clear 2>/dev/null || sudo -u predictor python3 -m venv /data/predictor/venv \
+  && { test -x /data/predictor/venv/bin/python || sudo -u predictor python3 -m venv /data/predictor/venv; } \
   && sudo -u predictor /data/predictor/venv/bin/pip install --quiet --upgrade pip \
   && sudo -u predictor /data/predictor/venv/bin/pip install --quiet -r requirements.txt \
   && sudo -u predictor /data/predictor/venv/bin/pip install --quiet --force-reinstall --no-deps typing_extensions"
-
-# ── 4. Build dashboard frontend (locally, then shipped with code) ─────────────
-echo ""
-echo "[4/5] Building dashboard frontend..."
-if command -v npm &>/dev/null && [ -f "$PROJECT_ROOT/dashboard/package.json" ]; then
-  (cd "$PROJECT_ROOT/dashboard" && npm install --silent && npm run build --silent) && \
-    echo "    Dashboard built and will be deployed with code." || \
-    echo "    WARNING: Dashboard build failed — API will work but no frontend."
-else
-  echo "    npm not found locally — skipping build (deploy existing dist/ if present)"
-fi
 
 # ── 5. Install and (re)start systemd service ──────────────────────────────────
 echo ""

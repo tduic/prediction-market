@@ -7,6 +7,13 @@ on:
   # Allow manual trigger from the Actions tab
   workflow_dispatch:
 
+# Never run two deploys against the VM at once (they would race on the
+# staging dir, the venv and the service restart). Queue instead of cancel so
+# a deploy that is mid-restart is never interrupted.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
 env:
   PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
   ZONE: ${{ secrets.GCP_ZONE || 'us-central1-a' }}
@@ -51,6 +58,11 @@ jobs:
         run: |
           tar czf /tmp/predictor.tar.gz \
             --exclude='.git' \
+            --exclude='.env' \
+            --exclude='.env.*' \
+            --exclude='*.pem' \
+            --exclude='*.key' \
+            --exclude='*-key.json' \
             --exclude='node_modules' \
             --exclude='venv' \
             --exclude='__pycache__' \
@@ -70,7 +82,29 @@ jobs:
             --strict-host-key-checking=no \
             --quiet
 
-      # ── 5. Deploy on VM ───────────────────────────────────────────────
+      # ── 5. Write non-secret runtime configuration to VM ────────────────────
+      # Exchange and alert credentials are read directly from Secret Manager.
+      # Must run BEFORE "Deploy on VM" restarts the service: previously it ran
+      # after, so new values only took effect on the next restart.
+      - name: Write runtime configuration to VM
+        run: |
+          printf 'SECRETS_BACKEND=gcp\nSECRETS_STRICT=true\nGCP_PROJECT_ID=predictor-trading-2026\nKALSHI_RSA_KEY_PATH=/data/predictor/kalshi.pem\nPOLYMARKET_PROXY=socks5://10.164.0.2:1080\n' > /tmp/predictor_updates.env
+
+          gcloud compute scp /tmp/predictor_updates.env \
+            "$VM_NAME:/tmp/predictor_updates.env" \
+            --zone="$ZONE" --project="$PROJECT_ID" --quiet
+
+          gcloud compute scp deploy/env_merge.py \
+            "$VM_NAME:/tmp/env_merge.py" \
+            --zone="$ZONE" --project="$PROJECT_ID" --quiet
+
+          gcloud compute ssh "$VM_NAME" \
+            --zone="$ZONE" --project="$PROJECT_ID" \
+            --command="sudo python3 /tmp/env_merge.py && sudo chown predictor:predictor /data/predictor/.env && sudo chmod 600 /data/predictor/.env && sudo rm -f /tmp/env_merge.py /tmp/predictor_updates.env"
+
+          rm -f /tmp/predictor_updates.env
+
+      # ── 6. Deploy on VM ───────────────────────────────────────────────
       - name: Deploy on VM
         run: |
           gcloud compute ssh "$VM_NAME" \
@@ -126,26 +160,6 @@ jobs:
           echo "=== Deploy complete ==="
           REMOTE_SCRIPT
           )"
-
-      # ── 6. Write non-secret runtime configuration to VM ────────────────────
-      # Exchange and alert credentials are read directly from Secret Manager.
-      - name: Write runtime configuration to VM
-        run: |
-          printf 'SECRETS_BACKEND=gcp\nSECRETS_STRICT=true\nGCP_PROJECT_ID=predictor-trading-2026\nKALSHI_RSA_KEY_PATH=/data/predictor/kalshi.pem\nPOLYMARKET_PROXY=socks5://10.164.0.2:1080\n' > /tmp/predictor_updates.env
-
-          gcloud compute scp /tmp/predictor_updates.env \
-            "$VM_NAME:/tmp/predictor_updates.env" \
-            --zone="$ZONE" --project="$PROJECT_ID" --quiet
-
-          gcloud compute scp deploy/env_merge.py \
-            "$VM_NAME:/tmp/env_merge.py" \
-            --zone="$ZONE" --project="$PROJECT_ID" --quiet
-
-          gcloud compute ssh "$VM_NAME" \
-            --zone="$ZONE" --project="$PROJECT_ID" \
-            --command="sudo python3 /tmp/env_merge.py && sudo chown predictor:predictor /data/predictor/.env && sudo chmod 600 /data/predictor/.env && sudo rm -f /tmp/env_merge.py /tmp/predictor_updates.env"
-
-          rm -f /tmp/predictor_updates.env
 
       # ── 7. Restore Claude setup ──────────────────────────────────────
       - name: Restore Claude setup on VM
