@@ -29,7 +29,8 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
 
-from core.config import get_config
+from core.config import RiskControlConfig, get_config
+from core.live_gate import get_effective_risk_config
 from core.secrets import get_secret
 
 logger = logging.getLogger(__name__)
@@ -66,6 +67,17 @@ def configure(db_path: str) -> None:
             _c.execute("PRAGMA journal_mode=WAL")
     except sqlite3.Error as _e:
         logger.warning("Could not enable WAL mode on %s: %s", db_path, _e)
+
+
+def _effective_risk_config() -> RiskControlConfig:
+    """Risk config the circuit breaker actually enforces for this mode.
+
+    trading_session builds DailyLossCircuitBreaker from
+    get_effective_risk_config(execution_mode), which in live mode applies the
+    stricter LIVE_* overrides (e.g. LIVE_MAX_DAILY_LOSS_PCT). The dashboard
+    must report the same daily-loss limit, not the paper default.
+    """
+    return get_effective_risk_config(get_config().execution.execution_mode)
 
 
 async def _compute_daily_loss_today(db: aiosqlite.Connection) -> float:
@@ -297,7 +309,7 @@ def _build_app(
             daily_loss_pct_used = 0.0
             try:
                 _daily_loss = await _compute_daily_loss_today(db)
-                _cfg = get_config().risk_controls
+                _cfg = _effective_risk_config()
                 _daily_loss_limit = _cfg.starting_capital * _cfg.max_daily_loss_pct
                 daily_loss_pct_used = round(
                     _daily_loss / _daily_loss_limit if _daily_loss_limit > 0 else 0.0, 4
@@ -722,7 +734,7 @@ def _build_app(
             daily_loss_pct_used = 0.0
             try:
                 daily_loss_today = await _compute_daily_loss_today(db)
-                _cfg = get_config().risk_controls
+                _cfg = _effective_risk_config()
                 daily_loss_limit = _cfg.starting_capital * _cfg.max_daily_loss_pct
                 daily_loss_pct_used = round(
                     (
@@ -1006,7 +1018,7 @@ def _build_app(
                     "circuit-breaker endpoint: daily_loss query failed: %s", e
                 )
                 daily_loss_available = False
-            cfg = get_config().risk_controls
+            cfg = _effective_risk_config()
             daily_loss_limit_pct = cfg.max_daily_loss_pct
             daily_loss_limit = cfg.starting_capital * daily_loss_limit_pct
             daily_loss_pct_used = round(
@@ -1390,7 +1402,7 @@ def _build_app(
             # Daily loss budget utilization
             try:
                 _daily_loss = await _compute_daily_loss_today(db)
-                _cfg = get_config().risk_controls
+                _cfg = _effective_risk_config()
                 _daily_loss_limit = _cfg.starting_capital * _cfg.max_daily_loss_pct
                 daily_loss_pct_used = round(
                     _daily_loss / _daily_loss_limit if _daily_loss_limit > 0 else 0.0, 4
@@ -1533,7 +1545,7 @@ def _build_app(
                 result["circuit_breaker_tripped"] = None
             try:
                 _daily_loss = await _compute_daily_loss_today(db)
-                _cfg = get_config().risk_controls
+                _cfg = _effective_risk_config()
                 _daily_loss_limit = _cfg.starting_capital * _cfg.max_daily_loss_pct
                 result["daily_loss_pct_used"] = round(
                     _daily_loss / _daily_loss_limit if _daily_loss_limit > 0 else 0.0, 4

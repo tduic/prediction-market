@@ -525,6 +525,41 @@ class TestOverviewDailyLossField:
         assert resp.json()["daily_loss_pct_used"] == 0.0
 
 
+@pytest.mark.asyncio
+class TestDailyLossLimitUsesEffectiveRiskConfig:
+    """In live mode the circuit breaker uses get_effective_risk_config()
+    (LIVE_MAX_DAILY_LOSS_PCT); the dashboard used the paper value
+    (MAX_DAILY_LOSS_PCT) and so showed the wrong limit / % used."""
+
+    async def test_live_mode_uses_live_daily_loss_pct(
+        self, app_and_client, monkeypatch
+    ):
+        from core.config import get_config
+
+        monkeypatch.setattr(get_config().execution, "execution_mode", "live")
+        monkeypatch.setenv("LIVE_MAX_DAILY_LOSS_PCT", "0.005")
+        monkeypatch.setenv("MAX_DAILY_LOSS_PCT", "0.2")
+        _, client, _ = app_and_client
+        data = (await client.get("/api/circuit-breaker")).json()
+        assert data["daily_loss_limit_pct"] == pytest.approx(0.005)
+        risk = (await client.get("/api/risk")).json()
+        cap = get_config().risk_controls.starting_capital
+        if "daily_loss_limit" in risk:
+            assert risk["daily_loss_limit"] == pytest.approx(cap * 0.005)
+
+    async def test_paper_mode_uses_standard_daily_loss_pct(
+        self, app_and_client, monkeypatch
+    ):
+        from core.config import get_config
+
+        monkeypatch.setattr(get_config().execution, "execution_mode", "paper")
+        monkeypatch.setenv("LIVE_MAX_DAILY_LOSS_PCT", "0.005")
+        monkeypatch.setenv("MAX_DAILY_LOSS_PCT", "0.2")
+        _, client, _ = app_and_client
+        data = (await client.get("/api/circuit-breaker")).json()
+        assert data["daily_loss_limit_pct"] == pytest.approx(0.2)
+
+
 # ── Fail-closed host auth policy ──────────────────────────────────────────────────────────────────────────────
 
 
