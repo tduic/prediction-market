@@ -27,7 +27,11 @@ def merge_environment_file(updates_path: Path, env_path: Path) -> None:
         pattern = re.compile(r"^" + re.escape(key) + r"=.*$", re.MULTILINE)
         entry = f"{key}={value}"
         if pattern.search(existing):
-            existing = pattern.sub(entry, existing)
+            # A function replacement makes the value literal. Passing the
+            # string itself made re.sub treat it as a template: "\1" or a bad
+            # escape raised re.error mid-deploy and "\\" was silently
+            # collapsed to "\".
+            existing = pattern.sub(lambda _match, entry=entry: entry, existing)
         else:
             existing = existing.rstrip("\n") + "\n" + entry + "\n"
 

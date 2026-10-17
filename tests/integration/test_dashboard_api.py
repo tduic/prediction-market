@@ -525,6 +525,41 @@ class TestOverviewDailyLossField:
         assert resp.json()["daily_loss_pct_used"] == 0.0
 
 
+@pytest.mark.asyncio
+class TestDailyLossLimitUsesEffectiveRiskConfig:
+    """In live mode the circuit breaker uses get_effective_risk_config()
+    (LIVE_MAX_DAILY_LOSS_PCT); the dashboard used the paper value
+    (MAX_DAILY_LOSS_PCT) and so showed the wrong limit / % used."""
+
+    async def test_live_mode_uses_live_daily_loss_pct(
+        self, app_and_client, monkeypatch
+    ):
+        from core.config import get_config
+
+        monkeypatch.setattr(get_config().execution, "execution_mode", "live")
+        monkeypatch.setenv("LIVE_MAX_DAILY_LOSS_PCT", "0.005")
+        monkeypatch.setenv("MAX_DAILY_LOSS_PCT", "0.2")
+        _, client, _ = app_and_client
+        data = (await client.get("/api/circuit-breaker")).json()
+        assert data["daily_loss_limit_pct"] == pytest.approx(0.005)
+        risk = (await client.get("/api/risk")).json()
+        cap = get_config().risk_controls.starting_capital
+        if "daily_loss_limit" in risk:
+            assert risk["daily_loss_limit"] == pytest.approx(cap * 0.005)
+
+    async def test_paper_mode_uses_standard_daily_loss_pct(
+        self, app_and_client, monkeypatch
+    ):
+        from core.config import get_config
+
+        monkeypatch.setattr(get_config().execution, "execution_mode", "paper")
+        monkeypatch.setenv("LIVE_MAX_DAILY_LOSS_PCT", "0.005")
+        monkeypatch.setenv("MAX_DAILY_LOSS_PCT", "0.2")
+        _, client, _ = app_and_client
+        data = (await client.get("/api/circuit-breaker")).json()
+        assert data["daily_loss_limit_pct"] == pytest.approx(0.2)
+
+
 # ── Fail-closed host auth policy ──────────────────────────────────────────────────────────────────────────────
 
 
@@ -564,6 +599,108 @@ class TestHostAuthPolicy:
         monkeypatch.setenv("DASHBOARD_PASSWORD", "s3cret")
         assert _enforce_host_auth_policy("0.0.0.0") == "0.0.0.0"
         assert _enforce_host_auth_policy("10.0.0.5") == "10.0.0.5"
+
+
+class _FakeSecretsBackend:
+    """Secrets backend that ignores the environment (like GCP + SECRETS_STRICT)."""
+
+    name = "fake"
+
+    def __init__(self, values: dict[str, str]) -> None:
+        self._values = values
+
+    def get(self, name: str, default: str | None = None) -> str | None:
+        return self._values.get(name, default)
+
+
+@pytest.fixture
+def fake_secrets():
+    from core.secrets import set_backend
+
+    def _install(values: dict[str, str]) -> None:
+        set_backend(_FakeSecretsBackend(values))
+
+    yield _install
+    set_backend(None)
+
+
+class TestAuthSecretSourceConsistency:
+    """The bind guard and the auth middleware must read the password from the
+    same place (get_secret). Previously the middleware used get_secret while
+    the guard used os.getenv: with SECRETS_STRICT=true and the password only in
+    .env, no middleware was installed yet the guard allowed 0.0.0.0, serving
+    every endpoint unauthenticated."""
+
+    def test_env_only_password_with_strict_backend_forces_loopback(
+        self, monkeypatch, fake_secrets
+    ):
+        from scripts.dashboard_api import _enforce_host_auth_policy
+
+        monkeypatch.setenv("DASHBOARD_PASSWORD", "only-in-env")
+        fake_secrets({})  # strict backend: env is not consulted
+        assert _enforce_host_auth_policy("0.0.0.0") == "127.0.0.1"
+
+    def test_secret_store_password_allows_public_bind(self, monkeypatch, fake_secrets):
+        from scripts.dashboard_api import _enforce_host_auth_policy
+
+        monkeypatch.delenv("DASHBOARD_PASSWORD", raising=False)
+        fake_secrets({"DASHBOARD_PASSWORD": "from-store"})
+        assert _enforce_host_auth_policy("0.0.0.0") == "0.0.0.0"
+
+    @pytest.mark.asyncio
+    async def test_secret_store_password_installs_auth(
+        self, monkeypatch, fake_secrets, tmp_path
+    ):
+        monkeypatch.delenv("DASHBOARD_PASSWORD", raising=False)
+        fake_secrets({"DASHBOARD_PASSWORD": "from-store"})
+        app = create_dashboard_app(db_path=str(tmp_path / "auth.db"))
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/openapi.json")
+            assert resp.status_code == 401
+            ok = await client.get("/openapi.json", auth=("admin", "from-store"))
+            assert ok.status_code == 200
+
+    @pytest.mark.asyncio
+    async def test_downstream_error_with_valid_creds_is_500_not_401(
+        self, monkeypatch, fake_secrets, tmp_path
+    ):
+        """call_next used to sit inside the auth try-block, so any exception
+        raised by an endpoint for an AUTHENTICATED request was swallowed and
+        turned into a 401 (and a credentials prompt)."""
+        monkeypatch.delenv("DASHBOARD_PASSWORD", raising=False)
+        fake_secrets({"DASHBOARD_PASSWORD": "from-store"})
+        app = create_dashboard_app(db_path=str(tmp_path / "auth.db"))
+
+        @app.get("/api/__boom")
+        async def _boom():
+            raise RuntimeError("endpoint failure")
+
+        transport = ASGITransport(app=app, raise_app_exceptions=False)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/api/__boom", auth=("admin", "from-store"))
+            assert resp.status_code == 500
+            bad = await client.get("/api/__boom", auth=("admin", "wrong"))
+            assert bad.status_code == 401
+            junk = await client.get(
+                "/api/__boom", headers={"Authorization": "Basic !!not-base64"}
+            )
+            assert junk.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_401_carries_security_headers(
+        self, monkeypatch, fake_secrets, tmp_path
+    ):
+        monkeypatch.delenv("DASHBOARD_PASSWORD", raising=False)
+        fake_secrets({"DASHBOARD_PASSWORD": "from-store"})
+        app = create_dashboard_app(db_path=str(tmp_path / "auth.db"))
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/api/overview")
+            assert resp.status_code == 401
+            assert resp.headers.get("X-Frame-Options") == "DENY"
+            assert resp.headers.get("X-Content-Type-Options") == "nosniff"
+            assert "Content-Security-Policy" in resp.headers
 
 
 # ── /api/system-health ────────────────────────────────────────────────────────────────────────────────────

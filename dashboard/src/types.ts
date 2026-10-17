@@ -56,7 +56,7 @@ export interface Trade {
   actual_pnl: number
   fees_total: number
   edge_captured_pct: number
-  signal_to_fill_ms: number
+  signal_to_fill_ms: number | null
   resolved_at: string
 }
 
@@ -109,6 +109,40 @@ export interface SystemHealth {
   signals_24h: number | null
   signals_24h_by_strategy: Record<string, number> | null
   daily_loss_pct_used: number | null
+  /** Persistent execution halt (core/engine/execution_control.get_halt):
+   * null when trading is allowed, the halt details when halted, or
+   * {error} when the halt state could not be queried. */
+  execution_halt: ExecutionHalt | { error: string } | null
+  /** Snapshot from the embedded trading session; null for a standalone dashboard. */
+  runtime: RuntimeHealth | null
+  runtime_age_s?: number | null
+}
+
+export interface ExecutionHalt {
+  reason: string | null
+  component: string | null
+  halted_at: string | null
+}
+
+export interface RuntimeHealth {
+  updated_at: string
+  state: 'starting' | 'running' | string
+  execution_mode: string
+  process_rss_bytes?: number | null
+  database_bytes?: number
+  pairs_monitored?: number
+  pairs_eligible_now?: number
+  prices_tracked?: number
+  stale_prices_count?: number
+  skipped_stale?: number
+  skipped_fee_unknown?: number
+  skipped_unprofitable?: number
+  skipped_depth_unknown?: number
+  skipped_thin_book?: number
+  last_arb_fired_at?: number | null
+  arb_trade_count?: number
+  scheduled_trades?: number
+  ws_last_tick_age_ms_by_platform?: Record<string, number>
 }
 
 export interface DailyPnlPoint {

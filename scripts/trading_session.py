@@ -45,6 +45,8 @@ from core.storage.db import Database
 print("[startup] Loading logging config...", flush=True)
 from core.logging_config import configure_from_env
 
+from core.task_supervisor import install_shutdown_handlers, supervised_task
+
 print("[startup] All imports complete.", flush=True)
 
 logger = logging.getLogger(__name__)
@@ -140,7 +142,14 @@ def _spawn_ws_tasks(
     on_price,
     cfg,
 ) -> list[asyncio.Task]:
-    """Create websocket streaming tasks for the given asset/ticker sets."""
+    """Create websocket streaming tasks for the given asset/ticker sets.
+
+    Each stream runs under supervised_task: if it crashes or returns while the
+    session is still running, it is logged, a CRITICAL alert is sent and the
+    stream is restarted with exponential backoff. Because the pair refresh
+    loop respawns streams through this function, respawned tasks are
+    supervised too.
+    """
     from core.ingestor.streamer import (
         stream_prices_kalshi,
         stream_prices_polymarket,
@@ -149,25 +158,29 @@ def _spawn_ws_tasks(
     tasks: list[asyncio.Task] = []
     if poly_platform_ids:
         tasks.append(
-            asyncio.create_task(
-                stream_prices_polymarket(
+            supervised_task(
+                lambda: stream_prices_polymarket(
                     asset_ids=poly_platform_ids,
                     stop_event=stop_event,
                     on_price=on_price,
                     id_map=poly_id_map,
-                )
+                ),
+                name="ws:polymarket",
+                stop_event=stop_event,
             )
         )
     if kalshi_tickers:
         tasks.append(
-            asyncio.create_task(
-                stream_prices_kalshi(
+            supervised_task(
+                lambda: stream_prices_kalshi(
                     tickers=kalshi_tickers,
                     stop_event=stop_event,
                     on_price=on_price,
                     api_key=cfg.platform_credentials.kalshi_api_key,
                     rsa_key_path=cfg.platform_credentials.kalshi_rsa_key_path,
-                )
+                ),
+                name="ws:kalshi",
+                stop_event=stop_event,
             )
         )
     return tasks
@@ -336,6 +349,15 @@ async def main():
         "execution_mode": cfg.execution.execution_mode,
     }
 
+    # Created up front so signal handlers and every supervised task share it.
+    # Install handlers before the embedded dashboard starts: uvicorn saves and
+    # restores the process signal handlers around its own serve() loop.
+    stop_event = asyncio.Event()
+    phase: dict[str, bool] = {"streaming": False}
+    current = asyncio.current_task()
+    if current is not None:
+        install_shutdown_handlers(stop_event, current, phase)
+
     try:
         # ── Dashboard (start FIRST so it's available during refresh) ──
         dashboard_task = None
@@ -358,12 +380,18 @@ async def main():
                 static_dir=static_dir,
                 runtime_health=runtime_health,
             )
-            dashboard_task = asyncio.create_task(
-                start_dashboard_server(
+            # restart=False: uvicorn returns normally when it captures
+            # SIGTERM/SIGINT (that's a shutdown, not a fault); a crash is
+            # still logged and alerted.
+            dashboard_task = supervised_task(
+                lambda: start_dashboard_server(
                     dashboard_app,
                     host=args.dashboard_host,
                     port=args.dashboard_port,
-                )
+                ),
+                name="dashboard",
+                stop_event=stop_event,
+                restart=False,
             )
             # Yield to let uvicorn bind before continuing
             await asyncio.sleep(0.5)
@@ -395,9 +423,14 @@ async def main():
                     "No matches, but dashboard is live at http://127.0.0.1:%d  (Ctrl-C to quit)",
                     args.dashboard_port,
                 )
+                # From here a signal should set stop_event rather than cancel
+                # main(), so uvicorn (which also receives the signal) can
+                # finish its own graceful shutdown before we return.
+                phase["streaming"] = True
+                await stop_event.wait()
                 try:
-                    await dashboard_task
-                except asyncio.CancelledError:
+                    await asyncio.wait_for(dashboard_task, timeout=10)
+                except (TimeoutError, asyncio.CancelledError):
                     pass
             return
 
@@ -405,8 +438,6 @@ async def main():
 
         # ── Step 2: Stream ──
         from core.engine import ArbitrageEngine, ScheduledStrategyRunner
-
-        stop_event = asyncio.Event()
 
         # Take initial snapshot so dashboard has data immediately
         try:
@@ -440,7 +471,12 @@ async def main():
         # Warm the fee cache in the background so the fee gate rarely has to
         # hit venue APIs on the tick path. Keep a reference: asyncio holds
         # only weak references to tasks.
-        fee_warmup_task = asyncio.create_task(arb_engine.warm_fee_cache())
+        fee_warmup_task = supervised_task(
+            arb_engine.warm_fee_cache,
+            name="fee_warmup",
+            stop_event=stop_event,
+            restart=False,
+        )
         await arb_engine.initial_sweep()
 
         # Shared live price cache — updated on every websocket tick.
@@ -494,8 +530,8 @@ async def main():
             "kalshi_tickers": set(kalshi_tickers),
         }
 
-        pair_refresh_task = asyncio.create_task(
-            _pair_refresh_loop(
+        pair_refresh_task = supervised_task(
+            lambda: _pair_refresh_loop(
                 db,
                 arb_engine,
                 ws_state,
@@ -503,10 +539,16 @@ async def main():
                 cfg,
                 on_price,
                 interval=cfg.ingestor.pair_refresh_interval_s,
-            )
+            ),
+            name="pair_refresh",
+            stop_event=stop_event,
         )
 
-        scheduled_task = asyncio.create_task(scheduled.run(stop_event))
+        scheduled_task = supervised_task(
+            lambda: scheduled.run(stop_event),
+            name="scheduler",
+            stop_event=stop_event,
+        )
 
         _snapshot_interval = cfg.observability.pnl_snapshot_interval_s
 
@@ -581,7 +623,7 @@ async def main():
                         except Exception as snap_err:
                             logger.debug("Snapshot failed: %s", snap_err)
 
-        status_task = asyncio.create_task(_log_status())
+        status_task = supervised_task(_log_status, name="status", stop_event=stop_event)
 
         async def _periodic_arb_scan():
             while not stop_event.is_set():
@@ -594,11 +636,15 @@ async def main():
                     except Exception as scan_err:
                         logger.warning("periodic_arb_scan error: %s", scan_err)
 
-        arb_scan_task = asyncio.create_task(_periodic_arb_scan())
+        arb_scan_task = supervised_task(
+            _periodic_arb_scan, name="arb_scan", stop_event=stop_event
+        )
 
-        # Supervisor tasks whose identity is stable for the lifetime of the
-        # session. WS tasks live in ws_state["tasks"] and may be swapped out
-        # by the pair refresh loop — we gather them separately at shutdown.
+        # Supervised tasks whose identity is stable for the lifetime of the
+        # session. Each restarts itself on failure and only finishes once
+        # stop_event is set (SIGTERM/SIGINT). WS tasks live in
+        # ws_state["tasks"] and may be swapped out by the pair refresh loop —
+        # they are cancelled separately at shutdown.
         supervisor_tasks = [
             scheduled_task,
             status_task,
@@ -607,10 +653,9 @@ async def main():
             *([dashboard_task] if dashboard_task else []),
         ]
 
+        phase["streaming"] = True
         try:
-            await asyncio.gather(
-                *supervisor_tasks, *ws_state["tasks"], return_exceptions=True
-            )
+            await asyncio.gather(*supervisor_tasks, return_exceptions=True)
         except KeyboardInterrupt:
             logger.info("Shutting down...")
         finally:
@@ -642,4 +687,8 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except asyncio.CancelledError:
+        # SIGTERM/SIGINT during startup cancels main(); cleanup already ran.
+        logger.info("Trading session stopped during startup")

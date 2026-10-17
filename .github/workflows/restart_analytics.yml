@@ -38,15 +38,6 @@ jobs:
           REMOTE_SCRIPT
           )"
 
-      - name: Trigger market refresh (non-blocking)
-        run: |
-          # Fire the refresh and return immediately — don't wait for it to finish.
-          # The matching phase takes 30-90 min depending on market volume.
-          # The predictor.service will pick up fresh data on next restart.
-          gcloud compute ssh "$VM_NAME" \
-            --zone="$ZONE" --project="$PROJECT_ID" \
-            --command="sudo systemctl start predictor-refresh.service --no-block 2>/dev/null || sudo systemctl restart predictor-refresh.service --no-block 2>/dev/null || true; echo 'Refresh dispatched (running in background on VM)'"
-
       - name: Stop predictor, take baseline, restart
         run: |
           gcloud compute ssh "$VM_NAME" \
@@ -84,6 +75,17 @@ jobs:
           sudo systemctl is-active predictor
           REMOTE_SCRIPT
           )"
+
+      - name: Trigger market refresh (non-blocking)
+        run: |
+          # Runs AFTER the baseline step: previously the refresh was dispatched
+          # first and the next step's `systemctl stop predictor-refresh` killed
+          # it seconds later, so this workflow never actually refreshed.
+          # Fire and return — the matching phase takes 30-90 min. The running
+          # predictor picks up new pairs via its pair-refresh loop.
+          gcloud compute ssh "$VM_NAME" \
+            --zone="$ZONE" --project="$PROJECT_ID" \
+            --command="sudo systemctl start --no-block predictor-refresh.service && echo 'Refresh dispatched (running in background on VM)'"
 
       - name: Tail recent logs
         run: |

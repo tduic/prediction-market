@@ -70,10 +70,13 @@ ln -sf /usr/bin/python3.12 /usr/local/bin/python
 
 echo "    Python version: $(python3 --version)"
 
-# ── 5. Node.js 18 ─────────────────────────────────────────────────────────────
-log "Installing Node.js 18"
-if ! command -v node &>/dev/null; then
-  curl -fsSL https://deb.nodesource.com/setup_18.x | bash - 2>/dev/null
+# ── 5. Node.js 24 ─────────────────────────────────────────────────────────────
+# Matches CI (.github/workflows/*.yml node-version "24") and the dashboard's
+# package.json engines; the TypeScript 7 / Vite toolchain does not run on
+# Node 18. Only needed for an on-VM `npm run build` (CI ships a built dist/).
+log "Installing Node.js 24"
+if ! command -v node &>/dev/null || [ "$(node -p 'process.versions.node.split(".")[0]')" -lt 24 ]; then
+  curl -fsSL https://deb.nodesource.com/setup_24.x | bash - 2>/dev/null
   apt-get install -y -qq nodejs
 fi
 echo "    Node version: $(node --version)"

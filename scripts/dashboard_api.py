@@ -30,7 +30,8 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
 
-from core.config import get_config
+from core.config import RiskControlConfig, get_config
+from core.live_gate import get_effective_risk_config
 from core.secrets import get_secret
 
 logger = logging.getLogger(__name__)
@@ -68,6 +69,17 @@ def configure(db_path: str) -> None:
             _c.execute("PRAGMA journal_mode=WAL")
     except sqlite3.Error as _e:
         logger.warning("Could not enable WAL mode on %s: %s", db_path, _e)
+
+
+def _effective_risk_config() -> RiskControlConfig:
+    """Risk config the circuit breaker actually enforces for this mode.
+
+    trading_session builds DailyLossCircuitBreaker from
+    get_effective_risk_config(execution_mode), which in live mode applies the
+    stricter LIVE_* overrides (e.g. LIVE_MAX_DAILY_LOSS_PCT). The dashboard
+    must report the same daily-loss limit, not the paper default.
+    """
+    return get_effective_risk_config(get_config().execution.execution_mode)
 
 
 async def _compute_daily_loss_today(db: aiosqlite.Connection) -> float:
@@ -113,6 +125,16 @@ class _SecurityHeadersMiddleware(BaseHTTPMiddleware):
         return response
 
 
+def _dashboard_password() -> str:
+    """Single source of truth for the dashboard password (via get_secret).
+
+    Both the auth middleware and the public-bind guard must use this so that a
+    password visible to one (e.g. only in .env under SECRETS_STRICT=true) can
+    never be invisible to the other.
+    """
+    return get_secret("DASHBOARD_PASSWORD", "") or ""
+
+
 class _BasicAuthMiddleware(BaseHTTPMiddleware):
     """HTTP Basic Auth gate. Applied only when DASHBOARD_PASSWORD is set."""
 
@@ -121,20 +143,26 @@ class _BasicAuthMiddleware(BaseHTTPMiddleware):
         self._username = username
         self._password = password
 
+    def _authorized(self, header: str) -> bool:
+        if not header.startswith("Basic "):
+            return False
+        try:
+            decoded = base64.b64decode(header[6:]).decode("utf-8", errors="replace")
+        except ValueError as exc:  # binascii.Error is a ValueError
+            logger.debug("BasicAuth decode error: %s", exc)
+            return False
+        user, _, pwd = decoded.partition(":")
+        user_ok = secrets.compare_digest(user.encode(), self._username.encode())
+        pass_ok = secrets.compare_digest(pwd.encode(), self._password.encode())
+        return user_ok and pass_ok
+
     async def dispatch(self, request: Request, call_next):
         if request.url.path == "/health":
             return await call_next(request)
-        auth = request.headers.get("Authorization", "")
-        if auth.startswith("Basic "):
-            try:
-                decoded = base64.b64decode(auth[6:]).decode("utf-8", errors="replace")
-                user, _, pwd = decoded.partition(":")
-                user_ok = secrets.compare_digest(user.encode(), self._username.encode())
-                pass_ok = secrets.compare_digest(pwd.encode(), self._password.encode())
-                if user_ok and pass_ok:
-                    return await call_next(request)
-            except Exception as exc:
-                logger.debug("BasicAuth decode error: %s", exc)
+        if self._authorized(request.headers.get("Authorization", "")):
+            # Outside any try-block: an endpoint error for an authenticated
+            # request must surface as a 500, not be swallowed into a 401.
+            return await call_next(request)
         return Response(
             "Unauthorized",
             status_code=401,
@@ -160,12 +188,14 @@ def _build_app(
     # status loop. Keeping it in app state avoids a second SQLite writer.
     app.state.runtime_health = runtime_health
 
-    # Security headers on every response.
-    app.add_middleware(_SecurityHeadersMiddleware)
+    # Middleware order: Starlette runs the LAST-added middleware outermost.
+    # Auth is innermost, CORS wraps it (so preflights are answered without
+    # credentials), and security headers are added last so they wrap
+    # everything — including the 401 responses produced by the auth gate.
 
-    # HTTP Basic Auth — enabled when DASHBOARD_PASSWORD env var is set.
-    # Add before CORS so unauthenticated requests are rejected at the gate.
-    _dash_password = get_secret("DASHBOARD_PASSWORD", "") or ""
+    # HTTP Basic Auth — enabled when DASHBOARD_PASSWORD resolves via
+    # get_secret (the same source _enforce_host_auth_policy checks).
+    _dash_password = _dashboard_password()
     if _dash_password:
         _dash_user = os.getenv("DASHBOARD_USER", "admin")
         app.add_middleware(
@@ -186,6 +216,9 @@ def _build_app(
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    # Security headers on every response (outermost — see ordering note above).
+    app.add_middleware(_SecurityHeadersMiddleware)
 
     # ── helpers ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
@@ -284,7 +317,7 @@ def _build_app(
             daily_loss_pct_used = 0.0
             try:
                 _daily_loss = await _compute_daily_loss_today(db)
-                _cfg = get_config().risk_controls
+                _cfg = _effective_risk_config()
                 _daily_loss_limit = _cfg.starting_capital * _cfg.max_daily_loss_pct
                 daily_loss_pct_used = round(
                     _daily_loss / _daily_loss_limit if _daily_loss_limit > 0 else 0.0, 4
@@ -709,7 +742,7 @@ def _build_app(
             daily_loss_pct_used = 0.0
             try:
                 daily_loss_today = await _compute_daily_loss_today(db)
-                _cfg = get_config().risk_controls
+                _cfg = _effective_risk_config()
                 daily_loss_limit = _cfg.starting_capital * _cfg.max_daily_loss_pct
                 daily_loss_pct_used = round(
                     (
@@ -993,7 +1026,7 @@ def _build_app(
                     "circuit-breaker endpoint: daily_loss query failed: %s", e
                 )
                 daily_loss_available = False
-            cfg = get_config().risk_controls
+            cfg = _effective_risk_config()
             daily_loss_limit_pct = cfg.max_daily_loss_pct
             daily_loss_limit = cfg.starting_capital * daily_loss_limit_pct
             daily_loss_pct_used = round(
@@ -1377,7 +1410,7 @@ def _build_app(
             # Daily loss budget utilization
             try:
                 _daily_loss = await _compute_daily_loss_today(db)
-                _cfg = get_config().risk_controls
+                _cfg = _effective_risk_config()
                 _daily_loss_limit = _cfg.starting_capital * _cfg.max_daily_loss_pct
                 daily_loss_pct_used = round(
                     _daily_loss / _daily_loss_limit if _daily_loss_limit > 0 else 0.0, 4
@@ -1520,7 +1553,7 @@ def _build_app(
                 result["circuit_breaker_tripped"] = None
             try:
                 _daily_loss = await _compute_daily_loss_today(db)
-                _cfg = get_config().risk_controls
+                _cfg = _effective_risk_config()
                 _daily_loss_limit = _cfg.starting_capital * _cfg.max_daily_loss_pct
                 result["daily_loss_pct_used"] = round(
                     _daily_loss / _daily_loss_limit if _daily_loss_limit > 0 else 0.0, 4
@@ -1588,12 +1621,16 @@ def _enforce_host_auth_policy(host: str) -> str:
     force-bind to 127.0.0.1 instead. Previously the auth middleware was only
     attached when DASHBOARD_PASSWORD was non-empty, so an unset password on
     0.0.0.0 silently served every endpoint unauthenticated.
+
+    The password is resolved via _dashboard_password() (get_secret), the
+    exact source _build_app uses to decide whether to install the auth
+    middleware, so the guard and the middleware can never disagree.
     """
-    if not _is_loopback_host(host) and not os.getenv("DASHBOARD_PASSWORD", ""):
+    if not _is_loopback_host(host) and not _dashboard_password():
         logger.error(
             "Refusing to bind dashboard to %s with no DASHBOARD_PASSWORD set — "
-            "falling back to 127.0.0.1. Set DASHBOARD_PASSWORD in the "
-            "environment to expose publicly.",
+            "falling back to 127.0.0.1. Set DASHBOARD_PASSWORD in the active "
+            "secrets backend to expose publicly.",
             host,
         )
         return "127.0.0.1"

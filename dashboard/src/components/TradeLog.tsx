@@ -152,7 +152,7 @@ export function TradeLog({ data, strategies }: TradeLogProps) {
                       {trade.edge_captured_pct.toFixed(1)}%
                     </td>
                     <td className="px-4 py-3 text-right text-gray-100">
-                      {trade.signal_to_fill_ms}
+                      {trade.signal_to_fill_ms ?? '—'}
                     </td>
                   </tr>
                 )

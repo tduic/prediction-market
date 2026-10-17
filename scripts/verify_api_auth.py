@@ -6,22 +6,26 @@ No orders placed, no risk.
 
 Usage:
     python scripts/verify_api_auth.py
+
+Exits non-zero when any check fails, so it can gate scripts/CI.
 """
 
 import asyncio
 import base64
 import logging
 import os
+import sys
 import time
 from pathlib import Path
+
+# Make `python scripts/verify_api_auth.py` work from any directory (like the
+# other scripts): the repo root must be importable for `core`/`execution`.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import httpx
 from dotenv import load_dotenv
 
 from core.secrets import get_secret
-
-# Load .env
-load_dotenv()
 
 logging.basicConfig(
     level=logging.INFO,
@@ -180,7 +184,8 @@ async def verify_polymarket():
 # ─── Main ────────────────────────────────────────────────────────────────────
 
 
-async def main():
+async def main() -> int:
+    """Run all checks; return a process exit code (0 = all passed)."""
     logger.info("=" * 60)
     logger.info("API Authentication Verification")
     logger.info("=" * 60)
@@ -199,7 +204,9 @@ async def main():
         if not poly_ok:
             logger.error("❌ Polymarket authentication failed")
     logger.info("=" * 60)
+    return 0 if kalshi_ok and poly_ok else 1
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    load_dotenv()
+    sys.exit(asyncio.run(main()))

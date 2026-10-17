@@ -14,6 +14,13 @@ export function SystemHealthBadge({ data }: Props) {
     )
   }
 
+  // A persistent execution halt blocks every new order until an operator
+  // runs scripts/clear_halt.py — always show it as critical, by name.
+  const halt =
+    data.execution_halt && !('error' in data.execution_halt)
+      ? data.execution_halt
+      : null
+
   const statusConfig = {
     ok: {
       bg: 'bg-green-900/20 border border-green-800',
@@ -33,11 +40,16 @@ export function SystemHealthBadge({ data }: Props) {
       dot: 'bg-red-400 animate-pulse',
       label: 'SYS CRITICAL',
     },
-  }[data.status]
+  }[halt ? 'critical' : data.status]
+  const label = halt ? 'TRADING HALTED' : statusConfig.label
 
   const issueCount = data.issues?.length ?? 0
-  const tooltipText =
+  const haltText = halt
+    ? `Execution halted${halt.halted_at ? ` since ${halt.halted_at}` : ''}: ${halt.reason ?? 'unknown reason'} (clear with scripts/clear_halt.py)`
+    : null
+  const issuesText =
     issueCount > 0 ? data.issues.join(' | ') : 'All systems nominal'
+  const tooltipText = haltText ? `${haltText} | ${issuesText}` : issuesText
 
   return (
     <div
@@ -45,7 +57,7 @@ export function SystemHealthBadge({ data }: Props) {
       title={tooltipText}
     >
       <div className={`w-1.5 h-1.5 rounded-full ${statusConfig.dot}`} />
-      {statusConfig.label}
+      {label}
       {issueCount > 0 && (
         <span className="text-gray-400">({issueCount})</span>
       )}
