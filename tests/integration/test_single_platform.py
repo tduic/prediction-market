@@ -1326,3 +1326,14 @@ class TestTranslatedSells:
         await db.commit()
         resolved = await BookResolver(db).resolve("m_short", Side.SELL, 1.0, 0.75)
         assert resolved is not None and resolved.book is Book.NO
+
+
+async def test_execution_clients_are_reused_across_cycles(db):
+    """Clients used to be rebuilt every cycle and never closed (an unclosed
+    httpx client per cycle, and a fresh Polymarket key derivation in live)."""
+    from core.strategies.single_platform import _client_for
+
+    assert _client_for(db, "paper", "kalshi") is _client_for(db, "paper", "kalshi")
+    assert _client_for(db, "paper", "kalshi") is not _client_for(
+        db, "paper", "polymarket"
+    )

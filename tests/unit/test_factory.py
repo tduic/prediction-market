@@ -38,3 +38,17 @@ def test_paper_mode_unchanged():
         _make_single_execution_client(None, "paper", "polymarket"),
         PaperExecutionClient,
     )
+
+
+def test_paper_clients_apply_configured_slippage(monkeypatch):
+    from core import config as config_module
+    from execution.factory import _make_execution_clients
+
+    monkeypatch.setenv("SLIPPAGE_BPS", "25")
+    config_module._config = None  # rebuild from env
+    try:
+        poly, kalshi = _make_execution_clients(None, "paper")
+        single = _make_single_execution_client(None, "paper", "kalshi")
+        assert poly.slippage_bps == kalshi.slippage_bps == single.slippage_bps == 25.0
+    finally:
+        config_module._config = None

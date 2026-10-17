@@ -1137,6 +1137,14 @@ class ArbitrageEngine:
                 return None
             raise
 
+    async def close(self) -> None:
+        """Release the execution clients (HTTP connections). Call on shutdown."""
+        for client in (self._poly_client, self._kalshi_client):
+            try:
+                await client.close()
+            except Exception:
+                logger.exception("Error closing execution client")
+
     async def flush(self):
         """Commit any pending DB writes.
 

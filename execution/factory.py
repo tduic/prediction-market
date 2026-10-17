@@ -14,6 +14,14 @@ from execution.clients.base import BaseExecutionClient
 logger = logging.getLogger(__name__)
 
 
+def _paper_slippage_bps() -> float:
+    """SLIPPAGE_BPS (RiskControlConfig.slippage_bps) — was parsed and
+    validated but never reached the paper clients, so fills had none."""
+    from core.config import get_config
+
+    return get_config().risk_controls.slippage_bps
+
+
 def _make_polymarket_client(db) -> BaseExecutionClient:
     """Live Polymarket client: CLOB V2 by default.
 
@@ -57,8 +65,13 @@ def _make_execution_clients(
     else:
         from execution.clients.paper import PaperExecutionClient
 
-        poly_client = PaperExecutionClient(db, platform_label="polymarket")
-        kalshi_client = PaperExecutionClient(db, platform_label="paper_kalshi")
+        slippage = _paper_slippage_bps()
+        poly_client = PaperExecutionClient(
+            db, platform_label="polymarket", slippage_bps=slippage
+        )
+        kalshi_client = PaperExecutionClient(
+            db, platform_label="paper_kalshi", slippage_bps=slippage
+        )
         label = (
             "SHADOW (paper clients, no real orders)"
             if execution_mode == "shadow"
@@ -85,4 +98,6 @@ def _make_single_execution_client(db, execution_mode: str, platform: str):
     else:
         from execution.clients.paper import PaperExecutionClient
 
-        return PaperExecutionClient(db, platform_label=f"paper_{platform}")
+        return PaperExecutionClient(
+            db, platform_label=f"paper_{platform}", slippage_bps=_paper_slippage_bps()
+        )

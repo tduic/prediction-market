@@ -10,6 +10,7 @@ import logging
 import re
 import statistics
 import uuid
+import weakref
 from collections import defaultdict
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -338,6 +339,25 @@ async def mark_and_close_positions(
     return closed
 
 
+# Execution clients per DB connection, reused across cycles. Building them
+# every cycle leaked an httpx client per cycle (never closed) and, in live
+# mode, re-derived Polymarket API keys each time. Weak keys: entries go away
+# with the connection.
+_CLIENTS: "weakref.WeakKeyDictionary[aiosqlite.Connection, dict]" = (
+    weakref.WeakKeyDictionary()
+)
+
+
+def _client_for(db: aiosqlite.Connection, execution_mode: str, platform: str):
+    from execution.factory import _make_single_execution_client
+
+    per_db = _CLIENTS.setdefault(db, {})
+    key = (execution_mode, platform)
+    if key not in per_db:
+        per_db[key] = _make_single_execution_client(db, execution_mode, platform)
+    return per_db[key]
+
+
 async def _record_circuit_breaker_result(circuit_breaker, result) -> None:
     """Feed a single-platform order outcome into the circuit breaker.
 
@@ -370,14 +390,11 @@ async def detect_single_platform_opportunities(
     from core.engine.fire_state import _RiskLeg, _RiskSignal
     from core.signals.risk import get_portfolio_value, run_all_checks
     from core.signals.sizing import compute_kelly_fraction, compute_position_size
-    from execution.factory import _make_single_execution_client
     from execution.models import OrderLeg
 
     _risk_cfg: RiskControlConfig = risk_config or RiskControlConfig()
 
     execution_mode = get_config().execution.execution_mode
-    # Cache clients by platform to avoid re-initializing per trade
-    _clients: dict = {}
 
     # Get all markets with their latest prices.
     # Joining on MAX(id) per market_id selects the most recently inserted row,
@@ -770,10 +787,7 @@ async def detect_single_platform_opportunities(
 
         # Get (or create) execution client for this market's platform
         platform = m["platform"]
-        if platform not in _clients:
-            _clients[platform] = _make_single_execution_client(
-                db, execution_mode, platform
-            )
+        client = _client_for(db, execution_mode, platform)
 
         leg = OrderLeg(
             market_id=m["id"],
@@ -783,9 +797,7 @@ async def detect_single_platform_opportunities(
             limit_price=price,
             order_type="LIMIT",
         )
-        result = await _clients[platform].submit_order(
-            leg, signal_id=signal_id, strategy=strategy
-        )
+        result = await client.submit_order(leg, signal_id=signal_id, strategy=strategy)
         await _record_circuit_breaker_result(circuit_breaker, result)
         if result.status == "pending":
             # Fill state unknown: the position can't be booked either way.
@@ -798,7 +810,7 @@ async def detect_single_platform_opportunities(
                 component="single_platform",
             )
             try:
-                await _clients[platform].cancel_order(result.order_id)
+                await client.cancel_order(result.order_id)
             except Exception:
                 logger.exception(
                     "Cancel failed for unknown-fill order %s (halt stays set)",

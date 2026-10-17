@@ -327,3 +327,15 @@ async def test_halted_before_signal_insert_leaves_no_orphan_signal(db):
     await engine.initial_sweep()
     cursor = await db.execute("SELECT COUNT(*) FROM signals")
     assert (await cursor.fetchone())[0] == 0
+
+
+async def test_close_releases_both_clients(db):
+    closed = []
+
+    class _Closable(FakeClient):
+        async def close(self):
+            closed.append(self.platform)
+
+    engine = await _engine(db, _Closable("polymarket"), _Closable("kalshi"))
+    await engine.close()
+    assert sorted(closed) == ["kalshi", "polymarket"]
