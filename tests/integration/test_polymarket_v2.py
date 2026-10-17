@@ -261,3 +261,39 @@ def test_concurrent_init_builds_one_client(monkeypatch):
     for t in threads:
         t.join()
     assert len(built) == 2  # one L1 client for key derivation + one L2 client
+
+
+async def test_legacy_client_reports_no_book_for_translated_sells(db, monkeypatch):
+    """POLYMARKET_CLIENT=legacy must also tag NO-book fills, or the engine and
+    single-platform positions book NO-space prices as YES."""
+    from execution.clients import polymarket as legacy
+    from execution.clients.base import OrderResult
+    from execution.clients.polymarket import PolymarketExecutionClient
+
+    legacy._ensure_clob_imports()  # normally done inside _ensure_client
+    await _seed(db)
+
+    class _LegacySdk:
+        def create_order(self, order_args):
+            return order_args
+
+        def post_order(self, signed, order_type):
+            return {"success": True, "orderID": "0xlegacy"}
+
+    client = PolymarketExecutionClient(db, private_key="0x" + "1" * 64)
+    client._client = _LegacySdk()
+    client._initialized = True
+
+    async def _filled(self, order_id, leg, start, latency):
+        return OrderResult(
+            order_id=order_id,
+            platform="polymarket",
+            status="filled",
+            submission_latency_ms=1,
+            filled_price=0.40,
+            filled_size=leg.size,
+        )
+
+    monkeypatch.setattr(PolymarketExecutionClient, "_poll_for_fill", _filled)
+    result = await client.submit_order(_leg(side="SELL", price=0.60))
+    assert result.book == "NO"

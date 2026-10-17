@@ -277,6 +277,8 @@ class PolymarketExecutionClient(BaseExecutionClient):
             fill_result = await self._poll_for_fill(
                 order_id, leg, start_time, submission_latency_ms
             )
+            # Prices are in the book's space; a translated sell fills on NO.
+            fill_result.book = resolved.book.value
             return fill_result
 
         except Exception as e:
