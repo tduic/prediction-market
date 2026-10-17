@@ -46,9 +46,41 @@ _Last updated: 2026-10-17_
   (BUY NO) store `entry_price` in YES space with `book='NO'`. They used to
   store the raw NO price as a YES entry, which inverted mark-to-market P&L.
   The legacy Polymarket client now tags `book` too.
-- Checks: ~865 tests. pytest, mypy, ruff and black are all clean (CI green
-  since 8483d9d). Smoke: `python scripts/smoke_paper_arb.py` (live public
-  data, no creds).
+- 2026-10-17 bug-and-dead-code pass (three audits, each fix reviewed by a
+  second model):
+  - **Data loss:** market and pair refreshes used `INSERT OR REPLACE`,
+    which cascade-deleted orders, signals, positions and outcomes on every
+    `--refresh` or weekly refresh. They are upserts now.
+  - **Arb engine:** halts on any exception after a buy fill, on a
+    cancellation, if the position can't be recorded, or on the P&L sanity
+    cap (and the cap now records the trade first). The halt fails closed
+    and falls back to in-memory. No rollback of recorded fills. A no-fill
+    isn't a breaker failure, and it mutes the pair on cooldown.
+  - **Order clients:** V2 separates build from post (a build failure is a
+    clean `failed`) and rounds prices to the tick only in our favour.
+    Kalshi signing errors return `failed`. The legacy client treats a post
+    exception as unknown.
+  - **Accounting:** `actual_pnl` is net of fees everywhere. Readers used
+    to subtract fees again, which hit the breaker, portfolio value, Kelly
+    bankroll and the dashboard. SELL legs are costed at size×(1−p) in the
+    risk checks and the fee-ratio invariant.
+  - **Ops:** one dashboard password source (this was an auth bypass), task
+    supervision with SIGTERM handling, push.sh uses `git archive` and never
+    ships `.env` or keys, deploy-order and concurrency fixes, env_merge
+    keeps values literal, StartLimit* moved to [Unit], clear_halt and
+    verify_api_auth fixes, example env cleaned up.
+  - **Alerting:** a standing invariant violation no longer pages every
+    cycle, and failed sends are retried. A transient Secret Manager error
+    no longer blanks a secret.
+  - **P2 structured-event strategy is off by default**
+    (`STRATEGY_P2_ENABLED=false`). It grouped markets that only share a
+    title.
+  - **Dead code removed:** batch.py, unused config fields, DB, analytics
+    and ingestor helpers, and about 2,400 lines of tests that only tested
+    stand-in classes.
+- Checks: about 1,090 tests, zero warnings. pytest, mypy, ruff and black
+  are clean. Smoke: `python scripts/smoke_paper_arb.py` (live public data,
+  no creds).
 
 ## Next steps
 1. **Before the next deploy**: the systemd units set `SECRETS_STRICT=true`.
@@ -67,12 +99,25 @@ _Last updated: 2026-10-17_
      hasn't been checked).
    After a 5xx or timeout, the order row holds only the `client_order_id`
    (`UNKNOWN-kalshi-<id>`), so reconcile against Kalshi by that id.
-3. `core/strategies/batch.py` (`detect_violations_and_trade`) has no
-   callers. It is dead code with the old NO-price bug, so delete it.
-4. Live P2–P5 positions are "closed" by `mark_and_close_positions` in the
+3. **The dashboard will become public on the next deploy.** The unit binds
+   `0.0.0.0`; until now the guard misread the password and forced
+   loopback. Decide on the GCP firewall rule for tcp:8000, TLS or an IP
+   allowlist, and confirm `DASHBOARD_PASSWORD` exists in Secret Manager.
+4. Not fixed (each needs a design decision):
+   - Nothing marks markets resolved (no resolution pipeline). As a result,
+     `close_resolved_positions` never runs, and capital locked in P1 arbs
+     (recorded `closed` immediately) isn't counted toward the exposure cap.
+   - `compute_position_size` returns dollars but the engine uses the
+     result as a contract count. For arbs it's about 1:1; it undersizes
+     single-platform buys.
+   - Migration 007's backfill never ran (pnl_model DEFAULT 'realistic'), so
+     legacy synthetic positions are labelled realistic.
+   - The migration runner isn't atomic.
+   - The VM still installs Python 3.12 while CI tests 3.14/3.15.
+5. Live P2–P5 positions are "closed" by `mark_and_close_positions` in the
    DB only; nothing sends an exit order. That's fine for paper but not for
    live.
-5. Fork pieces deliberately not ported: its engine rewrite, Kalshi V2 client
+6. Fork pieces deliberately not ported: its engine rewrite, Kalshi V2 client
    (read signing broken, endpoint unverified), exchange reconciliation
    (3 bugs), CI narrowing, P2–P5 disable.
 
