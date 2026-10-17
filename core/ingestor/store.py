@@ -8,6 +8,7 @@ for pulling market data from exchanges and persisting to the database.
 import asyncio
 import json as _json
 import logging
+import re
 import time
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -402,6 +403,53 @@ async def fetch_kalshi_markets(
             await http.aclose()
 
 
+_TITLE_TOKEN_RE = re.compile(r"[a-z0-9]+(?:\.[0-9]+)?")
+_CAP_WORD = r"[A-Z0-9][\w.'&-]*"
+# "... the Mainz 05 vs Wolfsburg professional ..." -> "Mainz 05 vs Wolfsburg":
+# runs of capitalised words on each side of "vs".
+_MATCHUP_RE = re.compile(rf"\b((?:{_CAP_WORD} )+?)vs\.? ((?:{_CAP_WORD}(?: |$))+)")
+_SENTENCE_START_RE = re.compile(r"^(?:If|The|In|Will)\s+")
+
+
+def _title_tokens(text: str) -> set[str]:
+    return set(_TITLE_TOKEN_RE.findall(text.lower()))
+
+
+def _kalshi_matchup(rules: str) -> str | None:
+    m = _MATCHUP_RE.search(rules or "")
+    if not m:
+        return None
+    home = _SENTENCE_START_RE.sub("", m.group(1).strip())
+    away = m.group(2).strip()
+    if not home or not away:
+        return None
+    return f"{home} vs {away}"
+
+
+def kalshi_match_title(m: dict) -> str:
+    """Build an unambiguous title for a Kalshi market.
+
+    Kalshi ``title`` is shared by many markets: every strike of an event
+    ("HYPE price on Oct 17, 2026?" x 600) and the same prop across events
+    ("Will over 2.5 goals be scored?" x 245 games). The strike is in
+    ``yes_sub_title`` and the matchup only in ``rules_primary``, so append
+    whichever of those adds words the title lacks:
+
+        "HYPE price on Oct 17, 2026? — $43.7499 or below"
+        "Will over 2.5 goals be scored? (Mainz 05 vs Wolfsburg)"
+
+    This is what gets stored in ``markets.title`` and matched on.
+    """
+    title = (m.get("title") or "").strip()
+    sub = (m.get("yes_sub_title") or "").strip()
+    if sub and not _title_tokens(sub) <= _title_tokens(title):
+        title = f"{title} — {sub}"
+    matchup = _kalshi_matchup(m.get("rules_primary") or "")
+    if matchup and not _title_tokens(matchup) <= _title_tokens(title):
+        title = f"{title} ({matchup})"
+    return title
+
+
 async def store_markets(
     db: aiosqlite.Connection, poly_markets: list, kalshi_markets: list
 ):
@@ -510,7 +558,7 @@ async def store_markets(
 
     for m in kalshi_markets:
         ticker = m.get("ticker", "")
-        title = m.get("title", "")
+        title = kalshi_match_title(m) if m.get("title") else ""
         if not ticker or not title:
             kalshi_skipped["no_ticker"] += 1
             continue

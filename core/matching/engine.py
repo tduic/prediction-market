@@ -72,6 +72,10 @@ STOP_WORDS = {
 }  # fmt: skip
 
 
+# Scores closer than this are a tie (same title text scores bit-identical).
+_TIE_EPS = 1e-9
+
+
 def normalize_title(title: str) -> str:
     """Normalize a market title for comparison."""
     text = title.lower().strip()
@@ -220,6 +224,7 @@ def _find_matches_sync(
     matches = []
     used_kalshi = set()
     comparisons_made = 0
+    ambiguous = 0
     top_near_misses = []
 
     for p_id, p_title, p_price in poly:
@@ -246,6 +251,7 @@ def _find_matches_sync(
 
         best_score = 0.0
         best_k_id = None
+        tied_at_best = 0  # candidates scoring (within epsilon) best_score
 
         for k_id in candidates:
             k_title_raw, k_price, k_norm, k_tokens = kalshi_data[k_id]
@@ -254,13 +260,28 @@ def _find_matches_sync(
             )
             comparisons_made += 1
 
-            if score > best_score:
+            if score > best_score + _TIE_EPS:
                 best_score = score
                 best_k_id = k_id
+                tied_at_best = 1
+            elif best_k_id is not None and abs(score - best_score) <= _TIE_EPS:
+                tied_at_best += 1
 
         if best_k_id is not None:
             k_title_raw, k_price, _, _ = kalshi_data[best_k_id]
-            if best_score >= threshold:
+            if best_score >= threshold and tied_at_best > 1:
+                # Several Kalshi markets are equally good — typically the
+                # same prop title across different games/strikes. Picking
+                # one would be arbitrary (iteration order), so refuse.
+                ambiguous += 1
+                if ambiguous <= 10:
+                    logger.info(
+                        "  Ambiguous: %d Kalshi markets tie at %.3f for PM: %s",
+                        tied_at_best,
+                        best_score,
+                        p_title[:60],
+                    )
+            elif best_score >= threshold:
                 used_kalshi.add(best_k_id)
                 matches.append(
                     {
@@ -288,9 +309,11 @@ def _find_matches_sync(
 
     matches.sort(key=lambda x: x["similarity"], reverse=True)
     logger.info(
-        "Found %d matches (threshold=%.2f) | %d comparisons in %.1fs",
+        "Found %d matches (threshold=%.2f) | %d refused as ambiguous ties | "
+        "%d comparisons in %.1fs",
         len(matches),
         threshold,
+        ambiguous,
         comparisons_made,
         elapsed,
     )
