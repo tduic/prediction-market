@@ -36,6 +36,9 @@ _EPS = 1e-9
 # Rate-limit handling for public venue reads.
 _MAX_429_RETRIES = 2
 _MAX_RETRY_AFTER_S = 2.0
+# Shared Kalshi backoff after a 429: well under the 2s pre-trade deadline so
+# one rate-limit response can't time out every other lookup.
+_MAX_GLOBAL_BACKOFF_S = 0.5
 _KALSHI_MIN_INTERVAL_S = 0.1
 
 
@@ -96,12 +99,38 @@ class LiveMarketData:
 
     async def _pace_kalshi(self) -> None:
         """Space Kalshi requests >= _KALSHI_MIN_INTERVAL_S apart (its public
-        API rate-limits; the startup fee warm-up makes many calls)."""
+        API rate-limits; the startup fee warm-up makes many calls).
+
+        The slot is reserved under the lock and the wait happens outside it,
+        so one caller's wait never serialises everyone else's.
+        """
         async with self._kalshi_lock:
-            wait = self._kalshi_next_at - time.monotonic()
-            if wait > 0:
-                await asyncio.sleep(wait)
-            self._kalshi_next_at = time.monotonic() + _KALSHI_MIN_INTERVAL_S
+            now = time.monotonic()
+            slot = max(self._kalshi_next_at, now)
+            # Never move the shared deadline backwards (a 429 backoff may
+            # have pushed it further out).
+            self._kalshi_next_at = max(
+                self._kalshi_next_at, slot + _KALSHI_MIN_INTERVAL_S
+            )
+        if slot > now:
+            await asyncio.sleep(slot - now)
+
+    async def _bump_kalshi_backoff(self, delay: float) -> None:
+        async with self._kalshi_lock:
+            self._kalshi_next_at = max(
+                self._kalshi_next_at,
+                time.monotonic() + min(delay, _MAX_GLOBAL_BACKOFF_S),
+            )
+
+    @staticmethod
+    def _retry_delay(response: httpx.Response, attempt: int) -> float:
+        try:
+            delay = float(response.headers.get("Retry-After", ""))
+        except ValueError:
+            delay = 0.25 * 2**attempt
+        if not math.isfinite(delay):
+            delay = 0.25 * 2**attempt
+        return min(max(delay, 0.0), _MAX_RETRY_AFTER_S)
 
     async def _get_json(self, url: str, params: dict | None = None) -> dict:
         is_kalshi = url.startswith(self._kalshi_base)
@@ -109,21 +138,16 @@ class LiveMarketData:
             if is_kalshi:
                 await self._pace_kalshi()
             response = await self._http.get(url, params=params)
-            if response.status_code != 429 or attempt == _MAX_429_RETRIES:
+            if response.status_code != 429:
                 break
             # Rate-limited: honour Retry-After (capped), else back off briefly.
-            try:
-                delay = float(response.headers.get("Retry-After", ""))
-            except ValueError:
-                delay = 0.25 * 2**attempt
-            if not math.isfinite(delay):
-                delay = 0.25 * 2**attempt
-            delay = min(max(delay, 0.0), _MAX_RETRY_AFTER_S)
+            delay = self._retry_delay(response, attempt)
             if is_kalshi:
-                # Back everyone off, not just this caller.
-                self._kalshi_next_at = max(
-                    self._kalshi_next_at, time.monotonic() + delay
-                )
+                # Back everyone off (even after the last attempt), capped well
+                # below the tick-path deadline.
+                await self._bump_kalshi_backoff(delay)
+            if attempt == _MAX_429_RETRIES:
+                break
             await asyncio.sleep(delay)
         response.raise_for_status()
         data = response.json()

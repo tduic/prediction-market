@@ -2,6 +2,8 @@
 
 from datetime import UTC, datetime
 
+import asyncio
+
 import httpx
 import pytest
 
@@ -236,7 +238,13 @@ class TestRateLimits:
         md, _ = _live(lambda r: httpx.Response(429, headers={"Retry-After": "1.5"}))
         before = md._kalshi_next_at
         assert await md.fee_params(db, "kal_KXTEST-1") is None
-        assert md._kalshi_next_at > before + 1.0
+        # Shared backoff recorded even on the final 429, capped below the
+        # tick-path deadline.
+        import time as _time
+
+        # (sleep is faked, so the 3 paced attempts' 0.1s slots also stack up)
+        assert md._kalshi_next_at - _time.monotonic() >= 0.4
+        assert md._kalshi_next_at - _time.monotonic() <= 0.5 + 3 * 0.1 + 0.05
 
     async def test_non_finite_retry_after_falls_back(self, db, monkeypatch):
         slept: list[float] = []
@@ -255,3 +263,14 @@ class TestRateLimits:
         md, _ = _live(lambda r: next(responses))
         assert await md.fee_params(db, "poly_0xabc") is not None
         assert slept == [0.25]
+
+    async def test_pacer_never_moves_a_backoff_backwards(self, db):
+        import time as _time
+
+        md, _ = _live(lambda r: httpx.Response(200, json={}))
+        md._kalshi_next_at = _time.monotonic() + 30.0  # e.g. a 429 backoff
+        deadline = md._kalshi_next_at
+        task = asyncio.ensure_future(md._pace_kalshi())
+        await asyncio.sleep(0)  # let it reserve its slot
+        assert md._kalshi_next_at >= deadline
+        task.cancel()
