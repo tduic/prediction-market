@@ -253,3 +253,46 @@ class TestKalshiPagination:
                 await fetch_kalshi_markets(
                     "key", rsa_key_path, KALSHI_BASE, client=client
                 )
+
+
+class TestKalshiCursorCycle:
+    async def test_page_with_no_new_markets_raises(self, rsa_key_path):
+        # Cursor keeps advancing but the server re-serves page 1: the old
+        # code logged "cursor cycled" and returned 1000 of N markets.
+        calls = {"n": 0}
+
+        def handler(request):
+            calls["n"] += 1
+            return httpx.Response(
+                200,
+                json={
+                    "markets": [_kalshi_market(i) for i in range(1000)],
+                    "cursor": f"c{calls['n']}",
+                },
+            )
+
+        async with _client(handler) as client:
+            with pytest.raises(MarketFetchError, match="cycl"):
+                await fetch_kalshi_markets(
+                    "key", rsa_key_path, KALSHI_BASE, client=client
+                )
+
+    async def test_repeated_cursor_raises(self, rsa_key_path):
+        calls = {"n": 0}
+
+        def handler(request):
+            calls["n"] += 1
+            start = calls["n"] * 1000
+            return httpx.Response(
+                200,
+                json={
+                    "markets": [_kalshi_market(i) for i in range(start, start + 1000)],
+                    "cursor": "same",
+                },
+            )
+
+        async with _client(handler) as client:
+            with pytest.raises(MarketFetchError, match="cycl"):
+                await fetch_kalshi_markets(
+                    "key", rsa_key_path, KALSHI_BASE, client=client
+                )

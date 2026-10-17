@@ -312,14 +312,14 @@ async def fetch_kalshi_markets(
                     all_markets.append(m)
                     new_count += 1
 
-            # If we got zero new markets, the cursor has cycled
+            # Zero new markets on a full page: the cursor has cycled back
+            # over pages already seen. What we hold is not known to be the
+            # whole listing, so refuse rather than return it.
             if new_count == 0:
-                logger.info(
-                    "  Kalshi: cursor cycled (0 new in page %d of %d), stopping",
-                    page_num,
-                    len(page),
+                raise MarketFetchError(
+                    f"Kalshi: cursor cycled (0 new of {len(page)} on page "
+                    f"{page_num}, {len(all_markets)} markets so far)"
                 )
-                break
 
             new_cursor = data.get("cursor", "")
 
@@ -349,13 +349,12 @@ async def fetch_kalshi_markets(
                 )
                 break
 
-            # 3. Cursor already seen → cycle detected
+            # 3. Cursor already seen → cycle; the listing may be incomplete
             if new_cursor in seen_cursors:
-                logger.info(
-                    "  Kalshi: cursor cycle detected (seen before), stopping at %d markets",
-                    len(all_markets),
+                raise MarketFetchError(
+                    f"Kalshi: cursor cycled (cursor repeated on page {page_num}, "
+                    f"{len(all_markets)} markets so far)"
                 )
-                break
 
             # 4. Safety cap — refuse rather than return a truncated list
             if len(all_markets) >= MAX_MARKETS:
