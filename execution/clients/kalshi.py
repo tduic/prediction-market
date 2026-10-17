@@ -260,8 +260,8 @@ class KalshiExecutionClient(BaseExecutionClient):
             order_id = str(data.get("order_id") or order_id)
             # fill_count is required in the 201 body; never default it to 0.
             filled = float(data["fill_count"])
-            if not math.isfinite(filled) or filled < 0:
-                raise ValueError(f"invalid fill_count {data['fill_count']!r}")
+            if not math.isfinite(filled) or not 0 <= filled <= contracts + 1e-9:
+                raise ValueError(f"implausible fill_count {data['fill_count']!r}")
             price = float(data["average_fill_price"]) if filled > 0 else 0.0
             if filled > 0 and not 0.0 < price < 1.0:
                 raise ValueError(f"invalid average_fill_price {price!r}")
@@ -271,6 +271,8 @@ class KalshiExecutionClient(BaseExecutionClient):
                 if filled > 0 and raw_fee is not None
                 else None
             )
+            if fee_paid is not None and not (math.isfinite(fee_paid) and fee_paid >= 0):
+                raise ValueError(f"implausible average_fee_paid {raw_fee!r}")
         except (ValueError, KeyError, TypeError, AttributeError) as exc:
             logger.error(
                 "Kalshi order %s accepted but response unreadable: %r", order_id, exc
@@ -289,7 +291,7 @@ class KalshiExecutionClient(BaseExecutionClient):
 
         result = _result(
             order_id,
-            "filled" if filled >= leg.size - 1e-9 else "partially_filled",
+            "filled" if filled >= contracts - 1e-9 else "partially_filled",
             fill_latency_ms=int((time.time() - start_time) * 1000),
             filled_price=round(price, 6),
             filled_size=filled,

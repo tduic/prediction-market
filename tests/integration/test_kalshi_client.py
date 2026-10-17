@@ -232,6 +232,23 @@ async def test_cancel_uses_v2_path_and_signs_without_query(db, rsa_key):
         httpx.Response(201, json={"order_id": "o-9"}),  # required fill_count missing
         httpx.Response(201, json={"order_id": "o-9", "fill_count": None}),
         httpx.Response(201, json={"order_id": "o-9", "fill_count": "nan"}),
+        httpx.Response(  # more than the 10 contracts ordered
+            201,
+            json={
+                "order_id": "o-9",
+                "fill_count": "11.00",
+                "average_fill_price": "0.5",
+            },
+        ),
+        httpx.Response(
+            201,
+            json={
+                "order_id": "o-9",
+                "fill_count": "5.00",
+                "average_fill_price": "0.55",
+                "average_fee_paid": "inf",
+            },
+        ),
         httpx.Response(
             201,
             json={
@@ -272,3 +289,10 @@ async def test_sub_one_contract_is_rejected_without_a_request(db, rsa_key):
     result = await client.submit_order(_leg(size=0.6))
     assert result.status == "failed"
     assert seen == []
+
+
+async def test_whole_fill_of_floored_size_is_filled(db, rsa_key):
+    await _seed(db)
+    client, _ = _client(db, rsa_key, lambda r: _created(fill="2.00"))
+    result = await client.submit_order(_leg(size=2.7))
+    assert result.status == "filled"
