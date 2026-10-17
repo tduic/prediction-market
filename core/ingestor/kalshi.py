@@ -165,30 +165,95 @@ class KalshiClient:
             return None
 
     def _parse_market(self, item: dict) -> MarketData | None:
-        """Parse Kalshi API response into MarketData."""
+        """Parse a Kalshi market (``/markets/{ticker}`` body) into MarketData.
+
+        Current schema: the market is wrapped as ``{"market": {...}}`` and
+        prices/quantities are decimal strings in ``*_dollars`` (0-1 scale) and
+        ``*_fp`` fields. Legacy integer-cent fields are still accepted.
+
+        ``last_price`` is the live reference price paper fills use: the mid of
+        the YES book when both sides are quoted, else the last trade, else
+        0.0 (which callers treat as "no price").
+        """
+        if isinstance(item.get("market"), dict):
+            item = item["market"]
         try:
+            yes_bid = _dollars(item, "yes_bid")
+            yes_ask = _dollars(item, "yes_ask")
+            no_bid = _dollars(item, "no_bid")
+            no_ask = _dollars(item, "no_ask")
+            last_trade = _dollars(item, "last_price")
+            yes_mid = _two_sided_mid(yes_bid, yes_ask)
+            if yes_mid is not None:
+                last_price = yes_mid
+            elif last_trade is not None and 0.0 < last_trade < 1.0:
+                last_price = last_trade
+            else:
+                last_price = 0.0
+
+            resolution_raw = (
+                item.get("expected_expiration_time")
+                or item.get("close_time")
+                or item.get("resolution_date")
+            )
             return MarketData(
                 market_id=item.get("ticker", ""),
                 platform="kalshi",
                 symbol=item.get("ticker", ""),
                 question=item.get("title", ""),
-                description=item.get("description", ""),
+                description=item.get("rules_primary", item.get("description", "")),
                 resolution_date=(
-                    datetime.fromisoformat(item["resolution_date"])
-                    if item.get("resolution_date")
-                    else None
+                    datetime.fromisoformat(resolution_raw) if resolution_raw else None
                 ),
-                last_price=float(item.get("last_price", 0)),
-                is_active=item.get("status") == "active",
+                last_price=last_price,
+                last_price_no=_two_sided_mid(no_bid, no_ask),
+                is_active=item.get("status") in ("active", "open"),
                 metadata={
                     "category": item.get("category"),
                     "status": item.get("status"),
-                    "volume": item.get("volume"),
-                    "liquidity": item.get("liquidity"),
-                    "yes_bid": item.get("yes_bid"),
-                    "yes_ask": item.get("yes_ask"),
+                    "event_ticker": item.get("event_ticker"),
+                    "yes_sub_title": item.get("yes_sub_title"),
+                    "volume": _fp(item, "volume"),
+                    "volume_24h": _fp(item, "volume_24h"),
+                    "open_interest": _fp(item, "open_interest"),
+                    "liquidity": _dollars(item, "liquidity"),
+                    "yes_bid": yes_bid,
+                    "yes_ask": yes_ask,
+                    "no_bid": no_bid,
+                    "no_ask": no_ask,
+                    "last_trade_price": last_trade,
                 },
             )
         except (KeyError, ValueError, TypeError) as e:
             logger.warning("Failed to parse market item: %s", e)
             return None
+
+
+def _num(value: object) -> float | None:
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+
+
+def _dollars(item: dict, name: str) -> float | None:
+    """Read ``<name>_dollars`` (0-1 string), falling back to legacy cents."""
+    v = _num(item.get(f"{name}_dollars"))
+    if v is not None:
+        return v
+    cents = _num(item.get(name))
+    return cents / 100.0 if cents is not None else None
+
+
+def _fp(item: dict, name: str) -> float | None:
+    """Read ``<name>_fp`` (decimal string), falling back to the legacy int."""
+    v = _num(item.get(f"{name}_fp"))
+    return v if v is not None else _num(item.get(name))
+
+
+def _two_sided_mid(bid: float | None, ask: float | None) -> float | None:
+    if bid is None or ask is None or not (0.0 < bid <= ask < 1.0):
+        return None
+    return (bid + ask) / 2.0
