@@ -3,6 +3,7 @@
 from datetime import UTC, datetime
 
 import httpx
+import pytest
 
 from core.engine.fees import kalshi_params, polymarket_params
 from execution.market_data import LiveMarketData, StaticMarketData
@@ -194,3 +195,34 @@ class TestHotPathSafety:
         assert set(md._fee_cache) == {"poly_0xa", "poly_0xb"}
         await md.fee_params(db, "poly_0xa")
         assert len(calls) == 2
+
+
+class TestRateLimits:
+    async def test_429_is_retried_honouring_retry_after(self, db, monkeypatch):
+        slept: list[float] = []
+
+        async def _fake_sleep(delay):
+            slept.append(delay)
+
+        monkeypatch.setattr("execution.market_data.asyncio.sleep", _fake_sleep)
+        await _seed(db, "poly_0xabc", "polymarket", "0xabc")
+        responses = iter(
+            [
+                httpx.Response(429, headers={"Retry-After": "0.4"}),
+                httpx.Response(200, json={"fd": {"r": 0.05, "e": 1}}),
+            ]
+        )
+        md, calls = _live(lambda r: next(responses))
+        assert await md.fee_params(db, "poly_0xabc") == polymarket_params(0.05, 1.0)
+        assert len(calls) == 2
+        assert slept and slept[0] == pytest.approx(0.4)
+
+    async def test_persistent_429_fails_closed(self, db, monkeypatch):
+        async def _fake_sleep(delay):
+            return None
+
+        monkeypatch.setattr("execution.market_data.asyncio.sleep", _fake_sleep)
+        await _seed(db, "poly_0xabc", "polymarket", "0xabc")
+        md, calls = _live(lambda r: httpx.Response(429))
+        assert await md.fee_params(db, "poly_0xabc") is None
+        assert len(calls) == 3  # first try + 2 retries, then give up

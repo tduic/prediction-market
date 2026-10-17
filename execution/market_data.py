@@ -32,6 +32,10 @@ DEFAULT_KALSHI_PUBLIC_BASE = "https://api.elections.kalshi.com/trade-api/v2"
 _KALSHI_TAKER_FEE_TYPES = {"quadratic", "quadratic_with_maker_fees"}
 # Price comparisons tolerate float noise from string parsing ("0.4500").
 _EPS = 1e-9
+# Rate-limit handling for public venue reads.
+_MAX_429_RETRIES = 2
+_MAX_RETRY_AFTER_S = 2.0
+_KALSHI_MIN_INTERVAL_S = 0.1
 
 
 class MarketData(Protocol):
@@ -84,11 +88,34 @@ class LiveMarketData:
         # Kalshi events and series are shared by many markets; cache them too.
         self._kalshi_events: dict[str, dict] = {}
         self._kalshi_series: dict[str, dict] = {}
+        self._kalshi_lock = asyncio.Lock()
+        self._kalshi_next_at = 0.0
         # In-flight background refreshes, keyed by market id.
         self._refreshing: dict[str, asyncio.Task] = {}
 
+    async def _pace_kalshi(self) -> None:
+        """Space Kalshi requests >= _KALSHI_MIN_INTERVAL_S apart (its public
+        API rate-limits; the startup fee warm-up makes many calls)."""
+        async with self._kalshi_lock:
+            wait = self._kalshi_next_at - time.monotonic()
+            if wait > 0:
+                await asyncio.sleep(wait)
+            self._kalshi_next_at = time.monotonic() + _KALSHI_MIN_INTERVAL_S
+
     async def _get_json(self, url: str, params: dict | None = None) -> dict:
-        response = await self._http.get(url, params=params)
+        is_kalshi = url.startswith(self._kalshi_base)
+        for attempt in range(_MAX_429_RETRIES + 1):
+            if is_kalshi:
+                await self._pace_kalshi()
+            response = await self._http.get(url, params=params)
+            if response.status_code != 429 or attempt == _MAX_429_RETRIES:
+                break
+            # Rate-limited: honour Retry-After (capped), else back off briefly.
+            try:
+                delay = float(response.headers.get("Retry-After", ""))
+            except ValueError:
+                delay = 0.25 * 2**attempt
+            await asyncio.sleep(min(max(delay, 0.0), _MAX_RETRY_AFTER_S))
         response.raise_for_status()
         data = response.json()
         if not isinstance(data, dict):
