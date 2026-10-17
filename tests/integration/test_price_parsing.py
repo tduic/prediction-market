@@ -55,6 +55,7 @@ def _make_poly_market(condition_id: str, title: str, price: float):
     return {
         "condition_id": condition_id,
         "question": title,
+        "outcomes": '["Yes", "No"]',
         "tokens": [{"price": str(price)}],
         "volume": "50000",
     }
@@ -226,6 +227,7 @@ class TestPolymarketPriceParsing:
             {
                 "condition_id": "cond_456",
                 "question": "Fallback Test",
+                "outcomes": '["Yes", "No"]',
                 "outcomePrices": "[0.45, 0.55]",
                 "volume": "10000",
             }

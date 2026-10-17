@@ -147,6 +147,7 @@ class TestAmbiguousTieIsRefused:
             {
                 "conditionId": "0x" + "1" * 64,
                 "question": "Will over 2.5 goals be scored?",
+                "outcomes": '["Yes", "No"]',
                 "outcomePrices": '["0.46", "0.54"]',
                 "clobTokenIds": '["1", "2"]',
             }

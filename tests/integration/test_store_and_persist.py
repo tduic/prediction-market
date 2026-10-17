@@ -25,6 +25,7 @@ def _poly(cond_id, title, price):
     return {
         "condition_id": cond_id,
         "question": title,
+        "outcomes": '["Yes", "No"]',
         "tokens": [{"price": str(price)}],
         "volume": "10000",
     }
@@ -37,6 +38,7 @@ def _poly_real_api(cond_id, title, price, yes_tok="111", no_tok="222"):
     return {
         "conditionId": cond_id,
         "question": title,
+        "outcomes": '["Yes", "No"]',
         "tokens": [{"price": str(price)}],
         "volume": "10000",
         "clobTokenIds": _j.dumps([yes_tok, no_tok]),
@@ -270,6 +272,7 @@ async def test_store_persists_last_price_no_to_markets(db):
     poly = {
         "conditionId": "0xNO_PRICE_TEST",
         "question": "NO-price roundtrip",
+        "outcomes": '["Yes", "No"]',
         "clobTokenIds": '["111", "222"]',
         "tokens": [
             {"price": 0.60},

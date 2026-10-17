@@ -45,6 +45,7 @@ def _gamma_market(i: int) -> dict:
         "id": str(i),
         "conditionId": f"0x{i:064x}",
         "question": f"Market {i}?",
+        "outcomes": '["Yes", "No"]',
         "clobTokenIds": f'["{i}1", "{i}2"]',
         "outcomePrices": '["0.4", "0.6"]',
         "volume": "123.4",

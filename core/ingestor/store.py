@@ -461,18 +461,20 @@ KALSHI_MAX_MID_SPREAD = MAX_MID_SPREAD
 
 
 def _yes_first(raw_outcomes: object) -> bool:
-    """True when a gamma ``outcomes`` value (JSON string or list) starts "Yes"."""
+    """True only for an exact ``["Yes", "No"]`` binary (case/space-insensitive).
+
+    Accepts gamma's JSON-string form or a list. Anything else — missing,
+    unparsable, reordered, renamed or more than two outcomes — is False.
+    """
     outcomes = raw_outcomes
     if isinstance(raw_outcomes, str):
         try:
             outcomes = _json.loads(raw_outcomes)
         except ValueError:
             return False
-    return (
-        isinstance(outcomes, list)
-        and len(outcomes) >= 2
-        and str(outcomes[0]).strip().lower() == "yes"
-    )
+    if not isinstance(outcomes, list) or len(outcomes) != 2:
+        return False
+    return [str(o).strip().lower() for o in outcomes] == ["yes", "no"]
 
 
 def _opt_float(m: dict, *keys: str) -> float | None:
@@ -499,6 +501,7 @@ async def store_markets(
     poly_market_rows = []
     poly_price_rows = []
     poly_skipped_non_yes = 0
+    poly_quarantine_ids: list[tuple[str]] = []
 
     for m in poly_markets:
         # Gamma API returns camelCase `conditionId` (66-char hex). The old
@@ -515,32 +518,38 @@ async def store_markets(
         if not title:
             continue
 
-        # Orientation comes from `outcomes`, not position: clobTokenIds[0] /
-        # outcomePrices[0] are the YES leg only when outcomes[0] is "Yes".
-        # Up/Down and team-vs-team markets have no YES leg for P1, so skip
-        # them. (Inputs without `outcomes` — legacy/mocked — keep the
-        # positional [YES, NO] convention.)
-        if "outcomes" in m and not _yes_first(m["outcomes"]):
+        # Deny-by-default orientation gate. clobTokenIds[0] / outcomePrices[0]
+        # are the YES leg only for an exact ["Yes", "No"] binary; Up/Down,
+        # team-vs-team, multi-outcome and outcome-less inputs are skipped.
+        # A skipped market that is already in the DB (stored by older code)
+        # has its token ids cleared below so no order can be routed to it.
+        if not _yes_first(m.get("outcomes")):
             poly_skipped_non_yes += 1
+            poly_quarantine_ids.append((f"poly_{condition_id}",))
             continue
 
         # clobTokenIds is a JSON-encoded string like
-        # '["<yes_token_id>", "<no_token_id>"]'. Order is [YES, NO] per CLOB
-        # convention. Accept already-parsed list form for test fixtures.
+        # '["<yes_token_id>", "<no_token_id>"]' (order matches `outcomes`).
+        # Accept already-parsed list form. If present it must be exactly two
+        # non-empty ids, else the market is skipped like a failed gate.
         yes_token_id: str | None = None
         no_token_id: str | None = None
         raw_tokens = m.get("clobTokenIds") or m.get("clob_token_ids")
         if raw_tokens:
-            try:
-                if isinstance(raw_tokens, str):
+            parsed: object = None
+            if isinstance(raw_tokens, str):
+                try:
                     parsed = _json.loads(raw_tokens)
-                else:
-                    parsed = raw_tokens
-                if isinstance(parsed, list) and len(parsed) >= 2:
-                    yes_token_id = str(parsed[0]) if parsed[0] else None
-                    no_token_id = str(parsed[1]) if parsed[1] else None
-            except Exception as e:
-                logger.debug("clobTokenIds parse failed for %r: %s", raw_tokens, e)
+                except ValueError:
+                    parsed = None
+            else:
+                parsed = raw_tokens
+            if not isinstance(parsed, list) or len(parsed) != 2 or not all(parsed):
+                logger.debug("clobTokenIds not a 2-token list: %r", raw_tokens)
+                poly_skipped_non_yes += 1
+                poly_quarantine_ids.append((f"poly_{condition_id}",))
+                continue
+            yes_token_id, no_token_id = str(parsed[0]), str(parsed[1])
 
         price = None
         last_price_no: float | None = None
@@ -686,6 +695,14 @@ async def store_markets(
                    updated_at = excluded.updated_at
                ON CONFLICT DO NOTHING""",
             poly_market_rows,
+        )
+        # Markets that failed the orientation gate: clear token ids stored
+        # by older code (rows kept for FK history) so BookResolver cannot
+        # route an order to a non-YES token.
+        await db.executemany(
+            """UPDATE markets SET yes_token_id = NULL, no_token_id = NULL
+               WHERE id = ? AND platform = 'polymarket'""",
+            poly_quarantine_ids,
         )
         # Prices only for markets that exist: a row skipped above (legacy id
         # clash) would otherwise fail the FK and abort the rest of the batch.
