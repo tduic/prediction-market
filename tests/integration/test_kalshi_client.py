@@ -108,7 +108,7 @@ async def test_full_fill_uses_v2_endpoint_ticker_and_reported_fee(db, rsa_key):
     body = json.loads(request.content)
     assert body["ticker"] == "KXTEST-1"  # exchange ticker, never "kal_..."
     assert body["side"] == "bid"
-    assert body["count"] == "10.00"
+    assert body["count"] == "10"
     assert body["price"] == "0.5500"
     assert body["time_in_force"] == "immediate_or_cancel"
     assert body["self_trade_prevention_type"] == "taker_at_cross"
@@ -229,6 +229,18 @@ async def test_cancel_uses_v2_path_and_signs_without_query(db, rsa_key):
         httpx.Response(201, content=b"not json"),
         httpx.Response(201, json={"order_id": "o-9", "fill_count": "5.00"}),  # no price
         httpx.Response(201, json={"order_id": "o-9", "fill_count": "abc"}),
+        httpx.Response(201, json={"order_id": "o-9"}),  # required fill_count missing
+        httpx.Response(201, json={"order_id": "o-9", "fill_count": None}),
+        httpx.Response(201, json={"order_id": "o-9", "fill_count": "nan"}),
+        httpx.Response(
+            201,
+            json={
+                "order_id": "o-9",
+                "fill_count": "5.00",
+                "average_fill_price": "0.55",
+                "average_fee_paid": "n/a",
+            },
+        ),
     ],
 )
 async def test_unparsable_acceptance_is_unknown_not_an_exception(db, rsa_key, response):
@@ -238,3 +250,25 @@ async def test_unparsable_acceptance_is_unknown_not_an_exception(db, rsa_key, re
     client, _ = _client(db, rsa_key, lambda r: response)
     result = await client.submit_order(_leg())
     assert result.status == "pending"
+
+
+@pytest.mark.parametrize("status", [408, 409])
+async def test_ambiguous_4xx_is_unknown(db, rsa_key, status):
+    await _seed(db)
+    client, _ = _client(db, rsa_key, lambda r: httpx.Response(status))
+    assert (await client.submit_order(_leg())).status == "pending"
+
+
+async def test_count_is_floored_to_whole_contracts(db, rsa_key):
+    await _seed(db)
+    client, seen = _client(db, rsa_key, lambda r: _created(fill="12.00"))
+    await client.submit_order(_leg(size=12.9))
+    assert json.loads(seen[0].content)["count"] == "12"
+
+
+async def test_sub_one_contract_is_rejected_without_a_request(db, rsa_key):
+    await _seed(db)
+    client, seen = _client(db, rsa_key, lambda r: _created())
+    result = await client.submit_order(_leg(size=0.6))
+    assert result.status == "failed"
+    assert seen == []

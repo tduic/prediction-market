@@ -182,11 +182,23 @@ class KalshiExecutionClient(BaseExecutionClient):
             await self.write_order(leg, result, signal_id=signal_id, strategy=strategy)
             return result
 
+        # Whole contracts only: fractional trading isn't available on every
+        # market, and flooring never oversizes.
+        contracts = math.floor(leg.size + 1e-9)
+        if contracts < 1:
+            result = _result(
+                f"FAILED-{leg.market_id}-{client_order_id[:8]}",
+                "failed",
+                error_message=f"size {leg.size} is below one whole contract",
+            )
+            await self.write_order(leg, result, signal_id=signal_id, strategy=strategy)
+            return result
+
         ticker = await self._ticker(leg.market_id)
         body = {
             "ticker": ticker,
             "side": "bid" if leg.side is Side.BUY else "ask",
-            "count": f"{leg.size:.2f}",
+            "count": str(contracts),
             "price": self._price(leg.side, leg.limit_price),
             "time_in_force": "immediate_or_cancel",
             "self_trade_prevention_type": "taker_at_cross",
@@ -218,7 +230,15 @@ class KalshiExecutionClient(BaseExecutionClient):
             return result
 
         if response.status_code != 201:
-            definite = 400 <= response.status_code < 500
+            # 408 (timeout) and 409 (conflict) don't prove nothing executed.
+            definite = (
+                400 <= response.status_code < 500
+                and response.status_code
+                not in (
+                    408,
+                    409,
+                )
+            )
             result = _result(
                 f"{'FAILED' if definite else 'UNKNOWN'}-kalshi-{client_order_id}",
                 "failed" if definite else "pending",
@@ -238,9 +258,19 @@ class KalshiExecutionClient(BaseExecutionClient):
         try:
             data = response.json()
             order_id = str(data.get("order_id") or order_id)
-            filled = float(data.get("fill_count") or 0)
+            # fill_count is required in the 201 body; never default it to 0.
+            filled = float(data["fill_count"])
+            if not math.isfinite(filled) or filled < 0:
+                raise ValueError(f"invalid fill_count {data['fill_count']!r}")
             price = float(data["average_fill_price"]) if filled > 0 else 0.0
-            fee_per_contract = data.get("average_fee_paid")
+            if filled > 0 and not 0.0 < price < 1.0:
+                raise ValueError(f"invalid average_fill_price {price!r}")
+            raw_fee = data.get("average_fee_paid")
+            fee_paid = (
+                round(filled * float(raw_fee), 6)
+                if filled > 0 and raw_fee is not None
+                else None
+            )
         except (ValueError, KeyError, TypeError, AttributeError) as exc:
             logger.error(
                 "Kalshi order %s accepted but response unreadable: %r", order_id, exc
@@ -263,13 +293,9 @@ class KalshiExecutionClient(BaseExecutionClient):
             fill_latency_ms=int((time.time() - start_time) * 1000),
             filled_price=round(price, 6),
             filled_size=filled,
-            fee_paid=(
-                round(filled * float(fee_per_contract), 6)
-                if fee_per_contract is not None
-                else None
-            ),
+            fee_paid=fee_paid,
             slippage=round(abs(price - leg.limit_price), 6),
-            error_message=None if fee_per_contract is not None else "fee unreported",
+            error_message=None if fee_paid is not None else "fee unreported",
         )
         await self.write_order(leg, result, signal_id=signal_id, strategy=strategy)
         await self.write_fill_event(result)
