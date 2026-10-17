@@ -133,7 +133,7 @@ Per-cycle slot caps (`core/strategies/single_platform.py`) keep any one label fr
 
 ## Risk Controls
 
-All monetary limits are percentages of portfolio value, so they scale as the account grows. Portfolio value = `STARTING_CAPITAL + realized_pnl - fees`.
+All monetary limits are percentages of portfolio value, so they scale as the account grows. Portfolio value = `STARTING_CAPITAL + realized_pnl` (`trade_outcomes.actual_pnl` is already net of fees).
 
 Every risk check result is logged to `risk_check_log` for audit. Enforced inline before any order is submitted (`core/signals/risk.py`).
 

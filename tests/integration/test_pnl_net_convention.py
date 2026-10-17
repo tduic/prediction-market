@@ -62,3 +62,32 @@ async def test_snapshot_capital_counts_fees_once(one_trade):
         "SELECT total_capital FROM pnl_snapshots WHERE id = ?", (snapshot_id,)
     )
     assert (await cursor.fetchone())[0] == pytest.approx(10_000.10)
+
+
+async def test_dashboard_overview_and_strategies_count_fees_once(one_trade, tmp_path):
+    import aiosqlite
+    from httpx import ASGITransport, AsyncClient
+
+    from scripts.dashboard_api import create_dashboard_app
+    from tests.integration.conftest import _apply_migrations
+
+    # Copy the seeded rows into a file DB the app can open.
+    path = tmp_path / "dash.db"
+    async with aiosqlite.connect(path) as file_db:
+        await _apply_migrations(file_db)
+        for table in ("markets", "signals", "trade_outcomes"):
+            cursor = await one_trade.execute(f"SELECT * FROM {table}")
+            rows = await cursor.fetchall()
+            cols = len(rows[0])
+            await file_db.executemany(
+                f"INSERT INTO {table} VALUES ({','.join('?' * cols)})",
+                [tuple(r) for r in rows],
+            )
+        await file_db.commit()
+    app = create_dashboard_app(db_path=str(path))
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        overview = (await c.get("/api/overview")).json()
+        strategies = (await c.get("/api/strategies")).json()
+    assert overview["net_pnl"] == pytest.approx(0.10)
+    rows = strategies if isinstance(strategies, list) else strategies["strategies"]
+    assert rows[0]["net_pnl"] == pytest.approx(0.10)

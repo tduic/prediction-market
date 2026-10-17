@@ -10,7 +10,6 @@ import logging
 import re
 import statistics
 import uuid
-import weakref
 from collections import defaultdict
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -341,17 +340,19 @@ async def mark_and_close_positions(
 
 # Execution clients per DB connection, reused across cycles. Building them
 # every cycle leaked an httpx client per cycle (never closed) and, in live
-# mode, re-derived Polymarket API keys each time. Weak keys: entries go away
-# with the connection.
-_CLIENTS: "weakref.WeakKeyDictionary[aiosqlite.Connection, dict]" = (
-    weakref.WeakKeyDictionary()
-)
+# mode, re-derived Polymarket API keys each time. The cache lives on the
+# connection object itself, so it is freed with the connection (a weak-key
+# dict wouldn't be: each client holds a strong reference to its db).
+_CLIENT_CACHE_ATTR = "_single_platform_exec_clients"
 
 
 def _client_for(db: aiosqlite.Connection, execution_mode: str, platform: str):
     from execution.factory import _make_single_execution_client
 
-    per_db = _CLIENTS.setdefault(db, {})
+    per_db = getattr(db, _CLIENT_CACHE_ATTR, None)
+    if per_db is None:
+        per_db = {}
+        setattr(db, _CLIENT_CACHE_ATTR, per_db)
     key = (execution_mode, platform)
     if key not in per_db:
         per_db[key] = _make_single_execution_client(db, execution_mode, platform)
@@ -890,3 +891,13 @@ async def detect_single_platform_opportunities(
     # where the last iteration had result.filled_price=None).
     await db.commit()
     return trades
+
+
+async def close_execution_clients(db: aiosqlite.Connection) -> None:
+    """Close the cached single-platform execution clients (call on shutdown)."""
+    for client in (getattr(db, _CLIENT_CACHE_ATTR, None) or {}).values():
+        try:
+            await client.close()
+        except Exception:
+            logger.exception("Error closing single-platform execution client")
+    setattr(db, _CLIENT_CACHE_ATTR, {})

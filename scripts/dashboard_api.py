@@ -252,7 +252,8 @@ def _build_app(
 
             net_return_pct = 0.0
             if total_capital > 0:
-                net_pnl = realized_pnl_total + unrealized_pnl - total_fees
+                # realized P&L (actual_pnl) is already net of fees
+                net_pnl = realized_pnl_total + unrealized_pnl
                 net_return_pct = (net_pnl / PAPER_CAPITAL) * 100
 
             signals_24h = 0
@@ -289,7 +290,7 @@ def _build_app(
             except Exception as _dl_err:
                 logger.debug("overview: daily_loss_pct_used query failed: %s", _dl_err)
 
-            net_pnl = round(realized_pnl_total + unrealized_pnl - total_fees, 2)
+            net_pnl = round(realized_pnl_total + unrealized_pnl, 2)  # already net
             return {
                 "total_capital": round(total_capital, 2),
                 "cash": round(cash, 2),
@@ -383,11 +384,8 @@ def _build_app(
                         "avg_pnl": round(row_dict.get("avg_pnl", 0) or 0, 2),
                         "total_pnl": round(row_dict.get("total_pnl", 0) or 0, 2),
                         "total_fees": round(row_dict.get("total_fees", 0) or 0, 2),
-                        "net_pnl": round(
-                            (row_dict.get("total_pnl", 0) or 0)
-                            - (row_dict.get("total_fees", 0) or 0),
-                            2,
-                        ),
+                        # total_pnl sums actual_pnl, already net of fees
+                        "net_pnl": round(row_dict.get("total_pnl", 0) or 0, 2),
                         "sharpe_ratio": round(sharpe_ratio, 2),
                         "sharpe_note": "per-trade mean/stdev; not annualized",
                         "stddev_pnl": round(

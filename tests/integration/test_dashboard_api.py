@@ -861,10 +861,10 @@ class TestOverviewNetPnl:
 
         resp = await client.get("/api/overview")
         data = resp.json()
-        # net_pnl = realized_pnl_total + unrealized_pnl - total_fees
+        # actual_pnl is already net of fees: net_pnl = realized + unrealized
         # snapshot not seeded, so: 20.0 + 0.0 - 2.0 = 18.0
         assert data["net_pnl"] == round(
-            data["realized_pnl_total"] + data["unrealized_pnl"] - data["total_fees"], 2
+            data["realized_pnl_total"] + data["unrealized_pnl"], 2
         )
 
 
