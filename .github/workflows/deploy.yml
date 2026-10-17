@@ -82,7 +82,7 @@ jobs:
             --strict-host-key-checking=no \
             --quiet
 
-      # ── 5. Write non-secret runtime configuration to VM ────────────────────
+      # ── 6. Write non-secret runtime configuration to VM ────────────────────
       # Exchange and alert credentials are read directly from Secret Manager.
       # Must run BEFORE "Deploy on VM" restarts the service: previously it ran
       # after, so new values only took effect on the next restart.
@@ -104,7 +104,7 @@ jobs:
 
           rm -f /tmp/predictor_updates.env
 
-      # ── 6. Deploy on VM ───────────────────────────────────────────────
+      # ── 7. Deploy on VM ───────────────────────────────────────────────
       - name: Deploy on VM
         run: |
           gcloud compute ssh "$VM_NAME" \
@@ -161,7 +161,7 @@ jobs:
           REMOTE_SCRIPT
           )"
 
-      # ── 7. Restore Claude setup ──────────────────────────────────────
+      # ── 8. Restore Claude setup ──────────────────────────────────────
       - name: Restore Claude setup on VM
         continue-on-error: true
         run: |
@@ -182,7 +182,7 @@ jobs:
           REMOTE_SCRIPT
           )"
 
-      # ── 8. Post-deploy health check ───────────────────────────────────
+      # ── 9. Post-deploy health check ───────────────────────────────────
       - name: Health check
         if: always()
         run: |
@@ -200,7 +200,7 @@ jobs:
 
           echo "Deploy successful — service is running."
 
-      # ── 9. Discord notification ───────────────────────────────────────
+      # ── 10. Discord notification ───────────────────────────────────────
       - name: Notify Discord (success)
         if: success()
         env:
