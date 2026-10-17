@@ -8,11 +8,43 @@ exchange websockets and call an on_price callback for each price update.
 import asyncio
 import json
 import logging
+import random
 import time
 import typing
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+_BACKOFF_BASE_S = 1.0
+_BACKOFF_MAX_S = 60.0
+
+
+def _jitter() -> float:
+    """Multiplier in [0.5, 1.0) so many connections don't reconnect in lockstep."""
+    return 0.5 + random.random() / 2
+
+
+class _Backoff:
+    """Exponential reconnect delay with jitter; reset once data flows."""
+
+    def __init__(self) -> None:
+        self.failures = 0
+
+    def reset(self) -> None:
+        self.failures = 0
+
+    def next_delay(self) -> float:
+        raw = min(_BACKOFF_BASE_S * 2**self.failures, _BACKOFF_MAX_S)
+        self.failures += 1
+        return raw * _jitter()
+
+
+async def _sleep_unless_stopped(stop_event: asyncio.Event, delay: float) -> None:
+    """Sleep up to ``delay`` seconds, returning early when stop is requested."""
+    try:
+        await asyncio.wait_for(stop_event.wait(), timeout=delay)
+    except TimeoutError:
+        pass
 
 
 def _to_price(value: typing.Any) -> float | None:
@@ -166,7 +198,9 @@ async def stream_prices_polymarket(
     token_map: dict[str, str] = {a: (id_map or {}).get(a, a) for a in asset_ids}
 
     async def _connect_chunk(chunk_ids: list[str]):
+        backoff = _Backoff()
         while not stop_event.is_set():
+            reason = "server closed the connection"
             try:
                 async with websockets.connect(WS_URL, ping_interval=10) as ws:
                     sub_msg = json.dumps({"assets_ids": chunk_ids, "type": "market"})
@@ -178,6 +212,7 @@ async def stream_prices_polymarket(
                     async for raw in ws:
                         if stop_event.is_set():
                             break
+                        backoff.reset()
                         try:
                             data = json.loads(raw)
                         except json.JSONDecodeError:
@@ -187,9 +222,19 @@ async def stream_prices_polymarket(
                         ).items():
                             await on_price(market_id, price)
             except Exception as e:
-                if not stop_event.is_set():
-                    logger.warning("Polymarket WS reconnecting: %s", e)
-                    await asyncio.sleep(2)
+                reason = f"{type(e).__name__}: {e}"
+            if stop_event.is_set():
+                break
+            # Always pause before reconnecting — a normal close ends the
+            # `async for` without an exception and used to reconnect in a
+            # tight loop.
+            delay = backoff.next_delay()
+            logger.warning(
+                "Polymarket WS disconnected (%s); reconnecting in %.1fs",
+                reason,
+                delay,
+            )
+            await _sleep_unless_stopped(stop_event, delay)
 
     chunks = [
         asset_ids[i : i + CHUNK_SIZE] for i in range(0, len(asset_ids), CHUNK_SIZE)
@@ -224,18 +269,19 @@ async def stream_prices_kalshi(
 
     WS_URL = "wss://api.elections.kalshi.com/trade-api/ws/v2"
 
-    key_path = Path(rsa_key_path).expanduser()
-    loaded_key = serialization.load_pem_private_key(
-        key_path.read_bytes(), password=None
-    )
-    if not isinstance(loaded_key, RSAPrivateKey):
-        raise TypeError(
-            f"Kalshi key at {key_path} is not an RSA private key "
-            f"(got {type(loaded_key).__name__})"
+    def load_key() -> RSAPrivateKey:
+        key_path = Path(rsa_key_path).expanduser()
+        loaded_key = serialization.load_pem_private_key(
+            key_path.read_bytes(), password=None
         )
-    private_key: RSAPrivateKey = loaded_key
+        if not isinstance(loaded_key, RSAPrivateKey):
+            raise TypeError(
+                f"Kalshi key at {key_path} is not an RSA private key "
+                f"(got {type(loaded_key).__name__})"
+            )
+        return loaded_key
 
-    def sign(method: str, path: str) -> dict:
+    def sign(private_key: RSAPrivateKey, method: str, path: str) -> dict:
         ts = str(int(time.time() * 1000))
         msg = (ts + method.upper() + path).encode("utf-8")
         sig = private_key.sign(
@@ -252,9 +298,29 @@ async def stream_prices_kalshi(
             "KALSHI-ACCESS-TIMESTAMP": ts,
         }
 
+    private_key: RSAPrivateKey | None = None
+    backoff = _Backoff()
     while not stop_event.is_set():
+        reason = "server closed the connection"
+        if private_key is None:
+            # Loaded inside the loop: a missing/bad key used to raise out of
+            # the task before the retry loop and kill the feed silently.
+            try:
+                private_key = load_key()
+            except Exception as e:
+                delay = backoff.next_delay()
+                logger.error(
+                    "Kalshi WS: cannot load RSA key from %s (%s: %s) — NO Kalshi "
+                    "prices until fixed; retrying in %.1fs",
+                    rsa_key_path,
+                    type(e).__name__,
+                    e,
+                    delay,
+                )
+                await _sleep_unless_stopped(stop_event, delay)
+                continue
         try:
-            headers = sign("GET", "/trade-api/ws/v2")
+            headers = sign(private_key, "GET", "/trade-api/ws/v2")
             async with websockets.connect(WS_URL, additional_headers=headers) as ws:
                 for i, ticker in enumerate(tickers):
                     sub = json.dumps(
@@ -274,6 +340,7 @@ async def stream_prices_kalshi(
                 async for raw in ws:
                     if stop_event.is_set():
                         break
+                    backoff.reset()
                     try:
                         data = json.loads(raw)
                         if data.get("type") == "ticker":
@@ -290,6 +357,11 @@ async def stream_prices_kalshi(
                     except json.JSONDecodeError:
                         pass
         except Exception as e:
-            if not stop_event.is_set():
-                logger.warning("Kalshi WS reconnecting: %s", e)
-                await asyncio.sleep(2)
+            reason = f"{type(e).__name__}: {e}"
+        if stop_event.is_set():
+            break
+        delay = backoff.next_delay()
+        logger.warning(
+            "Kalshi WS disconnected (%s); reconnecting in %.1fs", reason, delay
+        )
+        await _sleep_unless_stopped(stop_event, delay)
