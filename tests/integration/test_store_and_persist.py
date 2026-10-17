@@ -285,3 +285,98 @@ async def test_store_persists_last_price_no_to_markets(db):
     row = await cursor.fetchone()
     assert row is not None
     assert row[0] == 0.40
+
+
+async def _count(db, table: str) -> int:
+    cursor = await db.execute(f"SELECT COUNT(*) FROM {table}")
+    return (await cursor.fetchone())[0]
+
+
+@pytest.mark.asyncio
+class TestRefreshKeepsHistory:
+    """Re-storing markets / pairs must update in place. INSERT OR REPLACE
+    deletes the old row first, and with foreign keys on that cascades through
+    every ON DELETE CASCADE child: orders, signals, positions, violations…"""
+
+    async def _seed_history(self, db):
+        await db.execute("PRAGMA foreign_keys = ON")
+        await store_markets(
+            db,
+            [_poly_real_api("0xc1", "Will it rain in Paris tomorrow?", 0.40)],
+            [_kalshi("KXRAIN-1", "Will it rain in Paris tomorrow?", 0.42, 0.44)],
+        )
+        now = "2026-10-01T00:00:00+00:00"
+        await db.execute(
+            "INSERT INTO signals (id, strategy, signal_type, market_id_a, model_edge,"
+            " kelly_fraction, position_size_a, total_capital_at_risk, status,"
+            " fired_at, updated_at) VALUES ('sig1', 'P1_cross_market_arb', 'arb_pair',"
+            " 'poly_0xc1', 0.05, 0.1, 10, 5, 'fired', ?, ?)",
+            (now, now),
+        )
+        await db.execute(
+            "INSERT INTO orders (id, signal_id, platform, market_id, side, order_type,"
+            " requested_size, status, submitted_at, updated_at) VALUES"
+            " ('ord1', 'sig1', 'polymarket', 'poly_0xc1', 'BUY', 'LIMIT', 10,"
+            " 'filled', ?, ?)",
+            (now, now),
+        )
+        await db.execute(
+            "INSERT INTO positions (id, signal_id, market_id, strategy, side,"
+            " entry_price, entry_size, status, opened_at, updated_at) VALUES"
+            " ('pos1', 'sig1', 'poly_0xc1', 'P1_cross_market_arb', 'BUY', 0.4, 10,"
+            " 'open', ?, ?)",
+            (now, now),
+        )
+        await db.execute(
+            "UPDATE markets SET status = 'resolved', created_at = ? WHERE id = 'poly_0xc1'",
+            (now,),
+        )
+        await db.commit()
+
+    async def test_market_refresh_keeps_orders_signals_positions(self, db):
+        await self._seed_history(db)
+        await store_markets(
+            db,
+            [_poly_real_api("0xc1", "Will it rain in Paris tomorrow? (edited)", 0.45)],
+            [_kalshi("KXRAIN-1", "Will it rain in Paris tomorrow?", 0.42, 0.44)],
+        )
+        assert await _count(db, "signals") == 1
+        assert await _count(db, "orders") == 1
+        assert await _count(db, "positions") == 1
+        cursor = await db.execute(
+            "SELECT title, status, created_at FROM markets WHERE id = 'poly_0xc1'"
+        )
+        title, status, created_at = await cursor.fetchone()
+        assert title.endswith("(edited)")  # fields still refresh
+        assert status == "resolved"  # a refresh doesn't reopen a market
+        assert created_at == "2026-10-01T00:00:00+00:00"
+
+    async def test_pair_refresh_keeps_violations_and_review_state(self, db):
+        await self._seed_history(db)
+        match = {
+            "poly_id": "poly_0xc1",
+            "kalshi_id": "kal_KXRAIN-1",
+            "poly_price": 0.40,
+            "kalshi_price": 0.42,
+            "similarity": 0.9,
+        }
+        await persist_matches(db, [match])
+        now = "2026-10-01T00:00:00+00:00"
+        await db.execute(
+            "INSERT INTO violations (id, pair_id, violation_type, price_a_at_detect,"
+            " price_b_at_detect, raw_spread, net_spread, fee_estimate_a,"
+            " fee_estimate_b, status, detected_at, updated_at) VALUES"
+            " ('v1', 'poly_0xc1_kal_KXRAIN-1', 'cross_platform', 0.4, 0.42, 0.02,"
+            " 0.01, 0.0, 0.0, 'detected', ?, ?)",
+            (now, now),
+        )
+        await db.execute(
+            "UPDATE market_pairs SET active = 0, notes = 'rejected_by_human'"
+        )
+        await db.commit()
+        await persist_matches(db, [{**match, "similarity": 0.95}])
+        assert await _count(db, "violations") == 1
+        cursor = await db.execute(
+            "SELECT similarity_score, active, notes FROM market_pairs"
+        )
+        assert tuple(await cursor.fetchone()) == (0.95, 0, "rejected_by_human")

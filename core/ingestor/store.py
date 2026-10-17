@@ -463,10 +463,21 @@ async def store_markets(
     # ── Batch write to DB ────────────────────────────────────────────────
     try:
         await db.executemany(
-            """INSERT OR REPLACE INTO markets
+            # Upsert, never INSERT OR REPLACE: REPLACE deletes the old row,
+            # and with foreign keys on that cascades through every child
+            # table (orders, signals, positions, …). status and created_at
+            # are kept so a refresh can't reopen a resolved market.
+            """INSERT INTO markets
                (id, platform, platform_id, title, yes_token_id, no_token_id,
                 last_price_no, status, created_at, updated_at)
-               VALUES (?, 'polymarket', ?, ?, ?, ?, ?, 'open', ?, ?)""",
+               VALUES (?, 'polymarket', ?, ?, ?, ?, ?, 'open', ?, ?)
+               ON CONFLICT(id) DO UPDATE SET
+                   title = excluded.title,
+                   yes_token_id = COALESCE(excluded.yes_token_id, yes_token_id),
+                   no_token_id = COALESCE(excluded.no_token_id, no_token_id),
+                   last_price_no = COALESCE(excluded.last_price_no, last_price_no),
+                   updated_at = excluded.updated_at
+               ON CONFLICT DO NOTHING""",
             poly_market_rows,
         )
         await db.executemany(
@@ -476,9 +487,13 @@ async def store_markets(
             poly_price_rows,
         )
         await db.executemany(
-            """INSERT OR REPLACE INTO markets
+            """INSERT INTO markets
                (id, platform, platform_id, title, status, created_at, updated_at)
-               VALUES (?, 'kalshi', ?, ?, 'open', ?, ?)""",
+               VALUES (?, 'kalshi', ?, ?, 'open', ?, ?)
+               ON CONFLICT(id) DO UPDATE SET
+                   title = excluded.title,
+                   updated_at = excluded.updated_at
+               ON CONFLICT DO NOTHING""",
             kalshi_market_rows,
         )
         await db.executemany(

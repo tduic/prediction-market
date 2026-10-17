@@ -383,10 +383,16 @@ async def persist_matches(db: aiosqlite.Connection, matches: list[dict]) -> int:
         )
     try:
         await db.executemany(
-            """INSERT OR REPLACE INTO market_pairs
+            # Upsert, never INSERT OR REPLACE (it would cascade-delete the
+            # pair's violations). An existing pair keeps its review state
+            # (active/notes), which may be a human decision.
+            """INSERT INTO market_pairs
                (id, market_id_a, market_id_b, pair_type, similarity_score,
                 match_method, active, notes, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(id) DO UPDATE SET
+                   similarity_score = excluded.similarity_score,
+                   updated_at = excluded.updated_at""",
             rows,
         )
         await db.commit()
