@@ -233,16 +233,16 @@ All settings load from environment variables. Key ones (see `core/config.py` for
 
 ## Database
 
-SQLite with WAL mode. 19 live application tables after `migrations/018`:
+SQLite with WAL mode. 20 live application tables after `migrations/019`:
 
 - **Market data:** `markets`, `market_prices`, `ingestor_runs`
 - **Pair analysis:** `market_pairs`, `pair_spread_history`
 - **Trading pipeline:** `violations`, `signals`, `risk_check_log`, `signal_events`
 - **Execution:** `orders`, `order_events`, `positions`
 - **Analytics:** `pnl_snapshots`, `strategy_pnl_snapshots`, `trade_outcomes`
-- **Operational:** `system_events`, `reconciliation_log`, `invariant_violations`, `phase0_baseline`
+- **Operational:** `system_events`, `reconciliation_log`, `invariant_violations`, `phase0_baseline`, `execution_control` (persistent execution halt; clear with `scripts/clear_halt.py`)
 
-Schema lives in `core/storage/migrations/` (numbered `001`–`018`). The migration runner tracks applied files in the separate `migration_history` metadata table and is idempotent.
+Schema lives in `core/storage/migrations/` (numbered `001`–`019`). The migration runner tracks applied files in the separate `migration_history` metadata table and is idempotent.
 
 ## Project Layout
 

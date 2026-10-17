@@ -3,14 +3,35 @@
 # Safe to run multiple times — all operations are idempotent.
 set -euo pipefail
 
-# ── Credentials ───────────────────────────────────────────────────────────────
-# .env is written by the deploy workflow from GitHub Actions secrets.
-# Never add plaintext secrets here.
+# ── Runtime configuration ─────────────────────────────────────────────────────
+# /data/predictor/.env holds NON-SECRET runtime settings only; the deploy
+# workflow merges them in with deploy/env_merge.py. Credentials (exchange keys,
+# DASHBOARD_PASSWORD, ALERT_DISCORD_WEBHOOK_URL) live in GCP Secret Manager and
+# are never written to .env. Never add plaintext secrets here.
 if [ ! -f /data/predictor/.env ]; then
   sudo touch /data/predictor/.env
+  sudo chown predictor:predictor /data/predictor/.env
   sudo chmod 600 /data/predictor/.env
-  echo "Warning: /data/predictor/.env is empty. Run a deploy to populate secrets." >&2
+  echo "Warning: /data/predictor/.env is empty. Run a deploy to populate runtime settings." >&2
 fi
+
+# ── Discord notify helper ─────────────────────────────────────────────────────
+# The webhook is a Secret Manager secret (alert-discord-webhook-url, the GCP
+# name of ALERT_DISCORD_WEBHOOK_URL), not a .env value — the old
+# `source .env; curl "$DISCORD_WEBHOOK_URL"` posted to an empty URL.
+sudo tee /data/predictor/notify-discord.sh > /dev/null << 'EOF'
+#!/bin/bash
+# Usage: notify-discord.sh "message"
+set -euo pipefail
+URL="${ALERT_DISCORD_WEBHOOK_URL:-}"
+if [ -z "$URL" ]; then
+  URL="$(gcloud secrets versions access latest --secret=alert-discord-webhook-url \
+    --project="${GCP_PROJECT_ID:-predictor-trading-2026}" 2>/dev/null || true)"
+fi
+[ -z "$URL" ] && { echo "notify-discord: no webhook configured" >&2; exit 0; }
+MSG="$(printf '%s' "$1" | python3 -c 'import json,sys; print(json.dumps({"content": sys.stdin.read()}))')"
+curl -s -X POST "$URL" -H 'Content-Type: application/json' -d "$MSG"
+EOF
 
 # ── Combined memory file ───────────────────────────────────────────────────────
 sudo mkdir -p /data/predictor/.claude
@@ -32,7 +53,8 @@ After any redeploy run: bash /data/predictor/setup-claude.sh
 | SQLite DB | /data/predictor/prediction-market/*.db |
 | NVM | /data/predictor/.nvm (symlinked from ~/.nvm) |
 | Claude config | /data/predictor/.claude (symlinked from ~/.claude) |
-| Credentials | /data/predictor/.env (sourced by ~/.bashrc) |
+| Runtime config | /data/predictor/.env (non-secret; sourced by ~/.bashrc) |
+| Secrets | GCP Secret Manager (never in .env) |
 | Agent logs | /data/predictor/agent-daily.log, agent-weekly.log |
 | Setup script | /data/predictor/setup-claude.sh |
 | Daily agent | /data/predictor/run-daily-agent.sh |
@@ -65,7 +87,7 @@ core/signals/ → execution/router.py → execution/clients/ → SQLite DB
                                           scripts/dashboard_api.py → :8000
 ```
 Service: `predictor` (systemd), runs as user `predictor`
-Entry point: `scripts/paper_trading_session.py --refresh --stream --dashboard --dashboard-port 8000`
+Entry point: `scripts/trading_session.py --dashboard --dashboard-port 8000 --dashboard-host 0.0.0.0`
 
 ## Key Files
 | File | Purpose |
@@ -77,7 +99,7 @@ Entry point: `scripts/paper_trading_session.py --refresh --stream --dashboard --
 | execution/clients/paper.py | Paper trading client |
 | execution/clients/polymarket.py | Polymarket live client |
 | execution/clients/kalshi.py | Kalshi live client |
-| scripts/paper_trading_session.py | Main session loop |
+| scripts/trading_session.py | Main session loop |
 | scripts/dashboard_api.py | FastAPI: /api/overview /api/risk /api/positions /api/fees |
 | deploy/predictor.service | Systemd unit |
 
@@ -120,16 +142,14 @@ curl -s http://localhost:8000/api/overview | python3 -m json.tool
 
 ## Notifications
 ```bash
-source /data/predictor/.env
-curl -s -X POST "$DISCORD_WEBHOOK_URL" -H 'Content-Type: application/json' \
-  -d '{"content": "message here"}'
+/data/predictor/notify-discord.sh "message here"
 ```
 GitHub repo: tduic/prediction-market (GH_TOKEN in /data/predictor/.env)
 
 ## Known Fixes (v1.1.0)
 - reconciliation.py: platform via signal_id JOIN, not strategy LIKE
 - router.py: asyncio.gather return_exceptions=True + REJECTED wrapping
-- paper_trading_session.py: P3 assign_strategy threshold >= 0.10
+- trading_session.py: P3 assign_strategy threshold >= 0.10
 - dashboard_api.py: N+1 Sharpe eliminated; PAPER_CAPITAL from config
 - dashboard/src/App.tsx: removed invalid days param from fees/risk calls
 - tests/paper/test_reconciliation.py: fixture inserts matching order row
@@ -192,10 +212,7 @@ STEP 7 — TAG
   git push origin <new-version>
 
 STEP 8 — DISCORD
-  source /data/predictor/.env
-  curl -s -X POST "$DISCORD_WEBHOOK_URL" \
-    -H 'Content-Type: application/json' \
-    -d "{\"content\": \"**Daily agent** <version>: <what was fixed>\"}"
+  /data/predictor/notify-discord.sh "**Daily agent** <version>: <what was fixed>"
 EOF
 
 # ── Weekly prompt (Sonnet) ────────────────────────────────────────────────────
@@ -241,7 +258,7 @@ PHASE 4 — DASHBOARD CHECK
 PHASE 5 — CODEBASE ANALYSIS
 Read these files in full:
   core/config.py, execution/router.py, execution/reconciliation.py,
-  scripts/dashboard_api.py, scripts/paper_trading_session.py
+  scripts/dashboard_api.py, scripts/trading_session.py
 
 Build a ranked list of up to 5 improvements. For each: description, impact, regression risk.
 Self-critique the list. Select top 1-3 to implement.
@@ -264,10 +281,9 @@ PHASE 8 — COMMIT, PUSH, TAG
   git push origin <next-version>
 
 PHASE 9 — DISCORD
-  source /data/predictor/.env
-  curl -s -X POST "$DISCORD_WEBHOOK_URL" \
-    -H 'Content-Type: application/json' \
-    -d "{\"content\": \"**Weekly agent** <version> shipped\n\n<bullet summary of changes>\"}"
+  /data/predictor/notify-discord.sh "**Weekly agent** <version> shipped
+
+<bullet summary of changes>"
 EOF
 
 # ── Daily run script (Haiku) ──────────────────────────────────────────────────
@@ -307,13 +323,14 @@ sudo tee /data/predictor/setup-claude.sh > /dev/null << 'EOF'
 #!/bin/bash
 set -euo pipefail
 LOG=/data/predictor/setup.log
-sudo touch "$LOG" && sudo chmod 666 "$LOG"
+# Owned by whoever runs setup (not world-writable).
+sudo touch "$LOG" && sudo chown "$(id -un)" "$LOG" && sudo chmod 640 "$LOG"
 echo "=== setup-claude.sh started $(date) ===" | tee -a "$LOG"
 
 export NVM_DIR=/data/predictor/.nvm
 if [ ! -f "$NVM_DIR/nvm.sh" ]; then
   echo "Installing nvm..." | tee -a "$LOG"
-  sudo mkdir -p "$NVM_DIR" && sudo chmod 777 "$NVM_DIR"
+  sudo mkdir -p "$NVM_DIR" && sudo chown "$(id -un)" "$NVM_DIR" && sudo chmod 755 "$NVM_DIR"
   unset NVM_DIR
   curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh \
     | NVM_DIR=/data/predictor/.nvm bash >> "$LOG" 2>&1
@@ -377,6 +394,7 @@ EOF
 
 # ── Permissions and run ───────────────────────────────────────────────────────
 sudo chmod +x \
+  /data/predictor/notify-discord.sh \
   /data/predictor/setup-claude.sh \
   /data/predictor/run-daily-agent.sh \
   /data/predictor/run-improvement-agent.sh

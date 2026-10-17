@@ -57,7 +57,7 @@ This will:
 bash deploy/vm_setup.sh
 ```
 
-SSHes into the VM and installs everything: Python 3.12 (deadsnakes PPA), Node.js 18, and creates a `predictor` system user. Takes about 5 minutes. Safe to re-run if it fails partway through.
+SSHes into the VM and installs everything: Python 3.12 (deadsnakes PPA), Node.js 24 (matches CI and the dashboard's `engines`), and creates a `predictor` system user. Takes about 5 minutes. Safe to re-run if it fails partway through.
 
 ---
 
