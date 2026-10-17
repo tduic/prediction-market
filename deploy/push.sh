@@ -74,29 +74,34 @@ fi
 echo ""
 echo "[2/5] Packaging and uploading code..."
 
-# Tar locally (excludes heavy dirs AND local secrets), scp the tarball,
-# extract on VM. The local .env / key files must never be packaged: the
-# tarball is staged in /tmp on both machines. Use --with-env to copy .env.
+# Package from git, not from the working directory: `git archive HEAD` is an
+# allowlist of COMMITTED files, so untracked local files (.env, *.pem,
+# .claude/settings.local.json with tokens, data/, caches, settings.env, ...)
+# can never ship. The only untracked addition is the freshly built
+# dashboard/dist. Uncommitted edits are NOT deployed — commit first.
 TARBALL="$(mktemp -t predictor-deploy.XXXXXX)"
-trap 'rm -f "$TARBALL"' EXIT
-tar czf "$TARBALL" \
-  -C "$PROJECT_ROOT" \
-  --exclude='.git' \
-  --exclude='.env' \
-  --exclude='.env.*' \
-  --exclude='*.pem' \
-  --exclude='*.key' \
-  --exclude='*-key.json' \
-  --exclude='venv' \
-  --exclude='node_modules' \
-  --exclude='__pycache__' \
-  --exclude='*.db' \
-  --exclude='*.db-shm' \
-  --exclude='*.db-wal' \
-  --exclude='deploy/config.env' \
-  --exclude='deploy/*-key.json' \
-  --exclude='dashboard/node_modules' \
-  .
+TAR_RAW="$(mktemp -t predictor-deploy-raw.XXXXXX)"
+trap 'rm -f "$TARBALL" "$TAR_RAW"' EXIT
+
+if ! git -C "$PROJECT_ROOT" rev-parse --is-inside-work-tree &>/dev/null; then
+  echo "ERROR: $PROJECT_ROOT is not a git checkout — refusing to package."
+  exit 1
+fi
+if [[ -n "$(git -C "$PROJECT_ROOT" status --porcelain --untracked-files=no)" ]]; then
+  echo "    WARNING: uncommitted changes are NOT included (deploying $(git -C "$PROJECT_ROOT" rev-parse --short HEAD))."
+fi
+GIT_PREFIX="$(git -C "$PROJECT_ROOT" rev-parse --show-prefix)"
+git -C "$PROJECT_ROOT" archive --format=tar -o "$TAR_RAW" "HEAD:${GIT_PREFIX}"
+if [[ -d "$PROJECT_ROOT/dashboard/dist" ]]; then
+  COPYFILE_DISABLE=1 tar -rf "$TAR_RAW" -C "$PROJECT_ROOT" dashboard/dist
+fi
+# Belt and braces: a secret that was committed by mistake still must not ship.
+if tar -tf "$TAR_RAW" | grep -Eq '(^|/)\.env$|(^|/)\.env\.|\.pem$|\.key$|-key\.json$|(^|/)\.claude/'; then
+  echo "ERROR: secret-looking files are tracked in git; refusing to ship:"
+  tar -tf "$TAR_RAW" | grep -E '(^|/)\.env$|(^|/)\.env\.|\.pem$|\.key$|-key\.json$|(^|/)\.claude/'
+  exit 1
+fi
+gzip -c "$TAR_RAW" > "$TARBALL"
 
 gcloud compute scp \
   --zone="$ZONE" \

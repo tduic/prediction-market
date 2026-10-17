@@ -81,8 +81,10 @@ path, and any required non-secret runtime configuration before code deployment.
 This will:
 1. Build the React dashboard frontend locally (`npm ci && npm run build`) —
    before packaging, so the fresh `dist/` ships; a failed build aborts the push
-2. Tar the project (never including `.env`, `*.pem`, `*.key` or key JSON) and
-   rsync it to `/data/predictor/prediction-market/` on the VM
+2. Package the committed tree with `git archive HEAD` plus the fresh
+   `dashboard/dist` (untracked files — `.env`, keys, `.claude/`, `data/`,
+   caches — can never ship; uncommitted edits are not deployed, so commit
+   first) and rsync it to `/data/predictor/prediction-market/` on the VM
 3. Preserve or create only non-secret runtime configuration at `/data/predictor/.env`
 4. Create the Python venv at `/data/predictor/venv/` if missing (never
    `--clear`ed — the running service uses it) and install all requirements
