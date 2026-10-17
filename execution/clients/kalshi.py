@@ -232,16 +232,31 @@ class KalshiExecutionClient(BaseExecutionClient):
             await self.write_order(leg, result, signal_id=signal_id, strategy=strategy)
             return result
 
-        data = response.json()
-        order_id = str(data.get("order_id") or f"UNKNOWN-kalshi-{client_order_id}")
-        filled = float(data.get("fill_count") or 0)
+        # Accepted (201). From here an unreadable body must not become an
+        # exception or a "failed": something may have executed.
+        order_id = f"UNKNOWN-kalshi-{client_order_id}"
+        try:
+            data = response.json()
+            order_id = str(data.get("order_id") or order_id)
+            filled = float(data.get("fill_count") or 0)
+            price = float(data["average_fill_price"]) if filled > 0 else 0.0
+            fee_per_contract = data.get("average_fee_paid")
+        except (ValueError, KeyError, TypeError, AttributeError) as exc:
+            logger.error(
+                "Kalshi order %s accepted but response unreadable: %r", order_id, exc
+            )
+            result = _result(
+                order_id,
+                "pending",
+                error_message=f"accepted, unreadable response: {exc!r}",
+            )
+            await self.write_order(leg, result, signal_id=signal_id, strategy=strategy)
+            return result
         if filled <= 0:
             result = _result(order_id, "failed", error_message="no fill (IOC)")
             await self.write_order(leg, result, signal_id=signal_id, strategy=strategy)
             return result
 
-        price = float(data["average_fill_price"])
-        fee_per_contract = data.get("average_fee_paid")
         result = _result(
             order_id,
             "filled" if filled >= leg.size - 1e-9 else "partially_filled",

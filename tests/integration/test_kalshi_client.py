@@ -221,3 +221,20 @@ async def test_cancel_uses_v2_path_and_signs_without_query(db, rsa_key):
     assert request.url.path == "/trade-api/v2/portfolio/events/orders/o-1"
     assert request.url.params["market_ticker"] == "KXTEST-1"
     _verify_signature(rsa_key[0], request, "/trade-api/v2/portfolio/events/orders/o-1")
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        httpx.Response(201, content=b"not json"),
+        httpx.Response(201, json={"order_id": "o-9", "fill_count": "5.00"}),  # no price
+        httpx.Response(201, json={"order_id": "o-9", "fill_count": "abc"}),
+    ],
+)
+async def test_unparsable_acceptance_is_unknown_not_an_exception(db, rsa_key, response):
+    # The exchange accepted the order; if we can't read what filled, the
+    # fill state is unknown and the engine must halt.
+    await _seed(db)
+    client, _ = _client(db, rsa_key, lambda r: response)
+    result = await client.submit_order(_leg())
+    assert result.status == "pending"
