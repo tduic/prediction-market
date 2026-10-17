@@ -85,8 +85,8 @@ class TestKalshiPriceParsing:
         assert row is not None
         assert abs(row[0] - 0.45) < 0.01  # midpoint of 0.40 and 0.50
 
-    async def test_last_price_dollars_fallback(self, db):
-        """Falls back to last_price_dollars when bid/ask missing."""
+    async def test_last_price_alone_is_not_a_price(self, db):
+        """No bid/ask book: a last trade (possibly stale) is not stored."""
         kalshi = [
             _make_kalshi_market(
                 "TEST2",
@@ -94,15 +94,7 @@ class TestKalshiPriceParsing:
                 last_price_dollars="0.55",
             )
         ]
-        stored = await store_markets(db, [], kalshi)
-        assert stored == 1
-
-        cursor = await db.execute(
-            "SELECT yes_price FROM market_prices WHERE market_id = 'kal_TEST2'"
-        )
-        row = await cursor.fetchone()
-        assert row is not None
-        assert abs(row[0] - 0.55) < 0.01
+        assert await store_markets(db, [], kalshi) == 0
 
     async def test_integer_cent_fields(self, db):
         """Parses price from integer cent fields (yes_bid/yes_ask) divided by 100."""
@@ -124,8 +116,8 @@ class TestKalshiPriceParsing:
         assert row is not None
         assert abs(row[0] - 0.45) < 0.01
 
-    async def test_open_price_dollars_fallback(self, db):
-        """Falls back to open_price_dollars when all other fields missing."""
+    async def test_open_price_alone_is_not_a_price(self, db):
+        """open_price_dollars is not a current quote; market is skipped."""
         kalshi = [
             _make_kalshi_market(
                 "TEST4",
@@ -133,8 +125,7 @@ class TestKalshiPriceParsing:
                 open_price_dollars="0.65",
             )
         ]
-        stored = await store_markets(db, [], kalshi)
-        assert stored == 1
+        assert await store_markets(db, [], kalshi) == 0
 
     async def test_no_price_fields_skipped(self, db):
         """Market with no price data is skipped entirely."""

@@ -78,3 +78,15 @@ async def test_spread_at_limit_is_kept(db):
     m = _kalshi("KXD-1", "0.4000", "0.6000")  # 0.20 wide: still usable
     await store_markets(db, [], [m])
     assert (await _row(db, "KXD-1"))[0] == pytest.approx(0.50)
+
+
+async def test_one_sided_book_is_not_priced_from_stale_last_trade(db):
+    # Review example: bid 0, ask 0.13, last trade 0.45 used to store 0.45.
+    one_sided = _kalshi("KXE-1", "0.0000", "0.1300", last_price_dollars="0.4500")
+    no_ask = _kalshi("KXF-1", "0.3000", "0.0000", last_price_dollars="0.3000")
+    empty = _kalshi("KXG-1", "0.0000", "0.0000", last_price_dollars="0.5000")
+    await store_markets(db, [], [one_sided, no_ask, empty])
+    for t in ("KXE-1", "KXF-1", "KXG-1"):
+        assert await _row(db, t) is None
+    cur = await db.execute("SELECT COUNT(*) FROM markets WHERE platform='kalshi'")
+    assert (await cur.fetchone())[0] == 0

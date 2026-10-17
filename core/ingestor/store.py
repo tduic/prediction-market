@@ -18,6 +18,8 @@ from pathlib import Path
 import aiosqlite
 import httpx
 
+from core.ingestor.quotes import MAX_MID_SPREAD, two_sided_mid
+
 logger = logging.getLogger(__name__)
 
 
@@ -455,7 +457,7 @@ def kalshi_match_title(m: dict, with_matchup: bool = False) -> str:
 
 
 # Widest Kalshi YES bid/ask spread whose mid is still stored as the price.
-KALSHI_MAX_MID_SPREAD = 0.20
+KALSHI_MAX_MID_SPREAD = MAX_MID_SPREAD
 
 
 def _opt_float(m: dict, *keys: str) -> float | None:
@@ -596,87 +598,32 @@ async def store_markets(
             kalshi_skipped["no_ticker"] += 1
             continue
 
-        price = None
-        bid_val = None
-        ask_val = None
+        # Price only from a real two-sided book: bid > 0, ask > 0, width
+        # <= MAX_MID_SPREAD. One-sided/empty books are NOT priced from the
+        # last trade (which can be days stale, e.g. bid 0 / ask 0.13 / last
+        # 0.45) and stub books (0.02 / 0.98) have no meaningful mid.
+        bid_val = _opt_float(m, "yes_bid_dollars")
+        ask_val = _opt_float(m, "yes_ask_dollars")
+        if bid_val is None and ask_val is None:
+            # Legacy integer-cent fields.
+            cents_bid = _opt_float(m, "yes_bid")
+            cents_ask = _opt_float(m, "yes_ask")
+            bid_val = cents_bid / 100.0 if cents_bid is not None else None
+            ask_val = cents_ask / 100.0 if cents_ask is not None else None
 
-        # Method 1: _dollars string fields (already in 0-1 scale)
-        yes_bid_d = m.get("yes_bid_dollars")
-        yes_ask_d = m.get("yes_ask_dollars")
-        last_price_d = m.get("last_price_dollars")
-
-        if yes_bid_d is not None and yes_ask_d is not None:
-            try:
-                bid_val = float(yes_bid_d)
-                ask_val = float(yes_ask_d)
-                if bid_val > 0 and ask_val > 0:
-                    if ask_val - bid_val > KALSHI_MAX_MID_SPREAD + 1e-9:
-                        # Placeholder book (e.g. 0.02 / 0.98): its mid is
-                        # not a price anyone can trade, and neither is a
-                        # stale last trade. Skip rather than invent one.
-                        kalshi_skipped["wide_spread"] += 1
-                        continue
-                    price = (bid_val + ask_val) / 2.0
-            except (ValueError, TypeError):
-                pass
-
-        if price is None and last_price_d is not None:
-            try:
-                lp = float(last_price_d)
-                if lp > 0:
-                    price = lp
-            except (ValueError, TypeError):
-                pass
-
-        # Method 2: integer cent fields (need / 100)
-        if price is None:
-            yes_bid_c = m.get("yes_bid")
-            yes_ask_c = m.get("yes_ask")
-            last_price_c = m.get("last_price")
-
-            if yes_bid_c is not None and yes_ask_c is not None:
-                try:
-                    bid_c = float(yes_bid_c)
-                    ask_c = float(yes_ask_c)
-                    if bid_c > 0 and ask_c > 0:
-                        bid_val = bid_c / 100.0
-                        ask_val = ask_c / 100.0
-                        price = (bid_val + ask_val) / 2.0
-                except (ValueError, TypeError):
-                    pass
-
-            if price is None and last_price_c is not None:
-                try:
-                    lp = float(last_price_c)
-                    if lp > 0:
-                        price = lp / 100.0 if lp > 1 else lp
-                except (ValueError, TypeError):
-                    pass
-
-        # Method 3: fallback fields
-        if price is None:
-            for fallback_field in ["open_price_dollars", "close_price_dollars"]:
-                val = m.get(fallback_field)
-                if val is not None:
-                    try:
-                        fv = float(val)
-                        if fv > 0:
-                            price = fv
-                            break
-                    except (ValueError, TypeError):
-                        pass
-
-        if price is None or price <= 0:
+        if not (bid_val and ask_val and bid_val > 0 and ask_val > 0):
             kalshi_skipped["no_price"] += 1
+            continue
+        price = two_sided_mid(bid_val, ask_val)
+        if price is None:
+            kalshi_skipped["wide_spread"] += 1
             continue
 
         if price <= 0.01 or price >= 0.99:
             kalshi_skipped["extreme_price"] += 1
             continue
 
-        spread_val = 0.02
-        if bid_val is not None and ask_val is not None and bid_val > 0 and ask_val > 0:
-            spread_val = round(abs(ask_val - bid_val), 4)
+        spread_val = round(ask_val - bid_val, 4)
 
         mid = f"kal_{ticker}"
         kalshi_market_rows.append((mid, ticker, title[:200], now, now))
