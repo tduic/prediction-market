@@ -226,3 +226,32 @@ class TestRateLimits:
         md, calls = _live(lambda r: httpx.Response(429))
         assert await md.fee_params(db, "poly_0xabc") is None
         assert len(calls) == 3  # first try + 2 retries, then give up
+
+    async def test_kalshi_429_backs_off_all_callers(self, db, monkeypatch):
+        async def _fake_sleep(delay):
+            return None
+
+        monkeypatch.setattr("execution.market_data.asyncio.sleep", _fake_sleep)
+        await _seed(db, "kal_KXTEST-1", "kalshi", "KXTEST-1")
+        md, _ = _live(lambda r: httpx.Response(429, headers={"Retry-After": "1.5"}))
+        before = md._kalshi_next_at
+        assert await md.fee_params(db, "kal_KXTEST-1") is None
+        assert md._kalshi_next_at > before + 1.0
+
+    async def test_non_finite_retry_after_falls_back(self, db, monkeypatch):
+        slept: list[float] = []
+
+        async def _fake_sleep(delay):
+            slept.append(delay)
+
+        monkeypatch.setattr("execution.market_data.asyncio.sleep", _fake_sleep)
+        await _seed(db, "poly_0xabc", "polymarket", "0xabc")
+        responses = iter(
+            [
+                httpx.Response(429, headers={"Retry-After": "nan"}),
+                httpx.Response(200, json={"fd": None}),
+            ]
+        )
+        md, _ = _live(lambda r: next(responses))
+        assert await md.fee_params(db, "poly_0xabc") is not None
+        assert slept == [0.25]

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import os
 import time
 from typing import Protocol
@@ -115,7 +116,15 @@ class LiveMarketData:
                 delay = float(response.headers.get("Retry-After", ""))
             except ValueError:
                 delay = 0.25 * 2**attempt
-            await asyncio.sleep(min(max(delay, 0.0), _MAX_RETRY_AFTER_S))
+            if not math.isfinite(delay):
+                delay = 0.25 * 2**attempt
+            delay = min(max(delay, 0.0), _MAX_RETRY_AFTER_S)
+            if is_kalshi:
+                # Back everyone off, not just this caller.
+                self._kalshi_next_at = max(
+                    self._kalshi_next_at, time.monotonic() + delay
+                )
+            await asyncio.sleep(delay)
         response.raise_for_status()
         data = response.json()
         if not isinstance(data, dict):
@@ -149,7 +158,7 @@ class LiveMarketData:
                 del self._refreshing[market_id]
 
     async def prefetch_fees(
-        self, db: aiosqlite.Connection, market_ids: list[str], concurrency: int = 4
+        self, db: aiosqlite.Connection, market_ids: list[str], concurrency: int = 2
     ) -> None:
         """Warm the fee cache for many markets with bounded concurrency."""
         semaphore = asyncio.Semaphore(concurrency)

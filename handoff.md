@@ -78,7 +78,25 @@ _Last updated: 2026-10-17_
   - **Dead code removed:** batch.py, unused config fields, DB, analytics
     and ingestor helpers, and about 2,400 lines of tests that only tested
     stand-in classes.
-- Checks: about 1,090 tests, zero warnings. pytest, mypy, ruff and black
+- 2026-10-17 **ingestion fixes**:
+  - **Websocket:** the Polymarket stream subscribed with condition ids
+    and parsed the wrong level, so it received no prices. It now
+    subscribes by YES token and parses nested `price_changes`.
+  - **Quote rule:** quotes from both streams and the Kalshi listing must
+    be two-sided, uncrossed and no wider than 0.20
+    (`core/ingestor/quotes.py`). Stub books no longer produce a fake 0.50
+    mid.
+  - **Polymarket pagination:** gamma `/markets/keyset` replaces offset
+    paging, which was capped at about 2,100 markets. A failed fetch raises
+    `MarketFetchError` instead of storing a partial set; the session
+    catches it and idles with an alert.
+  - **Kalshi parsing:** the parser reads `*_dollars`/`*_fp`, titles carry
+    the subtitle, and the matcher refuses ambiguous ties, different stat
+    sets and at-least vs more-than mismatches.
+  - **YES token:** a Polymarket market is stored only if its `outcomes`
+    are exactly ["Yes","No"].
+  - **Rate limits:** venue reads retry 429s, and Kalshi calls are paced.
+- Checks: about 1,190 tests, zero warnings. pytest, mypy, ruff and black
   are clean. Smoke: `python scripts/smoke_paper_arb.py` (live public data,
   no creds).
 
@@ -103,7 +121,15 @@ _Last updated: 2026-10-17_
    `0.0.0.0`; until now the guard misread the password and forced
    loopback. Decide on the GCP firewall rule for tcp:8000, TLS or an IP
    allowlist, and confirm `DASHBOARD_PASSWORD` exists in Secret Manager.
-4. Not fixed (each needs a design decision):
+4. **The next refresh will be much bigger.** About 282k Polymarket
+   markets (was about 2,100). Fetching takes about 5 minutes and matching
+   about 15 minutes locally, likely more on the e2-medium, next to the
+   live service. Re-matching the full live snapshot gave 7 pairs, 2 of
+   them active. **Pairs created by the old matcher stay active** (upserts
+   keep review state), so audit them before trusting P1, e.g.
+   `SELECT id, notes FROM market_pairs WHERE active = 1`, and run
+   `mark_existing_pairs_pending_review` if in doubt.
+5. Not fixed (each needs a design decision):
    - Nothing marks markets resolved (no resolution pipeline). As a result,
      `close_resolved_positions` never runs, and capital locked in P1 arbs
      (recorded `closed` immediately) isn't counted toward the exposure cap.
@@ -114,10 +140,12 @@ _Last updated: 2026-10-17_
      legacy synthetic positions are labelled realistic.
    - The migration runner isn't atomic.
    - The VM still installs Python 3.12 while CI tests 3.14/3.15.
-5. Live P2–P5 positions are "closed" by `mark_and_close_positions` in the
+   - Polymarket liquidity still defaults to a fake 10000. The matcher has
+     no freshness bound on the prices it reads.
+6. Live P2–P5 positions are "closed" by `mark_and_close_positions` in the
    DB only; nothing sends an exit order. That's fine for paper but not for
    live.
-6. Fork pieces deliberately not ported: its engine rewrite, Kalshi V2 client
+7. Fork pieces deliberately not ported: its engine rewrite, Kalshi V2 client
    (read signing broken, endpoint unverified), exchange reconciliation
    (3 bugs), CI narrowing, P2–P5 disable.
 
