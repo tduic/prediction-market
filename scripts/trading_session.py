@@ -115,22 +115,18 @@ async def _build_subscription_lists(
 ) -> tuple[list[str], dict[str, str], list[str]]:
     """Derive Polymarket asset IDs + Kalshi tickers from a match set.
 
-    Returns ``(poly_platform_ids, poly_id_map, kalshi_tickers)`` where
-    ``poly_id_map`` maps the exchange-facing asset_id back to our internal
+    Returns ``(poly_token_ids, poly_id_map, kalshi_tickers)`` where the
+    Polymarket ids are CLOB YES token ids (the market channel ignores
+    conditionIds) and ``poly_id_map`` maps each token back to our internal
     ``poly_XXX`` id so websocket ticks can be attributed to the right market.
     """
+    from core.ingestor.streamer import polymarket_subscriptions
+
     kalshi_tickers = [m["kalshi_id"].replace("kal_", "") for m in matches]
     poly_internal_ids = list({m["poly_id"] for m in matches})
-    poly_platform_ids: list[str] = []
-    poly_id_map: dict[str, str] = {}
-    for pid in poly_internal_ids:
-        cursor = await db.execute(
-            "SELECT platform_id FROM markets WHERE id = ?", (pid,)
-        )
-        row = await cursor.fetchone()
-        if row and row[0]:
-            poly_platform_ids.append(row[0])
-            poly_id_map[row[0]] = pid
+    poly_platform_ids, poly_id_map = await polymarket_subscriptions(
+        db, poly_internal_ids
+    )
     return poly_platform_ids, poly_id_map, kalshi_tickers
 
 

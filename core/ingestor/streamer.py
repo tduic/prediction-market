@@ -15,6 +15,122 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 
+def _to_price(value: typing.Any) -> float | None:
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return None
+    return f
+
+
+def _mid(bid: float | None, ask: float | None) -> float | None:
+    """Mid of a two-sided, uncrossed book inside (0, 1); else None."""
+    if bid is None or ask is None:
+        return None
+    if bid <= 0 or ask <= 0 or bid >= 1 or ask >= 1 or bid > ask:
+        return None
+    return (bid + ask) / 2.0
+
+
+def parse_polymarket_ws_message(
+    data: typing.Any, token_map: typing.Mapping[str, str]
+) -> dict[str, float]:
+    """Extract ``{internal_market_id: mid}`` from one CLOB market-channel frame.
+
+    ``token_map`` maps a subscribed CLOB token id (the market's YES
+    ``clobTokenIds[0]``) to our internal ``poly_<conditionId>`` id. Only
+    tokens in the map are emitted: a ``price_change`` frame also carries the
+    complementary NO token, which must not leak onto the YES stream.
+
+    Current wire format (verified live):
+      - ``price_change``: top level ``{market, price_changes, timestamp,
+        event_type}``; each ``price_changes[]`` entry has ``asset_id``,
+        ``best_bid``, ``best_ask``.
+      - ``book``: ``{asset_id, bids, asks, ...}``; levels are unsorted for our
+        purposes (bids ascend, asks descend), so take max bid / min ask.
+      - ``last_trade_price``: a trade print, ignored here — this is a quote
+        (mid) stream and mixing trade prints into it creates false spreads.
+
+    When several updates for the same market occur in one frame, the last
+    one wins.
+    """
+    out: dict[str, float] = {}
+    events = data if isinstance(data, list) else [data]
+    for evt in events:
+        if not isinstance(evt, dict):
+            continue
+        etype = evt.get("event_type")
+        if etype == "price_change":
+            changes = evt.get("price_changes")
+            if not isinstance(changes, list):
+                # Legacy shape: the change fields sat at the top level.
+                changes = [evt]
+            for c in changes:
+                if not isinstance(c, dict):
+                    continue
+                market_id = token_map.get(str(c.get("asset_id", "")))
+                if market_id is None:
+                    continue
+                mid = _mid(_to_price(c.get("best_bid")), _to_price(c.get("best_ask")))
+                if mid is not None:
+                    out[market_id] = mid
+        elif etype == "book":
+            market_id = token_map.get(str(evt.get("asset_id", "")))
+            if market_id is None:
+                continue
+            bids = [
+                p
+                for p in (_to_price(lvl.get("price")) for lvl in evt.get("bids") or [])
+                if p is not None
+            ]
+            asks = [
+                p
+                for p in (_to_price(lvl.get("price")) for lvl in evt.get("asks") or [])
+                if p is not None
+            ]
+            mid = _mid(max(bids) if bids else None, min(asks) if asks else None)
+            if mid is not None:
+                out[market_id] = mid
+    return out
+
+
+async def polymarket_subscriptions(
+    db: typing.Any, internal_ids: typing.Iterable[str]
+) -> tuple[list[str], dict[str, str]]:
+    """Resolve internal ``poly_*`` ids to CLOB YES token ids for the WS feed.
+
+    The CLOB market channel is keyed by token id (``clobTokenIds``), not by
+    conditionId — subscribing with ``platform_id`` silently yields no data.
+    Returns ``(token_ids, token_map)`` where ``token_map`` maps each YES token
+    back to its internal market id. Markets without a stored
+    ``yes_token_id`` are skipped with a warning (they cannot be streamed).
+    """
+    tokens: list[str] = []
+    token_map: dict[str, str] = {}
+    missing: list[str] = []
+    for pid in internal_ids:
+        cursor = await db.execute(
+            "SELECT yes_token_id FROM markets WHERE id = ?", (pid,)
+        )
+        row = await cursor.fetchone()
+        token = row[0] if row else None
+        if not token:
+            missing.append(pid)
+            continue
+        token = str(token)
+        if token not in token_map:
+            tokens.append(token)
+        token_map[token] = pid
+    if missing:
+        logger.warning(
+            "Polymarket WS: %d matched markets have no yes_token_id and will "
+            "get no live prices (e.g. %s) — re-run the market refresh",
+            len(missing),
+            ", ".join(missing[:3]),
+        )
+    return tokens, token_map
+
+
 async def stream_prices_polymarket(
     asset_ids: list[str],
     stop_event: asyncio.Event,
@@ -24,15 +140,30 @@ async def stream_prices_polymarket(
     """Stream real-time prices from Polymarket CLOB websocket.
 
     Polymarket limit: 500 assets per connection, so we chunk.
-    Calls `on_price(market_id, price)` for every update — this is
+    Calls `on_price(market_id, mid)` for every quote update — this is
     how the ArbitrageEngine gets triggered on each tick.
 
-    id_map: optional mapping from platform_id (asset_id) -> internal market_id (poly_XXX)
+    asset_ids: CLOB **token ids** (markets.yes_token_id), not conditionIds;
+      see ``polymarket_subscriptions``.
+    id_map: token id -> internal market_id (poly_<conditionId>). Tokens not in
+      the map are emitted under the token id itself.
     """
     import websockets
 
     WS_URL = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
     CHUNK_SIZE = 450
+
+    bad = [a for a in asset_ids if str(a).startswith("0x")]
+    if bad:
+        logger.error(
+            "Polymarket WS: %d/%d subscription ids look like conditionIds "
+            "(0x...) — the market channel needs CLOB token ids and will send "
+            "nothing for these",
+            len(bad),
+            len(asset_ids),
+        )
+
+    token_map: dict[str, str] = {a: (id_map or {}).get(a, a) for a in asset_ids}
 
     async def _connect_chunk(chunk_ids: list[str]):
         while not stop_event.is_set():
@@ -49,31 +180,12 @@ async def stream_prices_polymarket(
                             break
                         try:
                             data = json.loads(raw)
-                            for evt in data if isinstance(data, list) else [data]:
-                                asset_id = evt.get("asset_id", "")
-                                price = None
-
-                                if evt.get("event_type") == "price_change":
-                                    changes = evt.get("price_changes", [evt])
-                                    for c in changes:
-                                        bid = c.get("best_bid")
-                                        ask = c.get("best_ask")
-                                        if bid and ask:
-                                            try:
-                                                price = (float(bid) + float(ask)) / 2.0
-                                            except (ValueError, TypeError):
-                                                pass
-                                elif "price" in evt and asset_id:
-                                    try:
-                                        price = float(evt["price"])
-                                    except (ValueError, TypeError):
-                                        pass
-
-                                if price is not None and asset_id:
-                                    market_id = (id_map or {}).get(asset_id, asset_id)
-                                    await on_price(market_id, price)
                         except json.JSONDecodeError:
-                            pass
+                            continue
+                        for market_id, price in parse_polymarket_ws_message(
+                            data, token_map
+                        ).items():
+                            await on_price(market_id, price)
             except Exception as e:
                 if not stop_event.is_set():
                     logger.warning("Polymarket WS reconnecting: %s", e)

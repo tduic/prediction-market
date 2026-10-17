@@ -1,0 +1,78 @@
+{
+ "_source": "captured live from wss://ws-subscriptions-clob.polymarket.com/ws/market on 2026-10-17 (book levels trimmed to 3 per side)",
+ "book": [
+  {
+   "market": "0x747dc809fb79e1b05be09c42d6179459a58de2ef3e40f02484a4e1260f741f75",
+   "asset_id": "107505882767731489358349912513945399560393482969656700824895970500493757150417",
+   "timestamp": "1792257820100",
+   "hash": "43f99e4238578968eecbcef0d7c1660d08b72218",
+   "bids": [
+    {
+     "price": "0.046",
+     "size": "1576"
+    },
+    {
+     "price": "0.047",
+     "size": "432.84"
+    },
+    {
+     "price": "0.048",
+     "size": "26105.2"
+    }
+   ],
+   "asks": [
+    {
+     "price": "0.052",
+     "size": "4589.15"
+    },
+    {
+     "price": "0.05",
+     "size": "979.69"
+    },
+    {
+     "price": "0.049",
+     "size": "1222.41"
+    }
+   ],
+   "tick_size": "0.001",
+   "event_type": "book",
+   "last_trade_price": "0.952"
+  }
+ ],
+ "price_change": {
+  "market": "0x1a01bf78f56a507fcb666d564d8c8b91b0750679163ed6e96746102c9b7d285d",
+  "price_changes": [
+   {
+    "asset_id": "109876868437950584369987384406356259939519193117253465815665152916226511121427",
+    "price": "0.57",
+    "size": "87",
+    "side": "BUY",
+    "hash": "e8ddde17cdacb94915d253dbbd25899579adfd61",
+    "best_bid": "0.768",
+    "best_ask": "0.769"
+   },
+   {
+    "asset_id": "38310927461258927563020508025396887688249787380193911540547071417200646834355",
+    "price": "0.43",
+    "size": "87",
+    "side": "SELL",
+    "hash": "27b2dc6c552d710ca5912192687cf25d1ae60bc6",
+    "best_bid": "0.231",
+    "best_ask": "0.232"
+   }
+  ],
+  "timestamp": "1792257822000",
+  "event_type": "price_change"
+ },
+ "last_trade_price": {
+  "market": "0xd5d9fc47718bd553592d126b1fa5e87183d27f3936975b0c04cc0f2dec1f1bb4",
+  "asset_id": "83247781037352156539108067944461291821683755894607244160607042790356561625563",
+  "price": "0.91",
+  "size": "439.56044",
+  "fee_rate_bps": "0",
+  "side": "BUY",
+  "timestamp": "1792257831483",
+  "event_type": "last_trade_price",
+  "transaction_hash": "0x292c7ba6235246b5056069b4e5368b419c913083407ecb3c94af48fadb4dee4f"
+ }
+}
