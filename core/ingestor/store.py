@@ -450,6 +450,23 @@ def kalshi_match_title(m: dict) -> str:
     return title
 
 
+# Widest Kalshi YES bid/ask spread whose mid is still stored as the price.
+KALSHI_MAX_MID_SPREAD = 0.20
+
+
+def _opt_float(m: dict, *keys: str) -> float | None:
+    """First of ``keys`` present in ``m`` that parses as a float, else None."""
+    for key in keys:
+        raw = m.get(key)
+        if raw is None or raw == "":
+            continue
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
 async def store_markets(
     db: aiosqlite.Connection, poly_markets: list, kalshi_markets: list
 ):
@@ -550,7 +567,12 @@ async def store_markets(
     # ── Prepare Kalshi rows in-memory ────────────────────────────────────
     kalshi_market_rows = []
     kalshi_price_rows = []
-    kalshi_skipped = {"no_ticker": 0, "no_price": 0, "extreme_price": 0}
+    kalshi_skipped = {
+        "no_ticker": 0,
+        "no_price": 0,
+        "extreme_price": 0,
+        "wide_spread": 0,
+    }
 
     if kalshi_markets:
         sample = kalshi_markets[0]
@@ -577,6 +599,12 @@ async def store_markets(
                 bid_val = float(yes_bid_d)
                 ask_val = float(yes_ask_d)
                 if bid_val > 0 and ask_val > 0:
+                    if ask_val - bid_val > KALSHI_MAX_MID_SPREAD + 1e-9:
+                        # Placeholder book (e.g. 0.02 / 0.98): its mid is
+                        # not a price anyone can trade, and neither is a
+                        # stale last trade. Skip rather than invent one.
+                        kalshi_skipped["wide_spread"] += 1
+                        continue
                     price = (bid_val + ask_val) / 2.0
             except (ValueError, TypeError):
                 pass
@@ -647,12 +675,11 @@ async def store_markets(
                 round(price, 4),
                 round(1 - price, 4),
                 spread_val,
-                float(
-                    m.get("liquidity_dollars", 0)
-                    or m.get("volume", 0)
-                    or m.get("volume_24h", 0)
-                    or 10000
-                ),
+                # Current listings carry no liquidity field: NULL, never a
+                # made-up number. Sizes come as *_fp decimal strings.
+                _opt_float(m, "liquidity_dollars", "liquidity"),
+                _opt_float(m, "volume_24h_fp", "volume_24h"),
+                _opt_float(m, "open_interest_fp", "open_interest"),
                 now,
             )
         )
@@ -698,8 +725,9 @@ async def store_markets(
         )
         await db.executemany(
             """INSERT INTO market_prices
-               (market_id, yes_price, no_price, spread, liquidity, polled_at)
-               SELECT ?, ?, ?, ?, ?, ?
+               (market_id, yes_price, no_price, spread, liquidity,
+                volume_24h, open_interest, polled_at)
+               SELECT ?, ?, ?, ?, ?, ?, ?, ?
                WHERE EXISTS (SELECT 1 FROM markets WHERE id = ?)""",
             [(*row, row[0]) for row in kalshi_price_rows],
         )
