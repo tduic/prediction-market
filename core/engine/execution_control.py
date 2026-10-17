@@ -27,9 +27,15 @@ async def get_halt(db: aiosqlite.Connection) -> dict | None:
             "FROM execution_control WHERE id = 1"
         )
         row = await cursor.fetchone()
-    except aiosqlite.OperationalError:
-        logger.error("execution_control table missing — run migrations")
-        return None
+    except aiosqlite.Error as exc:
+        # Fail closed: a locked/corrupt DB or missing table must never read
+        # as "safe to trade".
+        logger.error("Cannot read execution halt state (treating as halted): %s", exc)
+        return {
+            "reason": f"halt state unreadable: {exc}",
+            "component": None,
+            "halted_at": None,
+        }
     if row is None or not row[0]:
         return None
     return {"reason": row[1], "component": row[2], "halted_at": row[3]}

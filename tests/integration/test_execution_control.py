@@ -67,9 +67,12 @@ async def test_survives_reconnect(tmp_path, alerts):
         assert await is_halted(conn) is True
 
 
-async def test_missing_table_reads_as_not_halted():
+async def test_unreadable_halt_state_fails_closed():
+    # A locked/corrupt DB or missing table must not read as "safe to trade".
     async with aiosqlite.connect(":memory:") as conn:
-        assert await is_halted(conn) is False
+        assert await is_halted(conn) is True
+        state = await get_halt(conn)
+        assert state is not None and state["reason"].startswith("halt state unreadable")
 
 
 class TestClearHaltScript:

@@ -92,6 +92,9 @@ class ArbitrageEngine:
         self._skipped_fee_unknown: int = 0
         self._skipped_unprofitable: int = 0
         self._skipped_halted: int = 0
+        # Set when the persistent halt itself couldn't be written (DB broken):
+        # the engine still stops trading for the rest of this process.
+        self._local_halt: str | None = None
         self._skipped_depth_unknown: int = 0
         self._skipped_thin_book: int = 0
 
@@ -549,6 +552,26 @@ class ArbitrageEngine:
         assert last_result is not None  # max_attempts >= 1
         return last_result
 
+    async def _halted(self) -> bool:
+        return self._local_halt is not None or await is_halted(self.db)
+
+    async def _safe_halt(self, reason: str, pair_id: str) -> None:
+        """Persist the halt; if that fails, halt in memory. Either way the
+        pair is muted so it can't re-fire straight after a halt is cleared."""
+        self.fired_state[pair_id] = PairFireState(
+            last_fired_at=time.time(), armed=False
+        )
+        try:
+            await halt(self.db, reason, component="arb_engine")
+        except Exception:
+            self._local_halt = reason
+            logger.critical(
+                "Could not persist execution halt — halted IN MEMORY until "
+                "restart: %s",
+                reason,
+                exc_info=True,
+            )
+
     async def _halt_unknown_fill(
         self,
         client: BaseExecutionClient,
@@ -557,11 +580,10 @@ class ArbitrageEngine:
         leg_name: str,
     ) -> None:
         """Halt first (persisted), then make a best-effort cancel."""
-        await halt(
-            self.db,
+        await self._safe_halt(
             f"unknown_fill pair={pair_id} leg={leg_name} "
             f"platform={result.platform} order={result.order_id}",
-            component="arb_engine",
+            pair_id,
         )
         try:
             await client.cancel_order(result.order_id)
@@ -611,7 +633,7 @@ class ArbitrageEngine:
 
         # Persistent execution halt: set after an unknown or unbalanced fill,
         # cleared only by an operator (scripts/clear_halt.py).
-        if await is_halted(self.db):
+        if await self._halted():
             self._skipped_halted += 1
             logger.warning("EXECUTION_HALTED — skipping arb trade on pair=%s", pair_id)
             return None
@@ -816,6 +838,13 @@ class ArbitrageEngine:
             k_price,
         )
 
+        # Re-check: the fee/depth/risk awaits above can take seconds, during
+        # which another pair may have halted execution. Checked before the
+        # signal insert so a halt leaves no orphan 'fired' signal.
+        if await self._halted():
+            self._skipped_halted += 1
+            return None
+
         try:
             await self.db.execute(
                 """INSERT OR IGNORE INTO signals
@@ -860,15 +889,25 @@ class ArbitrageEngine:
             limit_price=buy_price,
             order_type="LIMIT",
         )
-        # Re-check: the fee/depth/risk awaits above can take seconds, during
-        # which another pair may have halted execution.
-        if await is_halted(self.db):
-            self._skipped_halted += 1
-            return None
         _trade_start_ms = int(time.time() * 1000)
-        buy_result = await self._submit_with_retry(
-            buy_client, buy_leg, signal_id=signal_id, strategy=strategy
-        )
+        try:
+            buy_result = await self._submit_with_retry(
+                buy_client, buy_leg, signal_id=signal_id, strategy=strategy
+            )
+        except BaseException as exc:
+            # Clients return a result for every outcome they understand; an
+            # exception means the buy's state is unknown.
+            logger.exception("Exception during buy submit on pair=%s", pair_id)
+            await asyncio.shield(
+                self._safe_halt(
+                    f"exception_during_buy pair={pair_id} "
+                    f"{type(exc).__name__}: {exc}",
+                    pair_id,
+                )
+            )
+            if isinstance(exc, Exception):
+                return None
+            raise
         _buy_fill_ms = int(time.time() * 1000)
 
         if buy_result.status == "pending":
@@ -926,12 +965,11 @@ class ArbitrageEngine:
                     bought,
                     sold,
                 )
-                await halt(
-                    self.db,
+                await self._safe_halt(
                     f"unbalanced_arb pair={pair_id} bought={bought} sold={sold} "
                     f"buy_order={buy_result.order_id} "
                     f"sell_order={None if sell_result is None else sell_result.order_id}",
-                    component="arb_engine",
+                    pair_id,
                 )
                 if self._circuit_breaker is not None:
                     await self._circuit_breaker.record_order_result(success=False)
@@ -1049,11 +1087,10 @@ class ArbitrageEngine:
                 _positions_written = False
 
             if not _positions_written:
-                await halt(
-                    self.db,
+                await self._safe_halt(
                     f"position_record_failed pair={pair_id} signal={signal_id} "
                     f"buy_order={buy_result.order_id} sell_order={sell_result.order_id}",
-                    component="arb_engine",
+                    pair_id,
                 )
             if sanity_cap_hit:
                 logger.warning(
@@ -1065,11 +1102,10 @@ class ArbitrageEngine:
                     size,
                     spread,
                 )
-                await halt(
-                    self.db,
+                await self._safe_halt(
                     f"pnl_sanity_cap pair={pair_id} actual_pnl={actual_pnl:.4f} "
                     f"cap={_pnl_cap:.4f} — check the two markets are equivalent",
-                    component="arb_engine",
+                    pair_id,
                 )
 
             logger.info(
@@ -1087,15 +1123,19 @@ class ArbitrageEngine:
                 "actual_pnl": actual_pnl,
                 "fees": total_fees,
             }
-        except Exception as exc:
+        except BaseException as exc:
+            # BaseException: a cancellation mid-hedge leaves a naked buy too.
             logger.exception("Exception after buy fill on pair=%s", pair_id)
-            await halt(
-                self.db,
-                f"exception_after_fill pair={pair_id} buy_order={buy_result.order_id} "
-                f"{type(exc).__name__}: {exc}",
-                component="arb_engine",
+            await asyncio.shield(
+                self._safe_halt(
+                    f"exception_after_fill pair={pair_id} "
+                    f"buy_order={buy_result.order_id} {type(exc).__name__}: {exc}",
+                    pair_id,
+                )
             )
-            return None
+            if isinstance(exc, Exception):
+                return None
+            raise
 
     async def flush(self):
         """Commit any pending DB writes.
@@ -1158,6 +1198,7 @@ class ArbitrageEngine:
             "skipped_fee_unknown": self._skipped_fee_unknown,
             "skipped_unprofitable": self._skipped_unprofitable,
             "skipped_halted": self._skipped_halted,
+            "halted_in_memory": self._local_halt,
             "skipped_depth_unknown": self._skipped_depth_unknown,
             "skipped_thin_book": self._skipped_thin_book,
         }

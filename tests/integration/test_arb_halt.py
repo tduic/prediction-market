@@ -271,3 +271,59 @@ async def test_halt_set_during_pretrade_lookups_blocks_the_buy(db):
     engine = await _engine(db, buy, sell)
     await engine.initial_sweep()
     assert buy.legs == []
+
+
+async def test_when_halt_cannot_be_written_engine_halts_in_memory(db, monkeypatch):
+    async def _broken_halt(db, reason, component):
+        raise RuntimeError("database is locked")
+
+    monkeypatch.setattr("core.engine.arb_engine.halt", _broken_halt)
+    buy = FakeClient(
+        "polymarket",
+        _filled("polymarket", 0.40, 10.0),
+        _filled("polymarket", 0.40, 10.0),
+    )
+    sell = RaisingClient("kalshi")
+    engine = await _engine(db, buy, sell)
+    await engine.initial_sweep()
+    assert engine.stats()["halted_in_memory"] is not None
+    assert "poly_A_kal_A" in engine.fired_state
+    await engine.periodic_scan()
+    assert len(buy.legs) == 1  # no second buy
+
+
+async def test_cancellation_after_buy_fill_halts_and_propagates(db):
+    import asyncio
+
+    class _Cancelled(FakeClient):
+        async def submit_order(self, leg, signal_id=None, strategy=None):
+            raise asyncio.CancelledError
+
+    buy = FakeClient("polymarket", _filled("polymarket", 0.40, 10.0))
+    engine = await _engine(db, buy, _Cancelled("kalshi"))
+    with pytest.raises(asyncio.CancelledError):
+        await engine.initial_sweep()
+    state = await get_halt(db)
+    assert state is not None and state["reason"].startswith("exception_after_fill")
+
+
+async def test_exception_from_buy_submit_halts(db):
+    engine = await _engine(db, RaisingClient("polymarket"), FakeClient("kalshi"))
+    await engine.initial_sweep()
+    state = await get_halt(db)
+    assert state is not None and state["reason"].startswith("exception_during_buy")
+
+
+async def test_halted_before_signal_insert_leaves_no_orphan_signal(db):
+    from execution.market_data import StaticMarketData, set_market_data
+
+    class _HaltsMidway(StaticMarketData):
+        async def executable_depth(self, db, leg):
+            await halt(db, "other pair went unbalanced", component="arb_engine")
+            return float("inf")
+
+    set_market_data(_HaltsMidway())
+    engine = await _engine(db, FakeClient("polymarket"), FakeClient("kalshi"))
+    await engine.initial_sweep()
+    cursor = await db.execute("SELECT COUNT(*) FROM signals")
+    assert (await cursor.fetchone())[0] == 0
