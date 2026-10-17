@@ -370,14 +370,22 @@ class PolymarketExecutionClientV2(BaseExecutionClient):
         matched = float(order.get("size_matched") or 0)
         book = resolved.book.value
         if matched <= 0:
+            if str(order.get("status", "")).lower() == "matched":
+                # Contradictory (API lag?): the order may have filled. Unknown,
+                # so the engine halts instead of treating it as a clean miss.
+                return self._result(
+                    order_id,
+                    "pending",
+                    start,
+                    error_message="status=matched but size_matched=0; state unknown",
+                    book=book,
+                )
             result = self._result(
                 order_id,
                 "failed",
                 start,
                 error_message=f"no fill (status={order.get('status')})",
-                # 'matched' with size_matched 0 is an API lag/anomaly, not a
-                # clean miss.
-                no_fill=str(order.get("status", "")).lower() != "matched",
+                no_fill=True,
                 book=book,
             )
             await self.update_order_fill(result)

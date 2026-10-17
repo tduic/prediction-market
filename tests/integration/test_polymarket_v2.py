@@ -378,9 +378,12 @@ async def test_v2_no_fill_is_flagged(db):
     assert result.no_fill is True
 
 
-async def test_matched_with_zero_size_is_not_flagged_no_fill(db):
+async def test_matched_with_zero_size_is_unknown(db):
+    # 'matched' but size_matched 0 is contradictory (API lag?) — the order
+    # may have filled, so the state is unknown and the engine must halt.
     await _seed(db)
     result = await _client(db, FakeClob(orders=[_order("MATCHED", 0)])).submit_order(
         _leg()
     )
+    assert result.status == "pending"
     assert result.no_fill is False
