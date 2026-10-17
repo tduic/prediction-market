@@ -382,3 +382,13 @@ async def test_clients_flag_no_fill(db):
     )  # market is at 0.50, above the limit
     result = await paper.submit_order(leg)
     assert result.status == "failed" and result.no_fill is True
+
+
+async def test_no_fill_mutes_the_pair_until_cooldown(db):
+    no_fill = _failed("polymarket")
+    no_fill.no_fill = True
+    buy = FakeClient("polymarket", *[no_fill] * 6)
+    engine = await _engine(db, buy, FakeClient("kalshi"))
+    await engine.initial_sweep()
+    await engine.periodic_scan()  # still in cooldown: no new orders
+    assert len(buy.legs) == 3  # one trade's retries, not one per scan

@@ -375,7 +375,9 @@ class PolymarketExecutionClientV2(BaseExecutionClient):
                 "failed",
                 start,
                 error_message=f"no fill (status={order.get('status')})",
-                no_fill=True,
+                # 'matched' with size_matched 0 is an API lag/anomaly, not a
+                # clean miss.
+                no_fill=str(order.get("status", "")).lower() != "matched",
                 book=book,
             )
             await self.update_order_fill(result)

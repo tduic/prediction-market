@@ -376,3 +376,11 @@ async def test_v2_no_fill_is_flagged(db):
         _leg()
     )
     assert result.no_fill is True
+
+
+async def test_matched_with_zero_size_is_not_flagged_no_fill(db):
+    await _seed(db)
+    result = await _client(db, FakeClob(orders=[_order("MATCHED", 0)])).submit_order(
+        _leg()
+    )
+    assert result.no_fill is False

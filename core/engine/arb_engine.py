@@ -919,6 +919,12 @@ class ArbitrageEngine:
             # error and doesn't count toward the consecutive-failure breaker.
             if self._circuit_breaker is not None and not buy_result.no_fill:
                 await self._circuit_breaker.record_order_result(success=False)
+            if buy_result.no_fill:
+                # Mute on the normal cooldown so an unfillable pair doesn't
+                # send a fresh round of orders on every scan.
+                self.fired_state[pair_id] = PairFireState(
+                    last_fired_at=time.time(), armed=False
+                )
             return None
 
         # From here a buy has filled. Any exception (client bug, missing
