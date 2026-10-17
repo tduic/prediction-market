@@ -354,6 +354,17 @@ class TestCheckAllInvariants:
         await check_all_invariants(db, alert_manager=mock_mgr, mode="warn")
         assert mock_mgr.send.call_count == 1
 
+    async def test_failed_alert_delivery_is_retried_next_cycle(self, db):
+        await _seed_signal(db, "sig1")
+        await _seed_closed_position(db, signal_id="sig1", realized_pnl=9999.0)
+        mock_mgr = AsyncMock()
+        mock_mgr.send.return_value = False  # webhook outage
+        await check_all_invariants(db, alert_manager=mock_mgr, mode="warn")
+        mock_mgr.send.return_value = True
+        await check_all_invariants(db, alert_manager=mock_mgr, mode="warn")
+        await check_all_invariants(db, alert_manager=mock_mgr, mode="warn")
+        assert mock_mgr.send.call_count == 2  # retried once, then deduped
+
     async def test_no_alert_when_all_pass(self, db):
         mock_mgr = AsyncMock()
         await check_all_invariants(db, alert_manager=mock_mgr, mode="warn")

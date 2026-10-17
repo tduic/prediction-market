@@ -311,7 +311,7 @@ async def check_all_invariants(
             try:
                 from core.alerting import Severity
 
-                await alert_manager.send(
+                delivered = await alert_manager.send(
                     title=f"Invariant violation: {result.name}",
                     message=result.message,
                     severity=Severity.CRITICAL,
@@ -319,6 +319,19 @@ async def check_all_invariants(
                 )
             except Exception as exc:
                 logger.error("Failed to send invariant alert: %s", exc)
+                delivered = False
+            if delivered is False:
+                # Undo the dedup row so the next cycle retries the page
+                # instead of staying silent for an hour.
+                try:
+                    await db.execute(
+                        "DELETE FROM invariant_violations "
+                        "WHERE name = ? AND violated_at = ?",
+                        (result.name, now),
+                    )
+                    await db.commit()
+                except Exception as exc:
+                    logger.error("Failed to reset invariant dedup row: %s", exc)
 
         if first_failure is None:
             first_failure = result
