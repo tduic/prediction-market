@@ -662,6 +662,32 @@ class TestAuthSecretSourceConsistency:
             assert ok.status_code == 200
 
     @pytest.mark.asyncio
+    async def test_downstream_error_with_valid_creds_is_500_not_401(
+        self, monkeypatch, fake_secrets, tmp_path
+    ):
+        """call_next used to sit inside the auth try-block, so any exception
+        raised by an endpoint for an AUTHENTICATED request was swallowed and
+        turned into a 401 (and a credentials prompt)."""
+        monkeypatch.delenv("DASHBOARD_PASSWORD", raising=False)
+        fake_secrets({"DASHBOARD_PASSWORD": "from-store"})
+        app = create_dashboard_app(db_path=str(tmp_path / "auth.db"))
+
+        @app.get("/api/__boom")
+        async def _boom():
+            raise RuntimeError("endpoint failure")
+
+        transport = ASGITransport(app=app, raise_app_exceptions=False)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/api/__boom", auth=("admin", "from-store"))
+            assert resp.status_code == 500
+            bad = await client.get("/api/__boom", auth=("admin", "wrong"))
+            assert bad.status_code == 401
+            junk = await client.get(
+                "/api/__boom", headers={"Authorization": "Basic !!not-base64"}
+            )
+            assert junk.status_code == 401
+
+    @pytest.mark.asyncio
     async def test_401_carries_security_headers(
         self, monkeypatch, fake_secrets, tmp_path
     ):

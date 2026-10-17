@@ -141,20 +141,26 @@ class _BasicAuthMiddleware(BaseHTTPMiddleware):
         self._username = username
         self._password = password
 
+    def _authorized(self, header: str) -> bool:
+        if not header.startswith("Basic "):
+            return False
+        try:
+            decoded = base64.b64decode(header[6:]).decode("utf-8", errors="replace")
+        except ValueError as exc:  # binascii.Error is a ValueError
+            logger.debug("BasicAuth decode error: %s", exc)
+            return False
+        user, _, pwd = decoded.partition(":")
+        user_ok = secrets.compare_digest(user.encode(), self._username.encode())
+        pass_ok = secrets.compare_digest(pwd.encode(), self._password.encode())
+        return user_ok and pass_ok
+
     async def dispatch(self, request: Request, call_next):
         if request.url.path == "/health":
             return await call_next(request)
-        auth = request.headers.get("Authorization", "")
-        if auth.startswith("Basic "):
-            try:
-                decoded = base64.b64decode(auth[6:]).decode("utf-8", errors="replace")
-                user, _, pwd = decoded.partition(":")
-                user_ok = secrets.compare_digest(user.encode(), self._username.encode())
-                pass_ok = secrets.compare_digest(pwd.encode(), self._password.encode())
-                if user_ok and pass_ok:
-                    return await call_next(request)
-            except Exception as exc:
-                logger.debug("BasicAuth decode error: %s", exc)
+        if self._authorized(request.headers.get("Authorization", "")):
+            # Outside any try-block: an endpoint error for an authenticated
+            # request must surface as a 500, not be swallowed into a 401.
+            return await call_next(request)
         return Response(
             "Unauthorized",
             status_code=401,
