@@ -75,14 +75,15 @@ class TestKalshiMatchTitle:
         assert lo.startswith("HYPE price on Oct 17, 2026?")
 
     def test_matchup_from_rules_is_included(self):
-        q, m = kalshi_match_title(QATAR), kalshi_match_title(MAINZ)
+        q = kalshi_match_title(QATAR, with_matchup=True)
+        m = kalshi_match_title(MAINZ, with_matchup=True)
         assert q != m
         assert "Al Gharafa vs Al Rayyan" in q
         assert "Mainz 05 vs Wolfsburg" in m
 
     def test_redundant_subtitle_is_not_repeated(self):
         # "Over 2.5 goals scored" adds nothing to "Will over 2.5 goals be scored?"
-        assert kalshi_match_title(QATAR).count("2.5") == 1
+        assert kalshi_match_title(QATAR, with_matchup=True).count("2.5") == 1
 
     def test_plain_title_unchanged_when_nothing_to_add(self):
         m = {"title": "Will it rain?", "yes_sub_title": "", "rules_primary": ""}
@@ -98,6 +99,28 @@ class TestStoreUsesUnambiguousTitle:
         titles = [r[0] for r in await cur.fetchall()]
         assert len(titles) == 4
         assert len(set(titles)) == 4
+
+    async def test_matchup_only_added_when_title_is_shared(self, db):
+        # A title that is already unique (e.g. a player prop) stays as-is:
+        # the matchup is not in the Polymarket title and would only lower
+        # the similarity of a correct match (and widen candidate sets).
+        prop = {
+            **QATAR,
+            "ticker": "KXSERIEAGOAL-26OCT18INTROM-THURAM2",
+            "title": "Marcus Thuram: 2+ goals",
+            "yes_sub_title": "Marcus Thuram: 2+",
+            "rules_primary": (
+                "If Marcus Thuram scores 2+ goals in the Inter vs Roma "
+                "professional Serie A soccer game, then the market resolves to Yes."
+            ),
+        }
+        await store_markets(db, [], [QATAR, MAINZ, prop])
+        cur = await db.execute(
+            "SELECT id, title FROM markets WHERE platform = 'kalshi'"
+        )
+        titles = {r[0]: r[1] for r in await cur.fetchall()}
+        assert titles[f"kal_{prop['ticker']}"] == "Marcus Thuram: 2+ goals"
+        assert "Al Gharafa vs Al Rayyan" in titles[f"kal_{QATAR['ticker']}"]
 
 
 class TestAmbiguousTieIsRefused:

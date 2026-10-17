@@ -10,6 +10,7 @@ import json as _json
 import logging
 import re
 import time
+from collections import Counter
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -426,7 +427,7 @@ def _kalshi_matchup(rules: str) -> str | None:
     return f"{home} vs {away}"
 
 
-def kalshi_match_title(m: dict) -> str:
+def kalshi_match_title(m: dict, with_matchup: bool = False) -> str:
     """Build an unambiguous title for a Kalshi market.
 
     Kalshi ``title`` is shared by many markets: every strike of an event
@@ -438,13 +439,16 @@ def kalshi_match_title(m: dict) -> str:
         "HYPE price on Oct 17, 2026? — $43.7499 or below"
         "Will over 2.5 goals be scored? (Mainz 05 vs Wolfsburg)"
 
+    The matchup is only added when ``with_matchup`` is set; store_markets
+    does that just for titles still shared by several markets, because on
+    an already-unique title it only lowers the score of a correct match.
     This is what gets stored in ``markets.title`` and matched on.
     """
     title = (m.get("title") or "").strip()
     sub = (m.get("yes_sub_title") or "").strip()
     if sub and not _title_tokens(sub) <= _title_tokens(title):
         title = f"{title} — {sub}"
-    matchup = _kalshi_matchup(m.get("rules_primary") or "")
+    matchup = _kalshi_matchup(m.get("rules_primary") or "") if with_matchup else None
     if matchup and not _title_tokens(matchup) <= _title_tokens(title):
         title = f"{title} ({matchup})"
     return title
@@ -574,6 +578,11 @@ async def store_markets(
         "wide_spread": 0,
     }
 
+    # Titles still shared after adding the subtitle get the matchup appended.
+    shared_titles = Counter(
+        kalshi_match_title(m) for m in kalshi_markets if m.get("title")
+    )
+
     if kalshi_markets:
         sample = kalshi_markets[0]
         logger.info("Kalshi sample fields: %s", sorted(sample.keys()))
@@ -581,6 +590,8 @@ async def store_markets(
     for m in kalshi_markets:
         ticker = m.get("ticker", "")
         title = kalshi_match_title(m) if m.get("title") else ""
+        if title and shared_titles[title] > 1:
+            title = kalshi_match_title(m, with_matchup=True)
         if not ticker or not title:
             kalshi_skipped["no_ticker"] += 1
             continue

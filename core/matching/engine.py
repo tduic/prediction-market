@@ -68,7 +68,7 @@ STOP_WORDS = {
     "under", "from", "have", "has", "been", "would", "could", "should",
     "their", "there", "other", "each", "any", "all", "not", "was", "were",
     "but", "its", "who", "can", "may", "be", "by", "of", "on", "in", "at",
-    "to", "is", "it", "an", "or", "if", "do", "so", "as", "up",
+    "to", "is", "it", "an", "or", "if", "do", "so", "as", "up", "vs",
 }  # fmt: skip
 
 
