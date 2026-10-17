@@ -22,15 +22,33 @@ fi
 sudo tee /data/predictor/notify-discord.sh > /dev/null << 'EOF'
 #!/bin/bash
 # Usage: notify-discord.sh "message"
+# The webhook URL is a credential: it is handed to curl as a config file on
+# stdin (`-K -`), never as an argument, so it does not show up in `ps`.
 set -euo pipefail
 URL="${ALERT_DISCORD_WEBHOOK_URL:-}"
 if [ -z "$URL" ]; then
-  URL="$(gcloud secrets versions access latest --secret=alert-discord-webhook-url \
-    --project="${GCP_PROJECT_ID:-predictor-trading-2026}" 2>/dev/null || true)"
+  if ! command -v gcloud >/dev/null 2>&1; then
+    echo "notify-discord: ALERT_DISCORD_WEBHOOK_URL unset and gcloud not installed" >&2
+    exit 1
+  fi
+  ERR="$(mktemp)"
+  trap 'rm -f "$ERR"' EXIT
+  if ! URL="$(gcloud secrets versions access latest --secret=alert-discord-webhook-url \
+      --project="${GCP_PROJECT_ID:-predictor-trading-2026}" 2>"$ERR")"; then
+    echo "notify-discord: Secret Manager lookup of alert-discord-webhook-url failed:" >&2
+    cat "$ERR" >&2
+    exit 1
+  fi
 fi
-[ -z "$URL" ] && { echo "notify-discord: no webhook configured" >&2; exit 0; }
+if [ -z "$URL" ]; then
+  echo "notify-discord: alert-discord-webhook-url is empty" >&2
+  exit 1
+fi
 MSG="$(printf '%s' "$1" | python3 -c 'import json,sys; print(json.dumps({"content": sys.stdin.read()}))')"
-curl -s -X POST "$URL" -H 'Content-Type: application/json' -d "$MSG"
+# curl config syntax: escape backslashes and double quotes inside the value.
+URL_ESC="$(printf '%s' "$URL" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g')"
+printf 'url = "%s"\n' "$URL_ESC" \
+  | curl -sS --fail -K - -X POST -H 'Content-Type: application/json' -d "$MSG" >/dev/null
 EOF
 
 # ── Combined memory file ───────────────────────────────────────────────────────
