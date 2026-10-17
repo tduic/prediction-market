@@ -72,6 +72,64 @@ STOP_WORDS = {
 }  # fmt: skip
 
 
+# Stat words that define *which* quantity a prop counts. Two props on the
+# same player/number are different markets if these differ — e.g.
+# "1+ goals + assists" vs "1+ goals", "passing yards" vs "rushing yards".
+_STAT_WORDS = frozenset(
+    """goal assist point rebound touchdown yard passing rushing receiving
+    reception hit run strikeout save shot steal block three sack
+    interception tackle ace wicket td rbi""".split()
+)
+_WORD_RE = re.compile(r"[a-z]+")
+
+# Threshold phrasing: inclusive ("at least N", "N or more", "N+") vs
+# exclusive ("more than N", "above N", "over N"). Same N, different
+# boundary = different market.
+_NUM = r"\$?(\d[\d,]*(?:\.\d+)?)"
+_INCLUSIVE_RES = (
+    re.compile(rf"\bat\s+least\s+{_NUM}", re.IGNORECASE),
+    re.compile(rf"{_NUM}\s*(?:or\s+more|or\s+above|or\s+higher|\+)", re.IGNORECASE),
+)
+_EXCLUSIVE_RES = (
+    re.compile(
+        rf"\b(?:more\s+than|greater\s+than|above|over|exceeds?|higher\s+than)\s+{_NUM}",
+        re.IGNORECASE,
+    ),
+)
+
+
+def _stat_words(raw: str) -> frozenset[str]:
+    words = set()
+    for w in _WORD_RE.findall(raw.lower()):
+        stem = w[:-1] if w.endswith("s") and len(w) > 3 else w
+        if stem in _STAT_WORDS:
+            words.add(stem)
+    return frozenset(words)
+
+
+def _boundaries(raw: str, patterns: tuple[re.Pattern[str], ...]) -> set[str]:
+    out = set()
+    for pat in patterns:
+        for m in pat.finditer(raw):
+            out.add(m.group(1).replace(",", ""))
+    return out
+
+
+def _qualifiers_conflict(raw_a: str, raw_b: str) -> bool:
+    """True when two titles count different stats or use different bounds."""
+    stats_a, stats_b = _stat_words(raw_a), _stat_words(raw_b)
+    if stats_a and stats_b and stats_a != stats_b:
+        return True
+    inc_a, exc_a = _boundaries(raw_a, _INCLUSIVE_RES), _boundaries(
+        raw_a, _EXCLUSIVE_RES
+    )
+    inc_b, exc_b = _boundaries(raw_b, _INCLUSIVE_RES), _boundaries(
+        raw_b, _EXCLUSIVE_RES
+    )
+    # Same number, inclusive on one side and exclusive on the other.
+    return bool((inc_a - exc_a) & (exc_b - inc_b) or (inc_b - exc_b) & (exc_a - inc_a))
+
+
 # Scores closer than this are a tie (same title text scores bit-identical).
 _TIE_EPS = 1e-9
 
@@ -127,6 +185,10 @@ def compute_match_score(
     # normalize_title strips decimal points ("5.5" → "5 5"), so we must check
     # the raw titles before normalization destroys the distinction.
     if raw_a and raw_b:
+        # Different stat qualifier or threshold boundary: different market.
+        if _qualifiers_conflict(raw_a, raw_b):
+            return 0.0
+
         a_has_ou = bool(_OU_PAT.search(raw_a))
         b_has_ou = bool(_OU_PAT.search(raw_b))
         a_has_nplus = bool(_N_PLUS_PAT.search(raw_a))
