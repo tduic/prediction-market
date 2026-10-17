@@ -16,6 +16,7 @@ import math
 import os
 import secrets
 import sqlite3
+from contextlib import closing
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -61,7 +62,8 @@ def configure(db_path: str) -> None:
     # Enable WAL mode once at startup (it's a persistent DB-level setting).
     # Uses the sync sqlite3 driver so this works in both sync and async contexts.
     try:
-        with sqlite3.connect(db_path) as _c:
+        # closing(): sqlite3's own context manager commits but never closes.
+        with closing(sqlite3.connect(db_path)) as _c:
             _c.execute("PRAGMA busy_timeout=5000")
             _c.execute("PRAGMA journal_mode=WAL")
     except sqlite3.Error as _e:
