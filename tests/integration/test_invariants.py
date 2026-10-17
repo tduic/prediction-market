@@ -343,6 +343,17 @@ class TestCheckAllInvariants:
         assert any(not r.passed for r in results)
         mock_mgr.send.assert_called()
 
+    async def test_persistent_violation_alerts_once_per_dedup_window(self, db):
+        # The scheduler re-checks every cycle (~2 min); a standing violation
+        # must not page CRITICAL each time.
+        await _seed_signal(db, "sig1")
+        await _seed_closed_position(db, signal_id="sig1", realized_pnl=9999.0)
+        mock_mgr = AsyncMock()
+        await check_all_invariants(db, alert_manager=mock_mgr, mode="warn")
+        await check_all_invariants(db, alert_manager=mock_mgr, mode="warn")
+        await check_all_invariants(db, alert_manager=mock_mgr, mode="warn")
+        assert mock_mgr.send.call_count == 1
+
     async def test_no_alert_when_all_pass(self, db):
         mock_mgr = AsyncMock()
         await check_all_invariants(db, alert_manager=mock_mgr, mode="warn")

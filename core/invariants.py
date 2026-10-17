@@ -277,6 +277,9 @@ async def check_all_invariants(
 
         # Persist to DB -- deduplicate within 1-hour window so the same
         # persistent failure doesn't generate a new row every scheduler cycle.
+        # The alert follows the same window: a standing violation must not
+        # page CRITICAL every cycle (AlertManager's CRITICAL dedup is 10s).
+        newly_recorded = False
         try:
             dedup_cutoff = (datetime.now(UTC) - timedelta(hours=1)).isoformat()
             dup_cursor = await db.execute(
@@ -298,11 +301,13 @@ async def check_all_invariants(
                     ),
                 )
                 await db.commit()
+                newly_recorded = True
         except Exception as exc:
             logger.error("Failed to persist invariant violation: %s", exc)
+            newly_recorded = True  # can't dedup via the DB: alert anyway
 
         # Send Discord alert
-        if alert_manager is not None:
+        if alert_manager is not None and newly_recorded:
             try:
                 from core.alerting import Severity
 

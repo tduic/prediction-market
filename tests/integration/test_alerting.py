@@ -496,3 +496,22 @@ async def test_slack_transport_http_failure_returns_false(monkeypatch):
     alert = Alert(title="t", message="m")
     ok = await transport.publish(alert)
     assert ok is False
+
+
+@pytest.mark.asyncio
+async def test_failed_delivery_does_not_suppress_the_retry():
+    class FlakyTransport:
+        name = "flaky"
+
+        def __init__(self):
+            self.calls = 0
+
+        async def publish(self, alert):
+            self.calls += 1
+            return self.calls > 1  # first attempt fails, then recovers
+
+    t = FlakyTransport()
+    mgr = AlertManager(transports=[t], dedup_window_s=300)
+    assert await mgr.send(title="halt", message="m", severity=Severity.WARNING) is False
+    assert await mgr.send(title="halt", message="m", severity=Severity.WARNING) is True
+    assert t.calls == 2

@@ -292,8 +292,13 @@ class AlertManager:
         last = self._recent.get(key)
         if last is not None and (now - last) < window:
             return True
+        # Reserve the slot now so concurrent send_nowait calls dedup against
+        # each other; released again if delivery fails.
         self._recent[key] = now
         return False
+
+    def _release(self, alert: Alert) -> None:
+        self._recent.pop(self._dedup_key(alert), None)
 
     async def send(
         self,
@@ -342,6 +347,8 @@ class AlertManager:
         # returns True, so the default no-op configuration is always "success".
         ok = any(r is True for r in results)
         if not ok:
+            # A failed send must not suppress the retry for the whole window.
+            self._release(alert)
             logger.warning("All alert transports failed for: %s", alert.title)
         return ok
 
