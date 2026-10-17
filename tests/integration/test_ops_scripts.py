@@ -104,3 +104,27 @@ async def test_verify_api_auth_exit_code(monkeypatch, kalshi_ok, poly_ok, expect
     monkeypatch.setattr(verify, "verify_kalshi", fake_kalshi)
     monkeypatch.setattr(verify, "verify_polymarket", fake_poly)
     assert await verify.main() == expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("dirname", ["with?query", "with#hash", "with%25pct", "sp ace"])
+async def test_clear_halt_handles_uri_special_chars_in_path(tmp_path, capsys, dirname):
+    # The read-only check opens the DB via a file: URI; unescaped ?/#/% in
+    # the path used to truncate or garble it ("does not exist"/wrong file).
+    d = tmp_path / dirname
+    d.mkdir()
+    path = d / "ok.db"
+    await _migrated_db(path)
+    rc = await clear_halt_script.run(str(path), reason=None, status_only=True)
+    assert rc == 0, capsys.readouterr().err
+    assert "Not halted" in capsys.readouterr().out
+
+
+def test_clear_halt_loads_production_env_before_repo_env(monkeypatch):
+    calls: list[tuple] = []
+    monkeypatch.setattr(
+        clear_halt_script, "load_dotenv", lambda *a, **k: calls.append(a) or True
+    )
+    clear_halt_script._load_env()
+    assert calls[0] == ("/data/predictor/.env",)
+    assert calls[1] == ()

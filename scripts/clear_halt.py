@@ -4,8 +4,8 @@ Usage:
     python scripts/clear_halt.py --reason "flattened KXFOO on Kalshi manually"
     python scripts/clear_halt.py --status        # show the halt, change nothing
 
-Loads .env (like the trading session) so the default --db matches the
-service's DB_PATH. Refuses to run against a DB file that does not exist or
+Loads /data/predictor/.env (the service's EnvironmentFile) and then the repo
+.env (local dev) so the default --db matches the service's DB_PATH. Refuses to run against a DB file that does not exist or
 has no execution_control table, instead of creating an empty file and
 reporting "Not halted".
 """
@@ -18,6 +18,7 @@ import os
 import sqlite3
 import sys
 from pathlib import Path
+from urllib.parse import quote
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -40,8 +41,10 @@ def _check_db(db_path: str) -> str | None:
             "(the service reads it from /data/predictor/.env)."
         )
     try:
-        # mode=ro: never create or modify anything while checking.
-        with sqlite3.connect(f"file:{path}?mode=ro", uri=True) as conn:
+        # mode=ro: never create or modify anything while checking. The path
+        # is percent-encoded: a raw ?, # or % would end/garble the URI path.
+        uri = f"file:{quote(str(path.resolve()))}?mode=ro"
+        with sqlite3.connect(uri, uri=True) as conn:
             row = conn.execute(
                 "SELECT 1 FROM sqlite_master "
                 "WHERE type = 'table' AND name = 'execution_control'"
@@ -82,8 +85,15 @@ async def run(db_path: str, reason: str | None, status_only: bool) -> int:
     return 0
 
 
-async def main() -> int:
+def _load_env() -> None:
+    # Production first (same file systemd feeds the service), then the repo
+    # .env for local dev; load_dotenv never overrides already-set variables.
+    load_dotenv("/data/predictor/.env")
     load_dotenv()
+
+
+async def main() -> int:
+    _load_env()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--db", default=os.getenv("DB_PATH", "prediction_market.db"))
     group = parser.add_mutually_exclusive_group(required=True)
