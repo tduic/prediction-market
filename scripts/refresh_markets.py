@@ -43,6 +43,7 @@ async def main() -> None:
 
     try:
         from core.ingestor.store import (
+            MarketFetchError,
             fetch_kalshi_markets,
             fetch_polymarket_markets,
             store_markets,
@@ -58,7 +59,13 @@ async def main() -> None:
                 api_base=cfg.platform_credentials.kalshi_api_base,
             )
         )
-        poly_markets, kalshi_markets = await asyncio.gather(poly_task, kalshi_task)
+        try:
+            poly_markets, kalshi_markets = await asyncio.gather(poly_task, kalshi_task)
+        except MarketFetchError as e:
+            # A partial listing would be stored and matched as if complete;
+            # keep the previous snapshot and fail the run visibly instead.
+            logger.error("Market fetch failed — aborting, DB left unchanged: %s", e)
+            sys.exit(1)
 
         logger.info(
             "Fetched %d Polymarket + %d Kalshi markets",

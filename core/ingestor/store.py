@@ -5,9 +5,11 @@ Provides fetch_polymarket_markets, fetch_kalshi_markets, and store_markets
 for pulling market data from exchanges and persisting to the database.
 """
 
+import asyncio
 import json as _json
 import logging
 import time
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -17,64 +19,207 @@ import httpx
 logger = logging.getLogger(__name__)
 
 
-async def fetch_polymarket_markets() -> list[dict]:
-    """Fetch ALL active markets from Polymarket Gamma API.
+class MarketFetchError(RuntimeError):
+    """A market listing could not be fetched completely.
 
-    Paginates through every page (100 per page) until exhausted.
-    Typically ~5k-30k active markets.
+    Raised instead of returning a partial list: callers store and match on
+    whatever is returned as if it were the whole exchange, so a silently
+    truncated list (e.g. only the oldest ~2,100 Polymarket markets) is worse
+    than a visible failure that leaves the previous DB snapshot in place.
     """
-    all_markets = []
-    offset = 0
-    page_size = 100  # Gamma API max per page
 
+
+# Indirection so tests can skip real backoff sleeps.
+_sleep = asyncio.sleep
+
+_RETRY_ATTEMPTS = 6
+_RETRY_BASE_DELAY_S = 1.0
+_RETRY_MAX_DELAY_S = 60.0
+
+
+def _retry_after_seconds(resp: httpx.Response) -> float | None:
+    """Parse a numeric Retry-After header (seconds); None if absent/invalid."""
+    raw = resp.headers.get("Retry-After")
+    if raw is None:
+        return None
     try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            while True:
-                resp = await client.get(
-                    "https://gamma-api.polymarket.com/markets",
-                    params={
-                        "limit": page_size,
-                        "offset": offset,
-                        "active": "true",
-                        "closed": "false",
-                    },
-                )
-                if resp.status_code != 200:
-                    logger.error("Polymarket API error: HTTP %d", resp.status_code)
-                    break
+        return max(0.0, min(float(raw), _RETRY_MAX_DELAY_S))
+    except ValueError:
+        return None
 
-                page = resp.json()
-                if not page:
-                    break
 
-                all_markets.extend(page)
-                offset += page_size
+async def _get_with_retry(
+    client: httpx.AsyncClient,
+    url: str,
+    *,
+    what: str,
+    params: dict,
+    headers_fn: Callable[[], dict] | None = None,
+) -> httpx.Response:
+    """GET with retry + exponential backoff on 429 / 5xx / transport errors.
 
-                # Progress logging every 1000 markets
-                if len(all_markets) % 1000 < page_size:
-                    logger.info(
-                        "  Polymarket: %d markets fetched so far...",
-                        len(all_markets),
-                    )
+    Honors ``Retry-After`` when present. Non-retryable statuses (other 4xx)
+    and exhausted retries raise MarketFetchError. ``headers_fn`` is called per
+    attempt so signed requests get a fresh timestamp.
+    """
+    last_err = ""
+    for attempt in range(1, _RETRY_ATTEMPTS + 1):
+        retry_after: float | None = None
+        try:
+            resp = await client.get(
+                url,
+                params=params,
+                headers=headers_fn() if headers_fn else None,
+            )
+        except httpx.TransportError as e:
+            last_err = f"{type(e).__name__}: {e}"
+        else:
+            if resp.status_code == 200:
+                return resp
+            last_err = f"HTTP {resp.status_code} {resp.text[:200]}"
+            if resp.status_code != 429 and resp.status_code < 500:
+                raise MarketFetchError(f"{what}: {last_err}")
+            retry_after = _retry_after_seconds(resp)
+        if attempt == _RETRY_ATTEMPTS:
+            break
+        delay = (
+            retry_after
+            if retry_after is not None
+            else min(_RETRY_BASE_DELAY_S * 2 ** (attempt - 1), _RETRY_MAX_DELAY_S)
+        )
+        logger.warning(
+            "%s: %s — retry %d/%d in %.1fs",
+            what,
+            last_err,
+            attempt,
+            _RETRY_ATTEMPTS - 1,
+            delay,
+        )
+        await _sleep(delay)
+    raise MarketFetchError(
+        f"{what}: giving up after {_RETRY_ATTEMPTS} attempts ({last_err})"
+    )
 
-                if len(page) < page_size:
-                    break  # Last page
 
-        logger.info("Fetched %d total markets from Polymarket", len(all_markets))
-    except Exception as e:
-        logger.error("Failed to fetch Polymarket markets: %s", e)
+GAMMA_KEYSET_URL = "https://gamma-api.polymarket.com/markets/keyset"
 
+# Fields store_markets reads. Gamma market objects are ~6 KB each (events,
+# descriptions, ...); with ~300k open markets the full objects would need
+# gigabytes, so each record is trimmed to these keys while paginating.
+_POLY_KEEP_KEYS = (
+    "id",
+    "conditionId",
+    "condition_id",
+    "question",
+    "title",
+    "slug",
+    "groupItemTitle",
+    "clobTokenIds",
+    "clob_token_ids",
+    "tokens",
+    "outcomePrices",
+    "bestBid",
+    "bestAsk",
+    "volume",
+    "liquidity",
+    "endDate",
+    "negRisk",
+)
+_POLY_MAX_PAGES = 20_000  # 2M markets — beyond this assume a cursor loop
+
+
+async def fetch_polymarket_markets(
+    client: httpx.AsyncClient | None = None,
+) -> list[dict]:
+    """Fetch ALL active, open markets from the Polymarket Gamma API.
+
+    Uses ``/markets/keyset`` cursor pagination (``after_cursor`` /
+    ``next_cursor``). The offset-paginated ``/markets`` endpoint rejects
+    offsets past 2000 with HTTP 422, which used to end pagination early and
+    return only the oldest ~2,100 markets as if that were everything.
+
+    Raises MarketFetchError if any page cannot be fetched after retries —
+    never returns a partial list.
+    """
+    if client is None:
+        async with httpx.AsyncClient(timeout=30) as owned:
+            return await fetch_polymarket_markets(owned)
+
+    all_markets: list[dict] = []
+    cursor: str | None = None
+    seen_cursors: set[str] = set()
+    page_num = 0
+    while True:
+        page_num += 1
+        if page_num > _POLY_MAX_PAGES:
+            raise MarketFetchError(
+                f"Polymarket keyset: exceeded {_POLY_MAX_PAGES} pages "
+                f"({len(all_markets)} markets) — refusing a possibly looping crawl"
+            )
+        params: dict[str, str | int] = {
+            "limit": 100,  # server cap
+            "active": "true",
+            "closed": "false",
+        }
+        if cursor:
+            params["after_cursor"] = cursor
+        resp = await _get_with_retry(
+            client,
+            GAMMA_KEYSET_URL,
+            what=f"Polymarket keyset page {page_num}",
+            params=params,
+        )
+        try:
+            data = resp.json()
+            page = data["markets"]
+        except (ValueError, KeyError, TypeError) as e:
+            raise MarketFetchError(
+                f"Polymarket keyset page {page_num}: unexpected body ({e}): "
+                f"{resp.text[:200]}"
+            ) from e
+
+        all_markets.extend(
+            {k: m[k] for k in _POLY_KEEP_KEYS if k in m}
+            for m in page
+            if isinstance(m, dict)
+        )
+
+        if page_num % 50 == 0:
+            logger.info(
+                "  Polymarket: %d markets fetched so far (page %d)...",
+                len(all_markets),
+                page_num,
+            )
+
+        next_cursor = data.get("next_cursor")
+        if not next_cursor or not page:
+            break
+        if next_cursor in seen_cursors:
+            raise MarketFetchError(
+                f"Polymarket keyset: cursor repeated on page {page_num}"
+            )
+        seen_cursors.add(next_cursor)
+        cursor = next_cursor
+
+    logger.info("Fetched %d total markets from Polymarket", len(all_markets))
     return all_markets
 
 
 async def fetch_kalshi_markets(
-    api_key: str, rsa_key_path: str, api_base: str
+    api_key: str,
+    rsa_key_path: str,
+    api_base: str,
+    client: httpx.AsyncClient | None = None,
 ) -> list[dict]:
     """Fetch ALL open markets from Kalshi API.
 
-    Paginates through every page (200 per page, cursor-based) until exhausted.
+    Paginates through every page (1000 per page, cursor-based) until exhausted.
     Filters out multivariate/parlay combo markets.
     Typically ~5k-30k active markets.
+
+    429 / 5xx / transport errors are retried with exponential backoff
+    (honoring Retry-After). If a page still cannot be fetched, raises
+    MarketFetchError rather than returning the pages fetched so far.
     """
     import base64
 
@@ -119,105 +264,103 @@ async def fetch_kalshi_markets(
     seen_tickers = set()
     cursor = None
     seen_cursors: set[str] = set()
-    MAX_MARKETS = 50_000  # Safety cap — Kalshi has ~30k open markets
+    MAX_MARKETS = 200_000  # Safety cap — Kalshi has ~20-30k open markets
 
+    owned_client = client is None
+    http = client if client is not None else httpx.AsyncClient(timeout=30)
     try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            page_num = 0
-            while True:
-                page_num += 1
-                path = "/trade-api/v2/markets"
-                headers = sign("GET", path)
-                params: dict[str, str | int] = {
-                    "limit": 1000,
-                    "status": "open",
-                    "mve_filter": "exclude",
-                }
-                if cursor:
-                    params["cursor"] = cursor
+        page_num = 0
+        while True:
+            page_num += 1
+            path = "/trade-api/v2/markets"
+            params: dict[str, str | int] = {
+                "limit": 1000,
+                "status": "open",
+                "mve_filter": "exclude",
+            }
+            if cursor:
+                params["cursor"] = cursor
 
-                resp = await client.get(
-                    f"{api_base}/markets",
-                    headers=headers,
-                    params=params,
-                )
-                if resp.status_code != 200:
-                    logger.error(
-                        "Kalshi API error: HTTP %d — %s",
-                        resp.status_code,
-                        resp.text[:200],
-                    )
-                    break
-
+            resp = await _get_with_retry(
+                http,
+                f"{api_base}/markets",
+                what=f"Kalshi markets page {page_num}",
+                params=params,
+                headers_fn=lambda: sign("GET", path),
+            )
+            try:
                 data = resp.json()
-                page = data.get("markets", [])
-                if not page:
-                    logger.info("  Kalshi: empty page on page %d, stopping", page_num)
-                    break
+            except ValueError as e:
+                raise MarketFetchError(
+                    f"Kalshi markets page {page_num}: non-JSON body"
+                ) from e
+            page = data.get("markets", [])
+            if not page:
+                logger.info("  Kalshi: empty page on page %d, stopping", page_num)
+                break
 
-                # Deduplicate: only add markets we haven't seen
-                new_count = 0
-                for m in page:
-                    ticker = m.get("ticker", "")
-                    if ticker and ticker not in seen_tickers:
-                        seen_tickers.add(ticker)
-                        all_markets.append(m)
-                        new_count += 1
+            # Deduplicate: only add markets we haven't seen
+            new_count = 0
+            for m in page:
+                ticker = m.get("ticker", "")
+                if ticker and ticker not in seen_tickers:
+                    seen_tickers.add(ticker)
+                    all_markets.append(m)
+                    new_count += 1
 
-                # If we got zero new markets, the cursor has cycled
-                if new_count == 0:
-                    logger.info(
-                        "  Kalshi: cursor cycled (0 new in page %d of %d), stopping",
-                        page_num,
-                        len(page),
-                    )
-                    break
+            # If we got zero new markets, the cursor has cycled
+            if new_count == 0:
+                logger.info(
+                    "  Kalshi: cursor cycled (0 new in page %d of %d), stopping",
+                    page_num,
+                    len(page),
+                )
+                break
 
-                new_cursor = data.get("cursor", "")
+            new_cursor = data.get("cursor", "")
 
-                # Progress logging every 5000 markets
-                if len(all_markets) % 5000 < 1000:
-                    logger.info(
-                        "  Kalshi: %d unique markets fetched so far (page %d)...",
-                        len(all_markets),
-                        page_num,
-                    )
+            # Progress logging every 5000 markets
+            if len(all_markets) % 5000 < 1000:
+                logger.info(
+                    "  Kalshi: %d unique markets fetched so far (page %d)...",
+                    len(all_markets),
+                    page_num,
+                )
 
-                # Stop conditions:
-                # 1. No cursor returned or empty cursor → end of results
-                if not new_cursor:
-                    logger.info(
-                        "  Kalshi: no cursor returned, stopping at %d markets",
-                        len(all_markets),
-                    )
-                    break
+            # Stop conditions:
+            # 1. No cursor returned or empty cursor → end of results
+            if not new_cursor:
+                logger.info(
+                    "  Kalshi: no cursor returned, stopping at %d markets",
+                    len(all_markets),
+                )
+                break
 
-                # 2. Page smaller than limit → last page
-                if len(page) < 1000:
-                    logger.info(
-                        "  Kalshi: partial page (%d < 1000), stopping at %d markets",
-                        len(page),
-                        len(all_markets),
-                    )
-                    break
+            # 2. Page smaller than limit → last page
+            if len(page) < 1000:
+                logger.info(
+                    "  Kalshi: partial page (%d < 1000), stopping at %d markets",
+                    len(page),
+                    len(all_markets),
+                )
+                break
 
-                # 3. Cursor already seen → cycle detected
-                if new_cursor in seen_cursors:
-                    logger.info(
-                        "  Kalshi: cursor cycle detected (seen before), stopping at %d markets",
-                        len(all_markets),
-                    )
-                    break
+            # 3. Cursor already seen → cycle detected
+            if new_cursor in seen_cursors:
+                logger.info(
+                    "  Kalshi: cursor cycle detected (seen before), stopping at %d markets",
+                    len(all_markets),
+                )
+                break
 
-                # 4. Safety cap
-                if len(all_markets) >= MAX_MARKETS:
-                    logger.warning(
-                        "  Kalshi: hit safety cap of %d markets, stopping", MAX_MARKETS
-                    )
-                    break
+            # 4. Safety cap — refuse rather than return a truncated list
+            if len(all_markets) >= MAX_MARKETS:
+                raise MarketFetchError(
+                    f"Kalshi: hit safety cap of {MAX_MARKETS} markets"
+                )
 
-                seen_cursors.add(new_cursor)
-                cursor = new_cursor
+            seen_cursors.add(new_cursor)
+            cursor = new_cursor
 
         # Post-filter: remove parlays/multivariate combos
         filtered = []
@@ -248,9 +391,15 @@ async def fetch_kalshi_markets(
         )
         return filtered
 
+    except MarketFetchError as e:
+        logger.error("Kalshi market fetch FAILED (no partial result used): %s", e)
+        raise
     except Exception as e:
-        logger.error("Failed to fetch Kalshi markets: %s", e)
-        return []
+        logger.error("Kalshi market fetch FAILED (no partial result used): %s", e)
+        raise MarketFetchError(f"Kalshi: {type(e).__name__}: {e}") from e
+    finally:
+        if owned_client:
+            await http.aclose()
 
 
 async def store_markets(
