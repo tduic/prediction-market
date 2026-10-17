@@ -112,3 +112,53 @@ async def test_log_risk_checks_null_signal_id(db):
     cursor = await db.execute("SELECT signal_id FROM risk_check_log LIMIT 1")
     row = await cursor.fetchone()
     assert row["signal_id"] is None
+
+
+class TestCapitalAtRisk:
+    """Selling YES at p (or buying NO at 1-p) puts size * (1 - p) at risk,
+    not size * p."""
+
+    def _signal(self, side, price, size=10.0):
+        from core.engine.fire_state import _RiskLeg, _RiskSignal
+
+        return _RiskSignal(
+            legs=[_RiskLeg(market_id="m", limit_price=price, size=size, side=side)],
+            edge=0.05,
+            strategy="P3_calibration_bias",
+            violation_id=None,
+        )
+
+    async def test_position_limit_costs_a_sell_at_one_minus_price(self):
+        from core.signals.risk import check_position_limit
+
+        result = await check_position_limit(self._signal("SELL", 0.10), 10_000, 0.05)
+        assert result.check_value == pytest.approx(9.0)
+
+    async def test_exposure_counts_open_sell_positions_at_one_minus_price(self, db):
+        from core.signals.risk import check_portfolio_exposure
+
+        now = "2026-10-01T00:00:00+00:00"
+        await db.execute(
+            "INSERT INTO markets (id, platform, platform_id, title, created_at,"
+            " updated_at) VALUES ('m', 'kalshi', 'm', 't', ?, ?)",
+            (now, now),
+        )
+        await db.execute(
+            "INSERT INTO signals (id, strategy, signal_type, market_id_a, model_edge,"
+            " kelly_fraction, position_size_a, total_capital_at_risk, status,"
+            " fired_at, updated_at) VALUES ('s', 'P3_calibration_bias', 'single',"
+            " 'm', 0.05, 0.1, 10, 1, 'fired', ?, ?)",
+            (now, now),
+        )
+        await db.execute(
+            "INSERT INTO positions (id, signal_id, market_id, strategy, side,"
+            " entry_price, entry_size, status, opened_at, updated_at) VALUES"
+            " ('p', 's', 'm', 'P3_calibration_bias', 'SELL', 0.90, 10, 'open', ?, ?)",
+            (now, now),
+        )
+        await db.commit()
+        result = await check_portfolio_exposure(
+            self._signal("BUY", 0.50), 10_000, 0.20, db
+        )
+        # open short: 10 * (1 - 0.90) = 1.0; new buy: 10 * 0.50 = 5.0
+        assert result.check_value == pytest.approx(6.0)

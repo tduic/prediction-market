@@ -86,6 +86,15 @@ async def get_portfolio_value(
         return starting_capital
 
 
+def _leg_capital_at_risk(leg: Any) -> float:
+    """Capital a leg puts at risk: size * p to buy YES at p, size * (1 - p) to
+    sell YES at p (the short side's collateral, or the cost of buying NO)."""
+    price = leg.limit_price if leg.limit_price is not None else 0.5
+    if str(getattr(leg, "side", "BUY")).upper() == "SELL":
+        return leg.size * (1.0 - price)
+    return leg.size * price
+
+
 async def check_position_limit(
     signal: Any,
     portfolio_value: float,
@@ -99,10 +108,7 @@ async def check_position_limit(
     Default: 5% → on a $10,000 portfolio, max single position = $500.
     """
     max_size = portfolio_value * max_position_pct
-    signal_size = 0.0
-    for leg in signal.legs:
-        price = leg.limit_price if leg.limit_price is not None else 0.5
-        signal_size += leg.size * price
+    signal_size = sum(_leg_capital_at_risk(leg) for leg in signal.legs)
 
     passed = signal_size <= max_size
 
@@ -199,7 +205,9 @@ async def check_portfolio_exposure(
     if db:
         try:
             cursor = await db.execute(
-                "SELECT COALESCE(SUM(entry_price * entry_size), 0) "
+                "SELECT COALESCE(SUM(CASE WHEN side = 'SELL' "
+                "THEN (1 - entry_price) * entry_size "
+                "ELSE entry_price * entry_size END), 0) "
                 "FROM positions WHERE status = 'open'"
             )
             row = await cursor.fetchone()
@@ -217,10 +225,7 @@ async def check_portfolio_exposure(
             )
 
     # Add this signal's notional
-    signal_notional = 0.0
-    for leg in signal.legs:
-        price = leg.limit_price if leg.limit_price is not None else 0.5
-        signal_notional += leg.size * price
+    signal_notional = sum(_leg_capital_at_risk(leg) for leg in signal.legs)
 
     total_exposure = current_exposure + signal_notional
     passed = total_exposure <= max_exposure
