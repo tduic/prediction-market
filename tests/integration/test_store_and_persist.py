@@ -380,3 +380,34 @@ class TestRefreshKeepsHistory:
             "SELECT similarity_score, active, notes FROM market_pairs"
         )
         assert tuple(await cursor.fetchone()) == (0.95, 0, "rejected_by_human")
+
+    async def test_legacy_id_clash_does_not_abort_the_batch(self, db):
+        # A legacy row holds the same (platform, platform_id) under another id.
+        await db.execute("PRAGMA foreign_keys = ON")
+        await db.execute(
+            "INSERT INTO markets (id, platform, platform_id, title, created_at,"
+            " updated_at) VALUES ('777', 'polymarket', '0xc1', 'legacy', 'x', 'x')"
+        )
+        await db.commit()
+        await store_markets(
+            db,
+            [_poly_real_api("0xc1", "Clashing market", 0.40)],
+            [_kalshi("KXOK-1", "Unrelated Kalshi market", 0.42, 0.44)],
+        )
+        cursor = await db.execute(
+            "SELECT COUNT(*) FROM market_prices WHERE market_id = 'kal_KXOK-1'"
+        )
+        assert (await cursor.fetchone())[0] == 1  # later rows still written
+
+    async def test_widened_spread_still_deactivates_an_auto_approved_pair(self, db):
+        await self._seed_history(db)
+        match = {
+            "poly_id": "poly_0xc1",
+            "kalshi_id": "kal_KXRAIN-1",
+            "poly_price": 0.40,
+            "kalshi_price": 0.42,
+        }
+        await persist_matches(db, [match])  # spread 0.02 → active
+        await persist_matches(db, [{**match, "kalshi_price": 0.70}])  # 0.30
+        cursor = await db.execute("SELECT active, notes FROM market_pairs")
+        assert tuple(await cursor.fetchone()) == (0, "pending_review")

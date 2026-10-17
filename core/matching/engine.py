@@ -384,14 +384,21 @@ async def persist_matches(db: aiosqlite.Connection, matches: list[dict]) -> int:
     try:
         await db.executemany(
             # Upsert, never INSERT OR REPLACE (it would cascade-delete the
-            # pair's violations). An existing pair keeps its review state
-            # (active/notes), which may be a human decision.
+            # pair's violations). The spread gate can still tighten an
+            # auto-approved pair (notes IS NULL) but never overrides an
+            # existing review note, and never re-activates a pair.
             """INSERT INTO market_pairs
                (id, market_id_a, market_id_b, pair_type, similarity_score,
                 match_method, active, notes, created_at, updated_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(id) DO UPDATE SET
                    similarity_score = excluded.similarity_score,
+                   active = CASE
+                       WHEN excluded.active = 0 AND market_pairs.notes IS NULL
+                       THEN 0 ELSE market_pairs.active END,
+                   notes = CASE
+                       WHEN excluded.active = 0 AND market_pairs.notes IS NULL
+                       THEN excluded.notes ELSE market_pairs.notes END,
                    updated_at = excluded.updated_at""",
             rows,
         )

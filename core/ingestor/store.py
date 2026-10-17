@@ -480,11 +480,14 @@ async def store_markets(
                ON CONFLICT DO NOTHING""",
             poly_market_rows,
         )
+        # Prices only for markets that exist: a row skipped above (legacy id
+        # clash) would otherwise fail the FK and abort the rest of the batch.
         await db.executemany(
             """INSERT INTO market_prices
                (market_id, yes_price, no_price, spread, liquidity, polled_at)
-               VALUES (?, ?, ?, ?, ?, ?)""",
-            poly_price_rows,
+               SELECT ?, ?, ?, ?, ?, ?
+               WHERE EXISTS (SELECT 1 FROM markets WHERE id = ?)""",
+            [(*row, row[0]) for row in poly_price_rows],
         )
         await db.executemany(
             """INSERT INTO markets
@@ -499,8 +502,9 @@ async def store_markets(
         await db.executemany(
             """INSERT INTO market_prices
                (market_id, yes_price, no_price, spread, liquidity, polled_at)
-               VALUES (?, ?, ?, ?, ?, ?)""",
-            kalshi_price_rows,
+               SELECT ?, ?, ?, ?, ?, ?
+               WHERE EXISTS (SELECT 1 FROM markets WHERE id = ?)""",
+            [(*row, row[0]) for row in kalshi_price_rows],
         )
         await db.commit()
     except Exception as e:
