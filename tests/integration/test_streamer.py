@@ -17,7 +17,10 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
+
 from core.ingestor.streamer import (
+    parse_kalshi_ws_message,
     parse_polymarket_ws_message,
     polymarket_subscriptions,
 )
@@ -126,3 +129,62 @@ class TestPolymarketSubscriptions:
         # And a live frame for that token now reaches the arb engine's id.
         out = parse_polymarket_ws_message(WS["price_change"], token_map)
         assert f"poly_{PC_COND}" in out
+
+
+class TestTickWidthGuard:
+    """Stub books (0.001 / 0.999) must not emit a 0.50 tick on either feed."""
+
+    def test_polymarket_wide_price_change_is_dropped(self):
+        frame = {
+            "event_type": "price_change",
+            "price_changes": [
+                {"asset_id": "1", "best_bid": "0.001", "best_ask": "0.999"},
+                {"asset_id": "2", "best_bid": "0.30", "best_ask": "0.51"},
+                {"asset_id": "3", "best_bid": "0.40", "best_ask": "0.60"},
+            ],
+        }
+        out = parse_polymarket_ws_message(frame, {"1": "a", "2": "b", "3": "c"})
+        assert out == {"c": 0.5}  # 0.20 wide is the limit; 0.21 is not
+
+    def test_polymarket_wide_book_is_dropped(self):
+        frame = [
+            {
+                "event_type": "book",
+                "asset_id": "1",
+                "bids": [{"price": "0.001", "size": "10"}],
+                "asks": [{"price": "0.999", "size": "10"}],
+            }
+        ]
+        assert parse_polymarket_ws_message(frame, {"1": "a"}) == {}
+
+
+class TestParseKalshiWsMessage:
+    @staticmethod
+    def _tick(bid, ask, ticker="KXT-1"):
+        return {
+            "type": "ticker",
+            "sid": 1,
+            "msg": {
+                "market_ticker": ticker,
+                "yes_bid_dollars": bid,
+                "yes_ask_dollars": ask,
+            },
+        }
+
+    def test_two_sided_tick_emits_mid_under_internal_id(self):
+        assert parse_kalshi_ws_message(self._tick("0.4500", "0.4700")) == (
+            "kal_KXT-1",
+            pytest.approx(0.46),
+        )
+
+    def test_zero_bid_string_is_one_sided_not_a_price(self):
+        # "0.0000" is a truthy string: the old `if bid and ask` let it through.
+        assert parse_kalshi_ws_message(self._tick("0.0000", "0.1300")) is None
+        assert parse_kalshi_ws_message(self._tick("0.4000", "0.0000")) is None
+
+    def test_wide_stub_book_is_dropped(self):
+        assert parse_kalshi_ws_message(self._tick("0.0200", "0.9800")) is None
+
+    def test_non_ticker_and_garbage(self):
+        for frame in (None, [], {"type": "subscribed"}, {"type": "ticker"}):
+            assert parse_kalshi_ws_message(frame) is None

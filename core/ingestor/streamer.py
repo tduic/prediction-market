@@ -13,6 +13,8 @@ import time
 import typing
 from pathlib import Path
 
+from core.ingestor.quotes import two_sided_mid
+
 logger = logging.getLogger(__name__)
 
 _BACKOFF_BASE_S = 1.0
@@ -56,12 +58,31 @@ def _to_price(value: typing.Any) -> float | None:
 
 
 def _mid(bid: float | None, ask: float | None) -> float | None:
-    """Mid of a two-sided, uncrossed book inside (0, 1); else None."""
-    if bid is None or ask is None:
+    """Two-sided mid within MAX_MID_SPREAD (see core.ingestor.quotes)."""
+    return two_sided_mid(bid, ask)
+
+
+def parse_kalshi_ws_message(data: typing.Any) -> tuple[str, float] | None:
+    """Extract ``(internal_market_id, mid)`` from one Kalshi ``ticker`` frame.
+
+    Returns None for other frame types, one-sided books (a "0.0000" side is
+    a truthy string, so a plain truthiness check lets it through) and stub
+    books wider than MAX_MID_SPREAD.
+    """
+    if not isinstance(data, dict) or data.get("type") != "ticker":
         return None
-    if bid <= 0 or ask <= 0 or bid >= 1 or ask >= 1 or bid > ask:
+    msg = data.get("msg")
+    if not isinstance(msg, dict):
         return None
-    return (bid + ask) / 2.0
+    ticker = msg.get("market_ticker")
+    if not ticker:
+        return None
+    mid = _mid(
+        _to_price(msg.get("yes_bid_dollars")), _to_price(msg.get("yes_ask_dollars"))
+    )
+    if mid is None:
+        return None
+    return f"kal_{ticker}", mid
 
 
 def parse_polymarket_ws_message(
@@ -343,19 +364,11 @@ async def stream_prices_kalshi(
                     backoff.reset()
                     try:
                         data = json.loads(raw)
-                        if data.get("type") == "ticker":
-                            msg = data.get("msg", {})
-                            ticker = msg.get("market_ticker", "")
-                            bid = msg.get("yes_bid_dollars")
-                            ask = msg.get("yes_ask_dollars")
-                            if ticker and bid and ask:
-                                try:
-                                    price = (float(bid) + float(ask)) / 2.0
-                                    await on_price(f"kal_{ticker}", price)
-                                except (ValueError, TypeError):
-                                    pass
                     except json.JSONDecodeError:
-                        pass
+                        continue
+                    tick = parse_kalshi_ws_message(data)
+                    if tick is not None:
+                        await on_price(*tick)
         except Exception as e:
             reason = f"{type(e).__name__}: {e}"
         if stop_event.is_set():

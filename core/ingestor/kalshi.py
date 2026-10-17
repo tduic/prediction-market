@@ -14,6 +14,7 @@ from cryptography.hazmat.primitives.asymmetric import padding
 from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey
 
 from core.ingestor.polymarket import MarketData, TokenBucket
+from core.ingestor.quotes import two_sided_mid
 from core.secrets import get_secret
 
 logger = logging.getLogger(__name__)
@@ -253,7 +254,4 @@ def _fp(item: dict, name: str) -> float | None:
     return v if v is not None else _num(item.get(name))
 
 
-def _two_sided_mid(bid: float | None, ask: float | None) -> float | None:
-    if bid is None or ask is None or not (0.0 < bid <= ask < 1.0):
-        return None
-    return (bid + ask) / 2.0
+_two_sided_mid = two_sided_mid
