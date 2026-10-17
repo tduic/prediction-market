@@ -1,6 +1,6 @@
 # Handoff
 
-_Last updated: 2026-10-16_
+_Last updated: 2026-10-17_
 
 ## State
 - 2026-10-16 toolchain upgrade: CI tests Python 3.15 (and 3.14), lint on
@@ -34,9 +34,21 @@ _Last updated: 2026-10-16_
     means `pending`, which halts), and installs the proxy before key
     derivation. It has not placed a real order yet: its first live order is
     the real test.
-- Checks: ~800 tests. `black` clean. ruff (88 BLE001) and mypy (9) are
-  pre-existing baselines; main's CI lint/type jobs were already red.
-  Smoke: `python scripts/smoke_paper_arb.py` (live public data, no creds).
+- 2026-10-17: the **Kalshi live client** now uses CreateOrderV2
+  (`POST /portfolio/events/orders`). It sends the exchange ticker from
+  `markets.platform_id` (it used to send the internal `kal_` id), places
+  immediate-or-cancel orders in whole contracts, and reads the final fill,
+  average price and real fee from the 201 response with no polling. A 4xx
+  is a clean failure. A 5xx, 408, 409, timeout or unreadable acceptance
+  returns `pending`, which halts. The old client read GET-order fields
+  Kalshi has since removed, and assumed full fills.
+- 2026-10-17: single-platform positions from translated Polymarket sells
+  (BUY NO) store `entry_price` in YES space with `book='NO'`. They used to
+  store the raw NO price as a YES entry, which inverted mark-to-market P&L.
+  The legacy Polymarket client now tags `book` too.
+- Checks: ~865 tests. pytest, mypy, ruff and black are all clean (CI green
+  since 8483d9d). Smoke: `python scripts/smoke_paper_arb.py` (live public
+  data, no creds).
 
 ## Next steps
 1. **Before the next deploy**: the systemd units set `SECRETS_STRICT=true`.
@@ -46,11 +58,21 @@ _Last updated: 2026-10-16_
    the VM: it authenticates through the V2 client and the proxy, and a
    failure means live Polymarket is broken. Fallback:
    `POLYMARKET_CLIENT=legacy`.
-2. Open follow-ups (task chips were created):
-   - The legacy Kalshi live client sends the internal `kal_` id as the ticker.
-   - Single-platform/batch strategies store translated-sell (NO-book) fills
-     as YES prices.
-3. Fork pieces deliberately not ported: its engine rewrite, Kalshi V2 client
+2. Before the first live Kalshi order, place one order in Kalshi's demo
+   environment and confirm:
+   - `average_fill_price` on an ask (sell) is in YES space;
+   - `fill_count × average_fee_paid` matches the account's fee debit (fee
+     rounding has per-order accumulators);
+   - `get_balance()` still parses (it divides `balance` by 100; that schema
+     hasn't been checked).
+   After a 5xx or timeout, the order row holds only the `client_order_id`
+   (`UNKNOWN-kalshi-<id>`), so reconcile against Kalshi by that id.
+3. `core/strategies/batch.py` (`detect_violations_and_trade`) has no
+   callers. It is dead code with the old NO-price bug, so delete it.
+4. Live P2–P5 positions are "closed" by `mark_and_close_positions` in the
+   DB only; nothing sends an exit order. That's fine for paper but not for
+   live.
+5. Fork pieces deliberately not ported: its engine rewrite, Kalshi V2 client
    (read signing broken, endpoint unverified), exchange reconciliation
    (3 bugs), CI narrowing, P2–P5 disable.
 
